@@ -1,0 +1,21 @@
+{{- if .Values.pluginRbac.createDeveloperBinding }}
+{{- range .Values.pluginRbac.developerNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vpc-network-developer
+  namespace: {{ . }}
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vpc-network-developer
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: developers
+{{- end }}
+{{- end }}

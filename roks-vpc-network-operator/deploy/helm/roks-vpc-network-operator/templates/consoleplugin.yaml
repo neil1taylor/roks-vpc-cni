@@ -1,0 +1,24 @@
+{{- if .Values.consolePlugin.enabled }}
+apiVersion: console.openshift.io/v1
+kind: ConsolePlugin
+metadata:
+  name: vpc-network-management
+spec:
+  displayName: VPC Network Management
+  service:
+    basePath: /
+    name: {{ .Release.Name }}-console-plugin
+    namespace: {{ .Release.Namespace }}
+    port: {{ .Values.consolePlugin.port }}
+  proxy:
+  - alias: bff
+    authorization: UserToken
+    caCert:
+      name: {{ .Release.Name }}-bff-serving-cert
+      namespace: {{ .Release.Namespace }}
+    endpoint:
+      service:
+        name: {{ .Release.Name }}-bff
+        namespace: {{ .Release.Namespace }}
+        port: {{ .Values.bff.port }}
+{{- end }}

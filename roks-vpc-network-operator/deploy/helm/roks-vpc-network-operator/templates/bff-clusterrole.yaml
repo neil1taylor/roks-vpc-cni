@@ -1,0 +1,41 @@
+{{- if .Values.bff.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-bff
+  labels:
+    app.kubernetes.io/name: vpc-network-bff
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: bff
+rules:
+# VPC CRD resources
+- apiGroups:
+  - vpc.roks.ibm.com
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+# Subject access reviews for authorization checks
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+# Secret read for API key
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  resourceNames:
+  - {{ .Values.bff.apiKeySecretName }}
+  verbs:
+  - get
+  - watch
+{{- end }}

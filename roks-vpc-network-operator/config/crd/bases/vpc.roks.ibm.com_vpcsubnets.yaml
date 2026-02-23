@@ -1,0 +1,167 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vpcsubnets.vpc.roks.ibm.com
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.9.2
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VPCSubnet
+    listKind: VPCSubnetList
+    plural: vpcsubnets
+    shortNames:
+    - vsn
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        description: VPCSubnet is the Schema for the vpcsubnets API. It represents a VPC subnet managed by the ROKS VPC Network Operator.
+        type: object
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPCSubnetSpec defines the desired state of a VPC subnet.
+            type: object
+            required:
+            - vpcID
+            - zone
+            - ipv4CIDRBlock
+            properties:
+              vpcID:
+                description: VPCID is the IBM Cloud VPC ID in which to create the subnet.
+                type: string
+                minLength: 1
+              zone:
+                description: Zone is the VPC availability zone (e.g., "us-south-1").
+                type: string
+                minLength: 1
+              ipv4CIDRBlock:
+                description: IPv4CIDRBlock is the CIDR block for the subnet (e.g., "10.240.0.0/24").
+                type: string
+                pattern: '^\d+\.\d+\.\d+\.\d+/\d+$'
+              aclID:
+                description: ACLID is the ID of the network ACL to associate with this subnet.
+                type: string
+              resourceGroupID:
+                description: ResourceGroupID is the IBM Cloud resource group for the subnet.
+                type: string
+              securityGroupIDs:
+                description: SecurityGroupIDs is a list of security group IDs to attach to VNIs on this subnet.
+                type: array
+                items:
+                  type: string
+              vlanID:
+                description: VLANID is the VLAN ID for OVN LocalNet and bare metal VLAN attachments.
+                type: integer
+                format: int64
+              clusterID:
+                description: ClusterID is the ROKS cluster ID, used for tagging VPC resources.
+                type: string
+              cudnName:
+                description: CUDNName is the name of the associated ClusterUserDefinedNetwork, if any.
+                type: string
+          status:
+            description: VPCSubnetStatus defines the observed state of a VPC subnet.
+            type: object
+            properties:
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync with the VPC API.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              subnetID:
+                description: SubnetID is the VPC-assigned subnet ID.
+                type: string
+              vpcSubnetStatus:
+                description: VPCSubnetStatus is the status of the subnet as reported by the VPC API.
+                type: string
+              availableIPv4:
+                description: AvailableIPv4 is the count of available IPv4 addresses in the subnet.
+                type: integer
+                format: int64
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync with VPC API.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations of the subnet's state.
+                type: array
+                items:
+                  description: "Condition contains details for one aspect of the current state of this API Resource."
+                  type: object
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition transitioned from one status to another.
+                      type: string
+                      format: date-time
+                    message:
+                      description: message is a human readable message indicating details about the transition.
+                      type: string
+                      maxLength: 32768
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation that the condition was set based upon.
+                      type: integer
+                      format: int64
+                      minimum: 0
+                    reason:
+                      description: reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                      type: string
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: '^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$'
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      type: string
+                      maxLength: 316
+                      pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Z]|[a-z0-9])([-A-Z0-9_a-z0-9]*([-A-Z0-9_a-z0-9])?))$'
+    additionalPrinterColumns:
+    - name: VPC
+      type: string
+      jsonPath: .spec.vpcID
+    - name: Zone
+      type: string
+      jsonPath: .spec.zone
+    - name: CIDR
+      type: string
+      jsonPath: .spec.ipv4CIDRBlock
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Subnet ID
+      type: string
+      jsonPath: .status.subnetID
+      priority: 1
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp

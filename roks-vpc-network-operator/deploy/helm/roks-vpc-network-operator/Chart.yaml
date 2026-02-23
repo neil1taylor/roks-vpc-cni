@@ -1,0 +1,6 @@
+apiVersion: v2
+name: roks-vpc-network-operator
+description: Automated VPC resource lifecycle for OpenShift Virtualization on IBM Cloud ROKS
+version: 0.1.0
+appVersion: "1.0.0"
+type: application

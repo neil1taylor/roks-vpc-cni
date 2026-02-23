@@ -1,0 +1,25 @@
+{{- if .Values.bff.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-bff
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vpc-network-bff
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: bff
+spec:
+  type: ClusterIP
+  ports:
+  - name: https
+    port: {{ .Values.bff.port }}
+    targetPort: https
+    protocol: TCP
+  - name: metrics
+    port: 8080
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: vpc-network-bff
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

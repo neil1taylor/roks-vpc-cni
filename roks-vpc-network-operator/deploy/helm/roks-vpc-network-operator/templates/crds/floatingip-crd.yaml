@@ -1,0 +1,121 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: floatingips.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: FloatingIP
+    listKind: FloatingIPList
+    plural: floatingips
+    singular: floatingip
+    shortNames:
+    - fip
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Address
+      type: string
+      jsonPath: .status.address
+    - name: Zone
+      type: string
+      jsonPath: .spec.zone
+    - name: VNI
+      type: string
+      jsonPath: .spec.vniRef
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: FloatingIP is the Schema for the floatingips API.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: FloatingIPSpec defines the desired state of a Floating IP.
+            type: object
+            required:
+            - zone
+            properties:
+              zone:
+                description: Zone is the VPC zone for the floating IP.
+                type: string
+                minLength: 1
+              vniRef:
+                description: VNIRef is the name of the VirtualNetworkInterface CR to bind this FIP to.
+                type: string
+              vniID:
+                description: VNIID is the VPC VNI ID to bind to (alternative to VNIRef).
+                type: string
+              name:
+                description: Name is the desired name for the floating IP in VPC.
+                type: string
+          status:
+            description: FloatingIPStatus defines the observed state of a Floating IP.
+            type: object
+            properties:
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync with the VPC API.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              fipID:
+                description: FIPID is the VPC-assigned floating IP resource ID.
+                type: string
+              address:
+                description: Address is the allocated public IP address.
+                type: string
+              targetVNIID:
+                description: TargetVNIID is the VNI this FIP is currently bound to.
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message

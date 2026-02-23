@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vpc-network-admin
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+# Full access to all VPC network resources
+- apiGroups:
+  - vpc.roks.ibm.com
+  resources:
+  - '*'
+  verbs:
+  - '*'

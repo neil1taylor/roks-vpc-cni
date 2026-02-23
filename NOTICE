@@ -1,0 +1,29 @@
+ROKS VPC Network Operator
+Copyright 2024 IBM Corporation
+
+This product includes software developed at
+IBM Corporation (https://www.ibm.com/).
+
+Licensed under the Apache License, Version 2.0.
+
+---
+
+This project uses the following third-party software:
+
+Go modules (roks-vpc-network-operator):
+  - controller-runtime (https://github.com/kubernetes-sigs/controller-runtime) — Apache 2.0
+  - client-go (https://github.com/kubernetes/client-go) — Apache 2.0
+  - apimachinery (https://github.com/kubernetes/apimachinery) — Apache 2.0
+  - IBM VPC Go SDK (https://github.com/IBM/vpc-go-sdk) — Apache 2.0
+  - IBM Platform Services Go SDK (https://github.com/IBM/platform-services-go-sdk) — Apache 2.0
+  - go-sdk-core (https://github.com/IBM/go-sdk-core) — Apache 2.0
+  - zap (https://github.com/uber-go/zap) — MIT
+  - gorilla/mux (https://github.com/gorilla/mux) — BSD-3-Clause
+
+Node.js packages (console-plugin):
+  - @openshift-console/dynamic-plugin-sdk — Apache 2.0
+  - @patternfly/react-core (https://www.patternfly.org/) — MIT
+  - @patternfly/react-table — MIT
+  - React (https://react.dev/) — MIT
+  - webpack (https://webpack.js.org/) — MIT
+  - TypeScript (https://www.typescriptlang.org/) — Apache 2.0

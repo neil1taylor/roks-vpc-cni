@@ -1,0 +1,120 @@
+package vpc
+
+import (
+	"context"
+	"time"
+
+	operatormetrics "github.com/IBM/roks-vpc-network-operator/pkg/metrics"
+)
+
+// InstrumentedClient wraps a Client and records Prometheus metrics for every VPC API call.
+type InstrumentedClient struct {
+	inner Client
+}
+
+// NewInstrumentedClient wraps a Client with Prometheus metrics instrumentation.
+func NewInstrumentedClient(inner Client) Client {
+	return &InstrumentedClient{inner: inner}
+}
+
+func recordCall(method string, start time.Time, err error) {
+	status := "success"
+	if err != nil {
+		status = "error"
+	}
+	operatormetrics.VPCAPICallsTotal.WithLabelValues(method, status).Inc()
+	operatormetrics.VPCAPILatency.WithLabelValues(method).Observe(time.Since(start).Seconds())
+}
+
+func (c *InstrumentedClient) CreateSubnet(ctx context.Context, opts CreateSubnetOptions) (*Subnet, error) {
+	start := time.Now()
+	result, err := c.inner.CreateSubnet(ctx, opts)
+	recordCall("CreateSubnet", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) GetSubnet(ctx context.Context, subnetID string) (*Subnet, error) {
+	start := time.Now()
+	result, err := c.inner.GetSubnet(ctx, subnetID)
+	recordCall("GetSubnet", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) DeleteSubnet(ctx context.Context, subnetID string) error {
+	start := time.Now()
+	err := c.inner.DeleteSubnet(ctx, subnetID)
+	recordCall("DeleteSubnet", start, err)
+	return err
+}
+
+func (c *InstrumentedClient) CreateVNI(ctx context.Context, opts CreateVNIOptions) (*VNI, error) {
+	start := time.Now()
+	result, err := c.inner.CreateVNI(ctx, opts)
+	recordCall("CreateVNI", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) GetVNI(ctx context.Context, vniID string) (*VNI, error) {
+	start := time.Now()
+	result, err := c.inner.GetVNI(ctx, vniID)
+	recordCall("GetVNI", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) DeleteVNI(ctx context.Context, vniID string) error {
+	start := time.Now()
+	err := c.inner.DeleteVNI(ctx, vniID)
+	recordCall("DeleteVNI", start, err)
+	return err
+}
+
+func (c *InstrumentedClient) ListVNIsByTag(ctx context.Context, clusterID, namespace, vmName string) ([]VNI, error) {
+	start := time.Now()
+	result, err := c.inner.ListVNIsByTag(ctx, clusterID, namespace, vmName)
+	recordCall("ListVNIsByTag", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) CreateVLANAttachment(ctx context.Context, opts CreateVLANAttachmentOptions) (*VLANAttachment, error) {
+	start := time.Now()
+	result, err := c.inner.CreateVLANAttachment(ctx, opts)
+	recordCall("CreateVLANAttachment", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) DeleteVLANAttachment(ctx context.Context, bmServerID, attachmentID string) error {
+	start := time.Now()
+	err := c.inner.DeleteVLANAttachment(ctx, bmServerID, attachmentID)
+	recordCall("DeleteVLANAttachment", start, err)
+	return err
+}
+
+func (c *InstrumentedClient) ListVLANAttachments(ctx context.Context, bmServerID string) ([]VLANAttachment, error) {
+	start := time.Now()
+	result, err := c.inner.ListVLANAttachments(ctx, bmServerID)
+	recordCall("ListVLANAttachments", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) CreateFloatingIP(ctx context.Context, opts CreateFloatingIPOptions) (*FloatingIP, error) {
+	start := time.Now()
+	result, err := c.inner.CreateFloatingIP(ctx, opts)
+	recordCall("CreateFloatingIP", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) GetFloatingIP(ctx context.Context, fipID string) (*FloatingIP, error) {
+	start := time.Now()
+	result, err := c.inner.GetFloatingIP(ctx, fipID)
+	recordCall("GetFloatingIP", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) DeleteFloatingIP(ctx context.Context, fipID string) error {
+	start := time.Now()
+	err := c.inner.DeleteFloatingIP(ctx, fipID)
+	recordCall("DeleteFloatingIP", start, err)
+	return err
+}
+
+var _ Client = (*InstrumentedClient)(nil)

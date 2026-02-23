@@ -1,0 +1,138 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vlanattachments.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VLANAttachment
+    listKind: VLANAttachmentList
+    plural: vlanattachments
+    singular: vlanattachment
+    shortNames:
+    - vla
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: BM Server
+      type: string
+      jsonPath: .spec.bmServerID
+    - name: VLAN
+      type: integer
+      jsonPath: .spec.vlanID
+    - name: Node
+      type: string
+      jsonPath: .spec.nodeName
+    - name: Status
+      type: string
+      jsonPath: .status.attachmentStatus
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: VLANAttachment is the Schema for the vlanattachments API.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VLANAttachmentSpec defines the desired state of a VLAN attachment.
+            type: object
+            required:
+            - bmServerID
+            - vlanID
+            - subnetRef
+            properties:
+              bmServerID:
+                description: BMServerID is the bare metal server ID to attach the VLAN to.
+                type: string
+                minLength: 1
+              vlanID:
+                description: VLANID is the VLAN tag for the attachment.
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 4094
+              subnetRef:
+                description: SubnetRef is the name of the VPCSubnet CR this attachment is associated with.
+                type: string
+              subnetID:
+                description: SubnetID is the VPC subnet ID (alternative to SubnetRef).
+                type: string
+              allowToFloat:
+                description: AllowToFloat enables the VLAN attachment to float during live migration.
+                type: boolean
+                default: true
+              nodeName:
+                description: NodeName is the Kubernetes node name corresponding to the bare metal server.
+                type: string
+          status:
+            description: VLANAttachmentStatus defines the observed state of a VLAN attachment.
+            type: object
+            properties:
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync with the VPC API.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              attachmentID:
+                description: AttachmentID is the VPC-assigned VLAN attachment ID.
+                type: string
+              attachmentStatus:
+                description: AttachmentStatus is the current status of the attachment.
+                type: string
+                enum:
+                - attached
+                - pending
+                - detached
+                - failed
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message

@@ -1,0 +1,63 @@
+{
+  "name": "vpc-network-management-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "consolePlugin": {
+    "name": "vpc-network-management",
+    "version": "1.0.0",
+    "displayName": "VPC Network Management",
+    "description": "Manage IBM VPC networking resources for KubeVirt workloads",
+    "exposedModules": {
+      "VPCDashboard": "./src/pages/VPCDashboardPage",
+      "SubnetsList": "./src/pages/SubnetsListPage",
+      "SubnetDetail": "./src/pages/SubnetDetailPage",
+      "VNIsList": "./src/pages/VNIsListPage",
+      "VNIDetail": "./src/pages/VNIDetailPage",
+      "VLANAttachments": "./src/pages/VLANAttachmentsPage",
+      "FloatingIPs": "./src/pages/FloatingIPsPage",
+      "SecurityGroupsList": "./src/pages/SecurityGroupsListPage",
+      "SecurityGroupDetail": "./src/pages/SecurityGroupDetailPage",
+      "NetworkACLsList": "./src/pages/NetworkACLsListPage",
+      "NetworkACLDetail": "./src/pages/NetworkACLDetailPage",
+      "Topology": "./src/pages/TopologyPage"
+    },
+    "dependencies": {
+      "@console/pluginAPI": "*"
+    }
+  },
+  "dependencies": {
+    "@openshift-console/dynamic-plugin-sdk": "^1.0.0",
+    "@patternfly/react-core": "^5.0.0",
+    "@patternfly/react-icons": "^5.0.0",
+    "@patternfly/react-table": "^5.0.0",
+    "@patternfly/react-topology": "^5.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.0.0"
+  },
+  "devDependencies": {
+    "@openshift-console/dynamic-plugin-sdk-webpack": "^1.0.0",
+    "@playwright/test": "^1.58.2",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "css-loader": "^6.8.0",
+    "html-webpack-plugin": "^5.6.6",
+    "style-loader": "^3.3.0",
+    "ts-loader": "^9.5.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0",
+    "webpack": "^5.90.0",
+    "webpack-cli": "^5.1.0",
+    "webpack-dev-server": "^4.15.0"
+  },
+  "scripts": {
+    "build": "webpack --mode=production",
+    "build:dev": "webpack --mode=development",
+    "start": "webpack serve --mode=development",
+    "ts-check": "tsc --noEmit",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui",
+    "test:harness": "webpack serve --config webpack.config.test.js"
+  }
+}

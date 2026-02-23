@@ -1,0 +1,148 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vpcsubnets.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VPCSubnet
+    listKind: VPCSubnetList
+    plural: vpcsubnets
+    singular: vpcsubnet
+    shortNames:
+    - vsn
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: VPC
+      type: string
+      jsonPath: .spec.vpcID
+    - name: Zone
+      type: string
+      jsonPath: .spec.zone
+    - name: CIDR
+      type: string
+      jsonPath: .spec.ipv4CIDRBlock
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Subnet ID
+      type: string
+      jsonPath: .status.subnetID
+      priority: 1
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: VPCSubnet is the Schema for the vpcsubnets API.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPCSubnetSpec defines the desired state of a VPC subnet.
+            type: object
+            required:
+            - vpcID
+            - zone
+            - ipv4CIDRBlock
+            properties:
+              vpcID:
+                description: VPCID is the IBM Cloud VPC ID in which to create the subnet.
+                type: string
+                minLength: 1
+              zone:
+                description: Zone is the VPC availability zone (e.g., "us-south-1").
+                type: string
+                minLength: 1
+              ipv4CIDRBlock:
+                description: IPv4CIDRBlock is the CIDR block for the subnet.
+                type: string
+                pattern: '^\d+\.\d+\.\d+\.\d+/\d+$'
+              aclID:
+                description: ACLID is the ID of the network ACL to associate with this subnet.
+                type: string
+              resourceGroupID:
+                description: ResourceGroupID is the IBM Cloud resource group for the subnet.
+                type: string
+              securityGroupIDs:
+                description: SecurityGroupIDs is a list of security group IDs to attach to VNIs on this subnet.
+                type: array
+                items:
+                  type: string
+              vlanID:
+                description: VLANID is the VLAN ID for OVN LocalNet and bare metal VLAN attachments.
+                type: integer
+                format: int64
+              clusterID:
+                description: ClusterID is the ROKS cluster ID, used for tagging VPC resources.
+                type: string
+              cudnName:
+                description: CUDNName is the name of the associated ClusterUserDefinedNetwork.
+                type: string
+          status:
+            description: VPCSubnetStatus defines the observed state of a VPC subnet.
+            type: object
+            properties:
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync with the VPC API.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              subnetID:
+                description: SubnetID is the VPC-assigned subnet ID.
+                type: string
+              vpcSubnetStatus:
+                description: VPCSubnetStatus is the status as reported by the VPC API.
+                type: string
+              availableIPv4:
+                description: AvailableIPv4 is the count of available IPv4 addresses.
+                type: integer
+                format: int64
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message

@@ -1,0 +1,170 @@
+[
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "vpc-networking-dashboard",
+      "section": "Networking",
+      "name": "VPC Dashboard",
+      "href": "/vpc-networking"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "vpc-subnets",
+      "section": "Networking",
+      "name": "VPC Subnets",
+      "href": "/vpc-networking/subnets"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "vpc-vnis",
+      "section": "Networking",
+      "name": "Virtual Network Interfaces",
+      "href": "/vpc-networking/vnis"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "vpc-vlan-attachments",
+      "section": "Networking",
+      "name": "VLAN Attachments",
+      "href": "/vpc-networking/vlan-attachments"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "vpc-floating-ips",
+      "section": "Networking",
+      "name": "Floating IPs",
+      "href": "/vpc-networking/floating-ips"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "vpc-security-groups",
+      "section": "Networking",
+      "name": "Security Groups",
+      "href": "/vpc-networking/security-groups"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "vpc-network-acls",
+      "section": "Networking",
+      "name": "Network ACLs",
+      "href": "/vpc-networking/network-acls"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "vpc-topology",
+      "section": "Networking",
+      "name": "Network Topology",
+      "href": "/vpc-networking/topology"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking",
+      "component": { "$codeRef": "VPCDashboard" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/subnets",
+      "component": { "$codeRef": "SubnetsList" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/subnets/:name",
+      "component": { "$codeRef": "SubnetDetail" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vnis",
+      "component": { "$codeRef": "VNIsList" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vnis/:name",
+      "component": { "$codeRef": "VNIDetail" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vlan-attachments",
+      "component": { "$codeRef": "VLANAttachments" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/floating-ips",
+      "component": { "$codeRef": "FloatingIPs" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/security-groups",
+      "component": { "$codeRef": "SecurityGroupsList" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/security-groups/:name",
+      "component": { "$codeRef": "SecurityGroupDetail" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/network-acls",
+      "component": { "$codeRef": "NetworkACLsList" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/network-acls/:name",
+      "component": { "$codeRef": "NetworkACLDetail" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/topology",
+      "component": { "$codeRef": "Topology" }
+    }
+  }
+]

@@ -1,0 +1,21 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: roks-vpc-network-operator-webhook
+webhooks:
+- name: vm-vpc-inject.roks.ibm.com
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  timeoutSeconds: 30
+  clientConfig:
+    service:
+      name: roks-vpc-network-operator-webhook
+      namespace: roks-vpc-network-operator
+      path: /mutate-virtualmachine
+  rules:
+  - apiGroups: ["kubevirt.io"]
+    apiVersions: ["v1"]
+    resources: ["virtualmachines"]
+    operations: ["CREATE"]
+  failurePolicy: Fail
+  reinvocationPolicy: IfNeeded

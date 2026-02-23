@@ -1,0 +1,87 @@
+replicaCount: 1
+
+image:
+  repository: icr.io/roks/vpc-network-operator
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# VPC configuration
+vpc:
+  region: "us-south"
+  resourceGroupID: ""
+
+# Cluster identity
+cluster:
+  id: ""
+
+# API key secret reference
+credentials:
+  secretName: roks-vpc-network-operator-credentials
+  secretKey: IBMCLOUD_API_KEY
+
+# Webhook TLS
+webhook:
+  port: 9443
+  certDir: /tmp/k8s-webhook-server/serving-certs
+
+# Resource limits
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Leader election
+leaderElection:
+  enabled: true
+
+# Orphan GC settings
+gc:
+  interval: 10m
+  gracePeriod: 15m
+
+# BFF service
+bff:
+  enabled: true
+  image:
+    repository: icr.io/roks/vpc-network-bff
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 2
+  port: 8443
+  clusterMode: "roks"
+  apiKeySecretName: "ibm-vpc-api-key"
+  csiMountPath: "/var/run/ibm-vpc-credentials"
+  logLevel: "info"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Console plugin
+consolePlugin:
+  enabled: true
+  image:
+    repository: icr.io/roks/vpc-network-console-plugin
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 2
+  port: 9443
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# RBAC for console plugin users
+pluginRbac:
+  createAdminBinding: true
+  createDeveloperBinding: false
+  developerNamespaces: []

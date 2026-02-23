@@ -1,0 +1,31 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ .Release.Name }}-vm-mutating
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+webhooks:
+- name: vm-mutating.vpc.roks.ibm.com
+  admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: roks-vpc-network-operator-webhook
+      namespace: {{ .Release.Namespace }}
+      path: /mutate-virtualmachine
+      port: {{ .Values.webhook.port | default 9443 }}
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  rules:
+  - apiGroups:
+    - kubevirt.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    resources:
+    - virtualmachines
+    scope: Namespaced
+  sideEffects: None
+  timeoutSeconds: 30

@@ -1,0 +1,51 @@
+import type { NetworkACL } from '../../src/api/types';
+
+export const mockNetworkACLs: NetworkACL[] = [
+  {
+    id: 'acl-001',
+    name: 'prod-acl',
+    createdAt: '2025-01-15T10:00:00Z',
+    displayName: 'Production ACL',
+    vpc: { id: 'vpc-001', name: 'prod-vpc' },
+    status: 'available',
+    rules: [
+      {
+        id: 'acl-rule-001',
+        name: 'allow-inbound-https',
+        action: 'allow',
+        direction: 'inbound',
+        ipVersion: 'ipv4',
+        protocol: 'tcp',
+        source: '0.0.0.0/0',
+        destination: '10.240.0.0/24',
+        portMin: 443,
+        portMax: 443,
+        priority: 100,
+        createdAt: '2025-01-15T10:00:00Z',
+      },
+      {
+        id: 'acl-rule-002',
+        name: 'deny-all-inbound',
+        action: 'deny',
+        direction: 'inbound',
+        ipVersion: 'ipv4',
+        protocol: 'all',
+        source: '0.0.0.0/0',
+        destination: '0.0.0.0/0',
+        priority: 200,
+        createdAt: '2025-01-15T10:00:00Z',
+      },
+    ],
+    subnets: [],
+  },
+  {
+    id: 'acl-002',
+    name: 'dev-acl',
+    createdAt: '2025-02-01T12:00:00Z',
+    displayName: 'Development ACL',
+    vpc: { id: 'vpc-002', name: 'dev-vpc' },
+    status: 'available',
+    rules: [],
+    subnets: [],
+  },
+];

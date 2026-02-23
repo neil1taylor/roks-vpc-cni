@@ -1,0 +1,14 @@
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: vm-production-network
+  annotations:
+    # ── Required: VPC configuration ──
+    vpc.roks.ibm.com/zone: "us-south-1"
+    vpc.roks.ibm.com/cidr: "10.240.64.0/24"
+    vpc.roks.ibm.com/vpc-id: "r006-abc123-def456-ghi789"
+    vpc.roks.ibm.com/vlan-id: "100"
+    vpc.roks.ibm.com/security-group-ids: "r006-sg-web-tier,r006-sg-mgmt"
+    vpc.roks.ibm.com/acl-id: "r006-acl-production"
+spec:
+  topology: LocalNet

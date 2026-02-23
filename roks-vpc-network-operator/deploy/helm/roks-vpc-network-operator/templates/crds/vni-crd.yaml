@@ -1,0 +1,152 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: virtualnetworkinterfaces.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VirtualNetworkInterface
+    listKind: VirtualNetworkInterfaceList
+    plural: virtualnetworkinterfaces
+    singular: virtualnetworkinterface
+    shortNames:
+    - vni
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: VNI ID
+      type: string
+      jsonPath: .status.vniID
+    - name: MAC
+      type: string
+      jsonPath: .status.macAddress
+    - name: IP
+      type: string
+      jsonPath: .status.primaryIPv4
+    - name: Subnet
+      type: string
+      jsonPath: .spec.subnetRef
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: VirtualNetworkInterface is the Schema for the virtualnetworkinterfaces API.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VNISpec defines the desired state of a Virtual Network Interface.
+            type: object
+            required:
+            - subnetRef
+            properties:
+              subnetRef:
+                description: SubnetRef is the name of the VPCSubnet CR this VNI belongs to.
+                type: string
+                minLength: 1
+              subnetID:
+                description: SubnetID is the VPC subnet ID (alternative to SubnetRef).
+                type: string
+              securityGroupIDs:
+                description: SecurityGroupIDs is a list of VPC security group IDs.
+                type: array
+                items:
+                  type: string
+              allowIPSpoofing:
+                description: AllowIPSpoofing enables IP spoofing on the VNI.
+                type: boolean
+                default: true
+              enableInfrastructureNat:
+                description: EnableInfrastructureNat controls whether infrastructure NAT is enabled.
+                type: boolean
+                default: false
+              autoDelete:
+                description: AutoDelete controls whether the VNI is deleted when its target is removed.
+                type: boolean
+                default: false
+              vmRef:
+                description: VMRef is a reference to the KubeVirt VirtualMachine this VNI is bound to.
+                type: object
+                required:
+                - namespace
+                - name
+                properties:
+                  namespace:
+                    type: string
+                  name:
+                    type: string
+              clusterID:
+                description: ClusterID is the ROKS cluster ID, used for tagging.
+                type: string
+          status:
+            description: VNIStatus defines the observed state of a Virtual Network Interface.
+            type: object
+            properties:
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync with the VPC API.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              vniID:
+                description: VNIID is the VPC-assigned Virtual Network Interface ID.
+                type: string
+              macAddress:
+                description: MACAddress is the VPC-generated MAC address for this VNI.
+                type: string
+              primaryIPv4:
+                description: PrimaryIPv4 is the primary reserved IP address on the VNI.
+                type: string
+              reservedIPID:
+                description: ReservedIPID is the VPC reserved IP resource ID.
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message

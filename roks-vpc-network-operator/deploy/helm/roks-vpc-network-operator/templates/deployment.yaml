@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roks-vpc-network-operator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: roks-vpc-network-operator
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: roks-vpc-network-operator
+  template:
+    metadata:
+      labels:
+        app: roks-vpc-network-operator
+    spec:
+      serviceAccountName: roks-vpc-network-operator
+      containers:
+      - name: manager
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.webhook.port }}
+          name: webhook
+          protocol: TCP
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        env:
+        - name: IBMCLOUD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.credentials.secretName }}
+              key: {{ .Values.credentials.secretKey }}
+        - name: VPC_REGION
+          value: {{ .Values.vpc.region | quote }}
+        - name: CLUSTER_ID
+          value: {{ .Values.cluster.id | quote }}
+        - name: RESOURCE_GROUP_ID
+          value: {{ .Values.vpc.resourceGroupID | quote }}
+        - name: CLUSTER_MODE
+          value: {{ .Values.bff.clusterMode | quote }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: {{ .Values.webhook.certDir }}
+          readOnly: true
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: roks-vpc-network-operator-webhook-tls

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: roks-vpc-network-operator-webhook
+  namespace: roks-vpc-network-operator
+spec:
+  ports:
+  - port: 443
+    targetPort: 9443
+    protocol: TCP
+  selector:
+    app: roks-vpc-network-operator

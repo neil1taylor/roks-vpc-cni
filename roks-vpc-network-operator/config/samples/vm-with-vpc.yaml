@@ -1,0 +1,48 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: web-server-1
+  namespace: production
+  annotations:
+    # Optional: request a public floating IP
+    vpc.roks.ibm.com/fip: "true"
+    # The following annotations are set automatically by the webhook:
+    # vpc.roks.ibm.com/vni-id: "r006-..."
+    # vpc.roks.ibm.com/mac-address: "02:00:04:00:ab:cd"
+    # vpc.roks.ibm.com/reserved-ip: "10.240.64.12"
+    # vpc.roks.ibm.com/reserved-ip-id: "r006-..."
+    # vpc.roks.ibm.com/fip-id: "r006-..."
+    # vpc.roks.ibm.com/fip-address: "169.48.x.x"
+spec:
+  running: true
+  template:
+    spec:
+      networks:
+      - name: vpc-net
+        multus:
+          networkName: vm-production-network  # References the CUDN
+      domain:
+        resources:
+          requests:
+            memory: 4Gi
+            cpu: "2"
+        devices:
+          interfaces:
+          - name: vpc-net
+            bridge: {}
+            # macAddress is injected by the webhook — do not set manually
+          disks:
+          - name: rootdisk
+            disk:
+              bus: virtio
+      volumes:
+      - name: rootdisk
+        containerDisk:
+          image: quay.io/containerdisks/ubuntu:22.04
+      - name: cloudinit
+        cloudInitNoCloud:
+          userData: |
+            #cloud-config
+            password: changeme
+            chpasswd: { expire: false }
+          # networkData is injected by the webhook with the VPC reserved IP

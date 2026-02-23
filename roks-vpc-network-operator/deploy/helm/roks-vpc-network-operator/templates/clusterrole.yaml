@@ -1,0 +1,114 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-manager
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+rules:
+# VPC network CRDs
+- apiGroups:
+  - vpc.roks.ibm.com
+  resources:
+  - vpcsubnets
+  - vpcsubnets/status
+  - vpcsubnets/finalizers
+  - virtualnetworkinterfaces
+  - virtualnetworkinterfaces/status
+  - virtualnetworkinterfaces/finalizers
+  - vlanattachments
+  - vlanattachments/status
+  - vlanattachments/finalizers
+  - floatingips
+  - floatingips/status
+  - floatingips/finalizers
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# OVN-Kubernetes CUDNs
+- apiGroups:
+  - k8s.ovn.org
+  resources:
+  - clusteruserdefinednetworks
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# KubeVirt VirtualMachines
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - virtualmachines
+  - virtualmachines/finalizers
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# Kubernetes core resources needed for operator
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+# Lease for leader election
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# Service accounts for webhooks
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - get
+  - list
+  - watch

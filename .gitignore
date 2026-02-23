@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Go build outputs
+bin/
+cover.out
+roks-vpc-network-operator/manager
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Claude Code local settings
+.claude/
+
+# Playwright / test outputs
+test-results/
+playwright-report/
+dist-test/

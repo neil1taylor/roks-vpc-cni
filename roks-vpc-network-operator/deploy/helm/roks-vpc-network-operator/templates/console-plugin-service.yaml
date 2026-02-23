@@ -1,0 +1,23 @@
+{{- if .Values.consolePlugin.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-console-plugin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vpc-network-console-plugin
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: console-plugin
+  annotations:
+    service.alpha.openshift.io/serving-cert-secret-name: {{ .Release.Name }}-console-plugin-serving-cert
+spec:
+  type: ClusterIP
+  ports:
+  - name: https
+    port: {{ .Values.consolePlugin.port }}
+    targetPort: https
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: vpc-network-console-plugin
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
