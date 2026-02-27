@@ -38,7 +38,7 @@ func (r *RBACChecker) CheckAccess(ctx context.Context, user string, groups []str
 			User:   user,
 			Groups: groups,
 			ResourceAttributes: &authzv1.ResourceAttributes{
-				Group:     "vpc.ibm.com",
+				Group:     "vpc.roks.ibm.com",
 				Version:   "v1alpha1",
 				Resource:  resource,
 				Namespace: namespace,

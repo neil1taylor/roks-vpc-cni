@@ -1,0 +1,19 @@
+{{- if and .Values.bff.enabled .Values.bff.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-bff
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vpc-network-bff
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vpc-network-bff
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+{{- end }}

@@ -180,12 +180,12 @@ func (c *vpcClient) AddNetworkACLRule(ctx context.Context, aclID string, opts Cr
 		prototype = rule
 
 	default: // "all"
-		prototype = &vpcv1.NetworkACLRulePrototypeNetworkACLRuleProtocolAllPrototype{
-			Name:      &opts.Name,
-			Direction: &opts.Direction,
-			Action:    &opts.Action,
-			Protocol:  core.StringPtr("all"),
-			Source:     &opts.Source,
+		prototype = &vpcv1.NetworkACLRulePrototypeNetworkACLRuleProtocolAnyPrototype{
+			Name:        &opts.Name,
+			Direction:   &opts.Direction,
+			Action:      &opts.Action,
+			Protocol:    core.StringPtr("all"),
+			Source:      &opts.Source,
 			Destination: &opts.Destination,
 		}
 	}
@@ -358,7 +358,7 @@ func aclRuleFromSDKIntf(ruleIntf vpcv1.NetworkACLRuleItemIntf) *NetworkACLRule {
 		rule.PortMax = r.DestinationPortMax
 		rule.ICMPType = r.Type
 		rule.ICMPCode = r.Code
-	case *vpcv1.NetworkACLRuleItemNetworkACLRuleProtocolAll:
+	case *vpcv1.NetworkACLRuleItemNetworkACLRuleProtocolAny:
 		rule.ID = derefString(r.ID)
 		rule.Name = derefString(r.Name)
 		rule.Direction = derefString(r.Direction)

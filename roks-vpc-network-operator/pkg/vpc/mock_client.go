@@ -22,6 +22,7 @@ type MockClient struct {
 	// VNI operations
 	CreateVNIFn     func(ctx context.Context, opts CreateVNIOptions) (*VNI, error)
 	GetVNIFn        func(ctx context.Context, vniID string) (*VNI, error)
+	UpdateVNIFn     func(ctx context.Context, vniID, name string) (*VNI, error)
 	DeleteVNIFn     func(ctx context.Context, vniID string) error
 	ListVNIsByTagFn func(ctx context.Context, clusterID, namespace, vmName string) ([]VNI, error)
 
@@ -62,8 +63,36 @@ type MockClient struct {
 	// Subnet listing
 	ListSubnetsFn func(ctx context.Context, vpcID string) ([]Subnet, error)
 
+	// VNI listing
+	ListVNIsFn func(ctx context.Context) ([]VNI, error)
+
+	// Floating IP listing
+	ListFloatingIPsFn func(ctx context.Context) ([]FloatingIP, error)
+
 	// Zone operations
 	ListZonesFn func(ctx context.Context, region string) ([]Zone, error)
+
+	// Routing Table operations
+	ListRoutingTablesFn func(ctx context.Context, vpcID string) ([]RoutingTable, error)
+	GetRoutingTableFn   func(ctx context.Context, vpcID, routingTableID string) (*RoutingTable, error)
+
+	// Route operations
+	ListRoutesFn  func(ctx context.Context, vpcID, routingTableID string) ([]Route, error)
+	CreateRouteFn func(ctx context.Context, vpcID, routingTableID string, opts CreateRouteOptions) (*Route, error)
+	DeleteRouteFn func(ctx context.Context, vpcID, routingTableID, routeID string) error
+
+	// Subnet Reserved IP operations
+	ListSubnetReservedIPsFn func(ctx context.Context, subnetID string) ([]ReservedIP, error)
+
+	// Address Prefix operations
+	ListVPCAddressPrefixesFn  func(ctx context.Context, vpcID string) ([]AddressPrefix, error)
+	CreateVPCAddressPrefixFn  func(ctx context.Context, opts CreateAddressPrefixOptions) (*AddressPrefix, error)
+
+	// PCI allowed VLAN operations
+	EnsurePCIAllowedVLANFn func(ctx context.Context, bmServerID string, vlanID int64) error
+
+	// Bare Metal Server operations
+	ListBareMetalServersFn func(ctx context.Context, vpcID string) ([]BareMetalServerInfo, error)
 }
 
 // NewMockClient creates a new MockClient with default error implementations.
@@ -126,6 +155,14 @@ func (m *MockClient) GetVNI(ctx context.Context, vniID string) (*VNI, error) {
 		return m.GetVNIFn(ctx, vniID)
 	}
 	return nil, fmt.Errorf("GetVNI not configured in mock")
+}
+
+func (m *MockClient) UpdateVNI(ctx context.Context, vniID, name string) (*VNI, error) {
+	m.trackCall("UpdateVNI")
+	if m.UpdateVNIFn != nil {
+		return m.UpdateVNIFn(ctx, vniID, name)
+	}
+	return nil, fmt.Errorf("UpdateVNI not configured in mock")
 }
 
 func (m *MockClient) DeleteVNI(ctx context.Context, vniID string) error {
@@ -350,6 +387,24 @@ func (m *MockClient) ListSubnets(ctx context.Context, vpcID string) ([]Subnet, e
 	return nil, fmt.Errorf("ListSubnets not configured in mock")
 }
 
+// VNI listing
+func (m *MockClient) ListVNIs(ctx context.Context) ([]VNI, error) {
+	m.trackCall("ListVNIs")
+	if m.ListVNIsFn != nil {
+		return m.ListVNIsFn(ctx)
+	}
+	return nil, fmt.Errorf("ListVNIs not configured in mock")
+}
+
+// Floating IP listing
+func (m *MockClient) ListFloatingIPs(ctx context.Context) ([]FloatingIP, error) {
+	m.trackCall("ListFloatingIPs")
+	if m.ListFloatingIPsFn != nil {
+		return m.ListFloatingIPsFn(ctx)
+	}
+	return nil, fmt.Errorf("ListFloatingIPs not configured in mock")
+}
+
 // Zone operations
 func (m *MockClient) ListZones(ctx context.Context, region string) ([]Zone, error) {
 	m.trackCall("ListZones")
@@ -357,6 +412,92 @@ func (m *MockClient) ListZones(ctx context.Context, region string) ([]Zone, erro
 		return m.ListZonesFn(ctx, region)
 	}
 	return nil, fmt.Errorf("ListZones not configured in mock")
+}
+
+// Routing Table operations
+func (m *MockClient) ListRoutingTables(ctx context.Context, vpcID string) ([]RoutingTable, error) {
+	m.trackCall("ListRoutingTables")
+	if m.ListRoutingTablesFn != nil {
+		return m.ListRoutingTablesFn(ctx, vpcID)
+	}
+	return nil, fmt.Errorf("ListRoutingTables not configured in mock")
+}
+
+func (m *MockClient) GetRoutingTable(ctx context.Context, vpcID, routingTableID string) (*RoutingTable, error) {
+	m.trackCall("GetRoutingTable")
+	if m.GetRoutingTableFn != nil {
+		return m.GetRoutingTableFn(ctx, vpcID, routingTableID)
+	}
+	return nil, fmt.Errorf("GetRoutingTable not configured in mock")
+}
+
+// Route operations
+func (m *MockClient) ListRoutes(ctx context.Context, vpcID, routingTableID string) ([]Route, error) {
+	m.trackCall("ListRoutes")
+	if m.ListRoutesFn != nil {
+		return m.ListRoutesFn(ctx, vpcID, routingTableID)
+	}
+	return nil, fmt.Errorf("ListRoutes not configured in mock")
+}
+
+func (m *MockClient) CreateRoute(ctx context.Context, vpcID, routingTableID string, opts CreateRouteOptions) (*Route, error) {
+	m.trackCall("CreateRoute")
+	if m.CreateRouteFn != nil {
+		return m.CreateRouteFn(ctx, vpcID, routingTableID, opts)
+	}
+	return nil, fmt.Errorf("CreateRoute not configured in mock")
+}
+
+func (m *MockClient) DeleteRoute(ctx context.Context, vpcID, routingTableID, routeID string) error {
+	m.trackCall("DeleteRoute")
+	if m.DeleteRouteFn != nil {
+		return m.DeleteRouteFn(ctx, vpcID, routingTableID, routeID)
+	}
+	return fmt.Errorf("DeleteRoute not configured in mock")
+}
+
+// Subnet Reserved IP operations
+func (m *MockClient) ListSubnetReservedIPs(ctx context.Context, subnetID string) ([]ReservedIP, error) {
+	m.trackCall("ListSubnetReservedIPs")
+	if m.ListSubnetReservedIPsFn != nil {
+		return m.ListSubnetReservedIPsFn(ctx, subnetID)
+	}
+	return nil, fmt.Errorf("ListSubnetReservedIPs not configured in mock")
+}
+
+// Address Prefix operations
+func (m *MockClient) ListVPCAddressPrefixes(ctx context.Context, vpcID string) ([]AddressPrefix, error) {
+	m.trackCall("ListVPCAddressPrefixes")
+	if m.ListVPCAddressPrefixesFn != nil {
+		return m.ListVPCAddressPrefixesFn(ctx, vpcID)
+	}
+	return nil, fmt.Errorf("ListVPCAddressPrefixes not configured in mock")
+}
+
+func (m *MockClient) CreateVPCAddressPrefix(ctx context.Context, opts CreateAddressPrefixOptions) (*AddressPrefix, error) {
+	m.trackCall("CreateVPCAddressPrefix")
+	if m.CreateVPCAddressPrefixFn != nil {
+		return m.CreateVPCAddressPrefixFn(ctx, opts)
+	}
+	return nil, fmt.Errorf("CreateVPCAddressPrefix not configured in mock")
+}
+
+// PCI allowed VLAN operations
+func (m *MockClient) EnsurePCIAllowedVLAN(ctx context.Context, bmServerID string, vlanID int64) error {
+	m.trackCall("EnsurePCIAllowedVLAN")
+	if m.EnsurePCIAllowedVLANFn != nil {
+		return m.EnsurePCIAllowedVLANFn(ctx, bmServerID, vlanID)
+	}
+	return nil // Default: no-op (VLAN already allowed)
+}
+
+// Bare Metal Server operations
+func (m *MockClient) ListBareMetalServers(ctx context.Context, vpcID string) ([]BareMetalServerInfo, error) {
+	m.trackCall("ListBareMetalServers")
+	if m.ListBareMetalServersFn != nil {
+		return m.ListBareMetalServersFn(ctx, vpcID)
+	}
+	return nil, fmt.Errorf("ListBareMetalServers not configured in mock")
 }
 
 // Compile-time interface checks

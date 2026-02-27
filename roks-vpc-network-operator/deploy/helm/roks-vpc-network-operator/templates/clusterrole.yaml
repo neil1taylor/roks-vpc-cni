@@ -31,11 +31,12 @@ rules:
   - patch
   - update
   - watch
-# OVN-Kubernetes CUDNs
+# OVN-Kubernetes CUDNs and UDNs
 - apiGroups:
   - k8s.ovn.org
   resources:
   - clusteruserdefinednetworks
+  - userdefinednetworks
   verbs:
   - get
   - list

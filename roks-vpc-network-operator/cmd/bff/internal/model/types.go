@@ -18,32 +18,32 @@ type SecurityGroupRequest struct {
 type SecurityGroupResponse struct {
 	ID          string         `json:"id"`
 	Name        string         `json:"name"`
-	VPCID       string         `json:"vpc_id"`
+	VPC         RefResponse    `json:"vpc"`
 	Description string         `json:"description"`
-	CreatedAt   string         `json:"created_at"`
+	Status      string         `json:"status"`
+	CreatedAt   string         `json:"createdAt"`
 	Rules       []RuleResponse `json:"rules,omitempty"`
-	ResourceURL string         `json:"resource_url,omitempty"`
 }
 
 // RuleRequest represents a request to add/update a security group rule
 type RuleRequest struct {
-	Direction       string `json:"direction" binding:"required,oneof=inbound outbound"`
-	Protocol        string `json:"protocol" binding:"required"`
-	PortMin         *int64 `json:"port_min"`
-	PortMax         *int64 `json:"port_max"`
-	RemoteCIDR      string `json:"cidr"`
-	RemoteSGID      string `json:"security_group_id"`
+	Direction  string `json:"direction" binding:"required,oneof=inbound outbound"`
+	Protocol   string `json:"protocol" binding:"required"`
+	PortMin    *int64 `json:"portMin"`
+	PortMax    *int64 `json:"portMax"`
+	RemoteCIDR string `json:"remote"`
+	RemoteSGID string `json:"remoteSgId"`
 }
 
 // RuleResponse represents a security group rule
 type RuleResponse struct {
-	ID              string `json:"id"`
-	Direction       string `json:"direction"`
-	Protocol        string `json:"protocol"`
-	PortMin         *int64 `json:"port_min,omitempty"`
-	PortMax         *int64 `json:"port_max,omitempty"`
-	RemoteCIDR      string `json:"cidr,omitempty"`
-	RemoteSGID      string `json:"security_group_id,omitempty"`
+	ID         string `json:"id"`
+	Direction  string `json:"direction"`
+	Protocol   string `json:"protocol"`
+	PortMin    *int64 `json:"portMin,omitempty"`
+	PortMax    *int64 `json:"portMax,omitempty"`
+	Remote     string `json:"remote,omitempty"`
+	RemoteType string `json:"remoteType,omitempty"`
 }
 
 // NetworkACLRequest represents a request to create/update a network ACL
@@ -54,12 +54,13 @@ type NetworkACLRequest struct {
 
 // NetworkACLResponse represents a network ACL
 type NetworkACLResponse struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	VPCID       string            `json:"vpc_id"`
-	CreatedAt   string            `json:"created_at"`
-	Rules       []ACLRuleResponse `json:"rules,omitempty"`
-	ResourceURL string            `json:"resource_url,omitempty"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	VPC       RefResponse       `json:"vpc"`
+	Status    string            `json:"status"`
+	Subnets   []RefResponse     `json:"subnets,omitempty"`
+	CreatedAt string            `json:"createdAt"`
+	Rules     []ACLRuleResponse `json:"rules,omitempty"`
 }
 
 // ACLRuleRequest represents a request to add/update a network ACL rule
@@ -70,8 +71,8 @@ type ACLRuleRequest struct {
 	Protocol    string `json:"protocol" binding:"required"`
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
-	PortMin     *int64 `json:"port_min"`
-	PortMax     *int64 `json:"port_max"`
+	PortMin     *int64 `json:"portMin"`
+	PortMax     *int64 `json:"portMax"`
 }
 
 // ACLRuleResponse represents a network ACL rule
@@ -83,8 +84,8 @@ type ACLRuleResponse struct {
 	Protocol    string `json:"protocol"`
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
-	PortMin     *int64 `json:"port_min,omitempty"`
-	PortMax     *int64 `json:"port_max,omitempty"`
+	PortMin     *int64 `json:"portMin,omitempty"`
+	PortMax     *int64 `json:"portMax,omitempty"`
 }
 
 // VPCResponse represents a VPC
@@ -104,18 +105,95 @@ type ZoneResponse struct {
 	Status string `json:"status"`
 }
 
-// TopologyNode represents a node in the topology graph
+// RefResponse is a shared sub-type for referencing related resources.
+type RefResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// IPResponse represents an IP address.
+type IPResponse struct {
+	Address string `json:"address"`
+}
+
+// SubnetRequest represents a request to create a subnet.
+type SubnetRequest struct {
+	Name          string      `json:"name"`
+	VPC           RefResponse `json:"vpc"`
+	Zone          RefResponse `json:"zone"`
+	IPV4CIDRBlock string      `json:"ipv4CidrBlock"`
+}
+
+// SubnetResponse represents a VPC subnet.
+type SubnetResponse struct {
+	ID                        string       `json:"id"`
+	Name                      string       `json:"name"`
+	IPV4CIDRBlock             string       `json:"ipv4CidrBlock"`
+	Status                    string       `json:"status"`
+	AvailableIPv4AddressCount int64        `json:"availableIpv4AddressCount"`
+	TotalIPv4AddressCount     int64        `json:"totalIpv4AddressCount"`
+	VPC                       RefResponse  `json:"vpc"`
+	Zone                      RefResponse  `json:"zone"`
+	NetworkACL                *RefResponse `json:"networkAcl,omitempty"`
+	CreatedAt                 string       `json:"createdAt,omitempty"`
+}
+
+// VNIResponse represents a Virtual Network Interface.
+type VNIResponse struct {
+	ID                      string       `json:"id"`
+	Name                    string       `json:"name"`
+	AllowIPSpoofing         bool         `json:"allowIpSpoofing"`
+	EnableInfrastructureNat bool         `json:"enableInfrastructureNat"`
+	Subnet                  *RefResponse `json:"subnet,omitempty"`
+	PrimaryIP               *IPResponse  `json:"primaryIp,omitempty"`
+	Status                  string       `json:"status"`
+	CreatedAt               string       `json:"createdAt,omitempty"`
+}
+
+// FloatingIPRequest represents a request to reserve a floating IP.
+type FloatingIPRequest struct {
+	Name string `json:"name"`
+	Zone string `json:"zone"`
+}
+
+// FloatingIPResponse represents a floating IP.
+type FloatingIPResponse struct {
+	ID        string       `json:"id"`
+	Name      string       `json:"name"`
+	Address   string       `json:"address"`
+	Status    string       `json:"status"`
+	Zone      RefResponse  `json:"zone"`
+	Target    *RefResponse `json:"target,omitempty"`
+	CreatedAt string       `json:"createdAt,omitempty"`
+}
+
+// ReservedIPResponse represents a reserved IP in a subnet.
+type ReservedIPResponse struct {
+	ID         string       `json:"id"`
+	Name       string       `json:"name"`
+	Address    string       `json:"address"`
+	AutoDelete bool         `json:"autoDelete"`
+	Owner      string       `json:"owner"`
+	Target     *RefResponse `json:"target,omitempty"`
+	CreatedAt  string       `json:"createdAt,omitempty"`
+}
+
+// TopologyNode represents a node in the topology graph.
+// Fields match the console plugin's TopologyNode interface.
 type TopologyNode struct {
-	ID   string      `json:"id"`
-	Type string      `json:"type"` // vpc, subnet, vni, vm, sg, acl
-	Data interface{} `json:"data"`
+	ID       string                 `json:"id"`
+	Label    string                 `json:"label"`
+	Type     string                 `json:"type"` // vpc, subnet, vni, security-group, network-acl, floating-ip, network
+	Status   string                 `json:"status,omitempty"` // available, pending, error
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // TopologyEdge represents an edge in the topology graph
 type TopologyEdge struct {
+	ID     string `json:"id"`
 	Source string `json:"source"`
 	Target string `json:"target"`
-	Type   string `json:"type"` // contains, binds, associates
+	Type   string `json:"type,omitempty"` // contains, connected, protected-by, associates, targets
 }
 
 // TopologyResponse represents the aggregated topology graph
@@ -171,4 +249,142 @@ type ACLNodeData struct {
 	Name      string `json:"name"`
 	VPCID     string `json:"vpc_id"`
 	RuleCount int    `json:"rule_count"`
+}
+
+// IPAssignmentMode describes how VMs on a network receive IP addresses
+type IPAssignmentMode string
+
+const (
+	IPModeStaticReserved IPAssignmentMode = "static_reserved"
+	IPModeDHCP           IPAssignmentMode = "dhcp"
+	IPModeNone           IPAssignmentMode = "none"
+)
+
+// NetworkTier indicates the complexity/risk level of a network combination
+type NetworkTier string
+
+const (
+	TierRecommended NetworkTier = "recommended"
+	TierAdvanced    NetworkTier = "advanced"
+	TierExpert      NetworkTier = "expert"
+)
+
+// NetworkCombination describes one of the 4 valid topology+scope+role combos
+type NetworkCombination struct {
+	ID          string           `json:"id"`
+	Topology    string           `json:"topology"`
+	Scope       string           `json:"scope"`
+	Role        string           `json:"role"`
+	Tier        NetworkTier      `json:"tier"`
+	IPMode      IPAssignmentMode `json:"ip_mode"`
+	Label       string           `json:"label"`
+	Description string           `json:"description"`
+	IPModeDesc  string           `json:"ip_mode_description"`
+	RequiresVPC bool             `json:"requires_vpc"`
+}
+
+// NetworkDefinition represents a CUDN or UDN network resource
+type NetworkDefinition struct {
+	Name            string           `json:"name"`
+	Namespace       string           `json:"namespace,omitempty"`
+	Kind            string           `json:"kind"`
+	Topology        string           `json:"topology"`
+	Role            string           `json:"role,omitempty"`
+	Tier            NetworkTier      `json:"tier,omitempty"`
+	IPMode          IPAssignmentMode `json:"ip_mode,omitempty"`
+	SubnetID        string           `json:"subnet_id,omitempty"`
+	SubnetName      string           `json:"subnet_name,omitempty"`
+	SubnetStatus    string           `json:"subnet_status,omitempty"`
+	VPCID           string           `json:"vpc_id,omitempty"`
+	Zone            string           `json:"zone,omitempty"`
+	CIDR            string           `json:"cidr,omitempty"`
+	VLANID          string           `json:"vlan_id,omitempty"`
+	VLANAttachments string           `json:"vlan_attachments,omitempty"`
+}
+
+// CreateNetworkRequest represents a request to create a CUDN or UDN
+type CreateNetworkRequest struct {
+	Name             string   `json:"name"`
+	Namespace        string   `json:"namespace,omitempty"`
+	Topology         string   `json:"topology"`
+	Role             string   `json:"role,omitempty"`
+	VPCID            string   `json:"vpc_id,omitempty"`
+	Zone             string   `json:"zone,omitempty"`
+	CIDR             string   `json:"cidr,omitempty"`
+	VLANID           string   `json:"vlan_id,omitempty"`
+	SecurityGroupIDs string   `json:"security_group_ids,omitempty"`
+	ACLID            string   `json:"acl_id,omitempty"`
+	TargetNamespaces []string `json:"target_namespaces,omitempty"`
+}
+
+// NetworkTypesResponse returns available network configurations
+type NetworkTypesResponse struct {
+	Topologies   []string             `json:"topologies"`
+	Scopes       []string             `json:"scopes"`
+	Roles        []string             `json:"roles"`
+	Combinations []NetworkCombination `json:"combinations"`
+}
+
+// NetworkNodeData represents a network definition in topology
+type NetworkNodeData struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Topology  string `json:"topology"`
+	SubnetID  string `json:"subnet_id,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// NamespaceInfo represents a namespace with label information.
+type NamespaceInfo struct {
+	Name            string `json:"name"`
+	HasPrimaryLabel bool   `json:"hasPrimaryLabel"`
+}
+
+// CreateNamespaceRequest represents a request to create a namespace.
+type CreateNamespaceRequest struct {
+	Name   string            `json:"name"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// AddressPrefixResponse represents a VPC address prefix.
+type AddressPrefixResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CIDR      string `json:"cidr"`
+	Zone      string `json:"zone"`
+	IsDefault bool   `json:"isDefault"`
+}
+
+// RoutingTableResponse represents a VPC routing table.
+type RoutingTableResponse struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	IsDefault      bool   `json:"isDefault"`
+	LifecycleState string `json:"lifecycleState"`
+	RouteCount     int    `json:"routeCount"`
+	CreatedAt      string `json:"createdAt,omitempty"`
+}
+
+// RouteResponse represents a VPC route.
+type RouteResponse struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Destination    string `json:"destination"`
+	Action         string `json:"action"`
+	NextHop        string `json:"nextHop,omitempty"`
+	Zone           string `json:"zone"`
+	Priority       int64  `json:"priority"`
+	Origin         string `json:"origin"`
+	LifecycleState string `json:"lifecycleState"`
+	CreatedAt      string `json:"createdAt,omitempty"`
+}
+
+// CreateRouteRequest represents a request to create a VPC route.
+type CreateRouteRequest struct {
+	Name        string `json:"name"`
+	Destination string `json:"destination"`
+	Action      string `json:"action"`
+	NextHopIP   string `json:"nextHopIp,omitempty"`
+	Zone        string `json:"zone"`
+	Priority    *int64 `json:"priority,omitempty"`
 }

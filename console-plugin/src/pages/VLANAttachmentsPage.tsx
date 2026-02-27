@@ -1,26 +1,22 @@
 import React from 'react';
 import {
-  Page,
   PageSection,
-  PageSectionVariants,
-  Title,
   Card,
   CardBody,
-  Button,
-  ButtonVariant,
-  Toolbar,
-  ToolbarContent,
-  ToolbarItem,
   EmptyState,
   EmptyStateIcon,
   EmptyStateBody,
   EmptyStateHeader,
   Spinner,
+  Text,
+  TextVariants,
 } from '@patternfly/react-core';
-import { PlusCircleIcon, CubesIcon } from '@patternfly/react-icons';
+import { CubesIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tbody, Tr, Th, Td } from '@patternfly/react-table';
 import { useK8sVLANAttachments, useClusterInfo } from '../api/hooks';
+import { VLANAttachmentResource } from '../api/types';
 import { formatRelativeTime } from '../utils/formatters';
+import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 /**
  * VLAN Attachments Page
@@ -29,21 +25,16 @@ import { formatRelativeTime } from '../utils/formatters';
  * ROKS platform. Shows a "Coming Soon" placeholder until the ROKS API is available.
  */
 const VLANAttachmentsPage: React.FC = () => {
-  const { clusterInfo, loading: clusterInfoLoading } = useClusterInfo();
-  const vlanManagementEnabled = clusterInfo?.features?.vlanAttachmentManagement !== false;
+  const { clusterInfo, loading: clusterInfoLoading, isROKS } = useClusterInfo();
   const roksAPIAvailable = clusterInfo?.features?.roksAPIAvailable === true;
 
   const { attachments, loading: attachmentsLoading } = useK8sVLANAttachments();
   const loading = clusterInfoLoading || attachmentsLoading;
 
-  // ROKS cluster without ROKS API — show Coming Soon
-  if (!clusterInfoLoading && !vlanManagementEnabled && !roksAPIAvailable) {
+  // ROKS cluster without ROKS API — show Coming Soon (VLAN attachments are platform-managed)
+  if (!clusterInfoLoading && isROKS && !roksAPIAvailable) {
     return (
-      <Page>
-        <PageSection variant={PageSectionVariants.light}>
-          <Title headingLevel="h1">VLAN Attachments</Title>
-        </PageSection>
-
+      <VPCNetworkingShell>
         <PageSection>
           <Card>
             <CardBody>
@@ -66,27 +57,17 @@ const VLANAttachmentsPage: React.FC = () => {
             </CardBody>
           </Card>
         </PageSection>
-      </Page>
+      </VPCNetworkingShell>
     );
   }
 
   return (
-    <Page>
-      <PageSection variant={PageSectionVariants.light}>
-        <Title headingLevel="h1">VLAN Attachments</Title>
-      </PageSection>
-
+    <VPCNetworkingShell>
       <PageSection>
+        <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
+          VLAN attachments on bare metal worker nodes that bridge VPC subnets to OVN LocalNet networks.
+        </Text>
         <Card>
-          <Toolbar>
-            <ToolbarContent>
-              <ToolbarItem>
-                <Button variant={ButtonVariant.primary} icon={<PlusCircleIcon />}>
-                  Create Attachment
-                </Button>
-              </ToolbarItem>
-            </ToolbarContent>
-          </Toolbar>
           <CardBody>
             {loading ? (
               <div style={{ textAlign: 'center', padding: '40px' }}><Spinner size="lg" /></div>
@@ -97,18 +78,24 @@ const VLANAttachmentsPage: React.FC = () => {
                 <Thead>
                   <Tr>
                     <Th>Name</Th>
+                    <Th>Node</Th>
                     <Th>VLAN ID</Th>
+                    <Th>Network</Th>
                     <Th>Status</Th>
+                    <Th>Sync</Th>
                     <Th>Age</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {attachments.map((item) => (
-                    <Tr key={item.id || item.name}>
-                      <Td>{item.name || '-'}</Td>
-                      <Td>{item.spec?.vlan ?? '-'}</Td>
-                      <Td>{item.status?.synced ? 'Synced' : 'Pending'}</Td>
-                      <Td>{formatRelativeTime(item.createdAt)}</Td>
+                  {attachments.map((item: VLANAttachmentResource) => (
+                    <Tr key={item.metadata?.name || item.id || item.name}>
+                      <Td>{item.metadata?.name || item.name || '-'}</Td>
+                      <Td>{item.spec?.nodeName || '-'}</Td>
+                      <Td>{item.spec?.vlanID ?? '-'}</Td>
+                      <Td>{item.metadata?.labels?.['vpc.roks.ibm.com/network'] || '-'}</Td>
+                      <Td>{item.status?.attachmentStatus || '-'}</Td>
+                      <Td>{item.status?.syncStatus || '-'}</Td>
+                      <Td>{formatRelativeTime(item.metadata?.creationTimestamp || item.createdAt)}</Td>
                     </Tr>
                   ))}
                 </Tbody>
@@ -117,7 +104,7 @@ const VLANAttachmentsPage: React.FC = () => {
           </CardBody>
         </Card>
       </PageSection>
-    </Page>
+    </VPCNetworkingShell>
   );
 };
 

@@ -1,9 +1,6 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  Page,
   PageSection,
-  PageSectionVariants,
-  Title,
   Card,
   CardBody,
   Button,
@@ -12,30 +9,41 @@ import {
   ToolbarContent,
   ToolbarItem,
   Spinner,
+  Text,
+  TextVariants,
 } from '@patternfly/react-core';
 import { PlusCircleIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tbody, Tr, Th, Td } from '@patternfly/react-table';
+import { Link } from 'react-router-dom-v5-compat';
 import { useFloatingIPs } from '../api/hooks';
 import StatusBadge from '../components/StatusBadge';
+import VPCNetworkingShell from '../components/VPCNetworkingShell';
+import CreateFloatingIPModal from '../components/CreateFloatingIPModal';
 
-/**
- * Floating IPs Page
- */
 const FloatingIPsPage: React.FC = () => {
   const { floatingIps, loading } = useFloatingIPs();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+
+  const handleCreated = useCallback(() => {
+    setIsCreateOpen(false);
+    window.location.reload();
+  }, []);
 
   return (
-    <Page>
-      <PageSection variant={PageSectionVariants.light}>
-        <Title headingLevel="h1">Floating IPs</Title>
-      </PageSection>
-
+    <VPCNetworkingShell>
       <PageSection>
+        <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
+          Public floating IPs that can be attached to VNIs to give VMs internet-reachable addresses.
+        </Text>
         <Card>
           <Toolbar>
             <ToolbarContent>
               <ToolbarItem>
-                <Button variant={ButtonVariant.primary} icon={<PlusCircleIcon />}>
+                <Button
+                  variant={ButtonVariant.primary}
+                  icon={<PlusCircleIcon />}
+                  onClick={() => setIsCreateOpen(true)}
+                >
                   Reserve Floating IP
                 </Button>
               </ToolbarItem>
@@ -60,7 +68,7 @@ const FloatingIPsPage: React.FC = () => {
                 <Tbody>
                   {floatingIps.map((fip) => (
                     <Tr key={fip.id || fip.name}>
-                      <Td>{fip.name || '-'}</Td>
+                      <Td><Link to={`/vpc-networking/floating-ips/${fip.id}`}>{fip.name || '-'}</Link></Td>
                       <Td>{fip.address || '-'}</Td>
                       <Td>{fip.target?.name || '-'}</Td>
                       <Td>{fip.zone?.name || '-'}</Td>
@@ -73,7 +81,12 @@ const FloatingIPsPage: React.FC = () => {
           </CardBody>
         </Card>
       </PageSection>
-    </Page>
+      <CreateFloatingIPModal
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        onCreated={handleCreated}
+      />
+    </VPCNetworkingShell>
   );
 };
 

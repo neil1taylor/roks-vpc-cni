@@ -6,6 +6,8 @@ import { mockFloatingIPs } from '../fixtures/floating-ips';
 import { mockSecurityGroups } from '../fixtures/security-groups';
 import { mockNetworkACLs } from '../fixtures/network-acls';
 import { mockTopology } from '../fixtures/topology';
+import { mockCUDNs, mockUDNs } from '../fixtures/networks';
+import { mockNetworkTypes } from '../fixtures/network-types';
 
 const BFF_PREFIX = '**/api/proxy/plugin/vpc-network-management/bff/api/v1';
 
@@ -132,6 +134,40 @@ export async function setupDefaultApiMocks(page: Page): Promise<void> {
   // Topology
   await page.route(`${BFF_PREFIX}/topology`, (route) =>
     route.fulfill(json(mockTopology)),
+  );
+
+  // CUDNs
+  await page.route(`${BFF_PREFIX}/cudns/*`, (route) => {
+    const url = route.request().url();
+    const name = url.split('/').pop()!.split('?')[0];
+    const cudn = mockCUDNs.find((c) => c.name === name);
+    return route.fulfill(cudn
+      ? json(cudn)
+      : json({ code: 'NOT_FOUND', message: 'CUDN not found' }, 404));
+  });
+
+  await page.route(`${BFF_PREFIX}/cudns`, (route) =>
+    route.fulfill(json(mockCUDNs)),
+  );
+
+  // UDNs
+  await page.route(`${BFF_PREFIX}/udns/**`, (route) => {
+    const url = route.request().url();
+    const segments = url.split('/');
+    const name = segments.pop()!.split('?')[0];
+    const udn = mockUDNs.find((u) => u.name === name);
+    return route.fulfill(udn
+      ? json(udn)
+      : json({ code: 'NOT_FOUND', message: 'UDN not found' }, 404));
+  });
+
+  await page.route(`${BFF_PREFIX}/udns`, (route) =>
+    route.fulfill(json(mockUDNs)),
+  );
+
+  // Network types
+  await page.route(`${BFF_PREFIX}/network-types`, (route) =>
+    route.fulfill(json(mockNetworkTypes)),
   );
 
   // Zones

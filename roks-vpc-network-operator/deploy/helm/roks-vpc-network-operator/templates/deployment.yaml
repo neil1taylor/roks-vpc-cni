@@ -16,6 +16,10 @@ spec:
         app: roks-vpc-network-operator
     spec:
       serviceAccountName: roks-vpc-network-operator
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
       - name: manager
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -40,7 +44,7 @@ spec:
         - name: RESOURCE_GROUP_ID
           value: {{ .Values.vpc.resourceGroupID | quote }}
         - name: CLUSTER_MODE
-          value: {{ .Values.bff.clusterMode | quote }}
+          value: "unmanaged"  # Always VPC API until ROKS platform API ships
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         livenessProbe:
@@ -55,11 +59,22 @@ spec:
             port: health
           initialDelaySeconds: 5
           periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
         volumeMounts:
         - name: webhook-certs
           mountPath: {{ .Values.webhook.certDir }}
           readOnly: true
+        - name: tmp
+          mountPath: /tmp
       volumes:
       - name: webhook-certs
         secret:
           secretName: roks-vpc-network-operator-webhook-tls
+      - name: tmp
+        emptyDir: {}

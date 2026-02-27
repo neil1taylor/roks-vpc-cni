@@ -195,7 +195,7 @@ func TestInjectCloudInitNetworkConfig(t *testing.T) {
 		},
 	}
 
-	injectCloudInitNetworkConfig(vmObj, "10.240.64.12")
+	injectCloudInitNetworkConfig(vmObj, []localNetIPEntry{{ip: "10.240.64.12", name: "net1"}})
 
 	volumes, _ := getNestedSlice(vmObj, "spec", "template", "spec", "volumes")
 	if len(volumes) != 1 {

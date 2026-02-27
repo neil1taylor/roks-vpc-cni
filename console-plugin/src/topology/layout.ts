@@ -3,18 +3,18 @@ import {
   EdgeModel,
   Model,
 } from '@patternfly/react-topology';
-import { createNodeModel, createGroupNode, NODE_TYPES } from './nodes';
-import { createEdgeModel, determineEdgeType } from './edges';
+import { createNodeModel, createGroupNode, NODE_TYPES, mapBFFStatus } from './nodes';
+import { BFF_EDGE_TYPES, STRUCTURAL_EDGE_TYPES, createVisibleEdge } from './edges';
 
 /**
- * Topology data structure from API
+ * Topology data structure from BFF API
  */
 export interface TopologyNode {
   id: string;
   name: string;
-  type: 'vpc' | 'subnet' | 'vni' | 'vm' | 'security-group' | 'acl';
+  type: string;
+  status?: string;
   resourceId?: string;
-  parentId?: string;
   details?: Record<string, string>;
 }
 
@@ -22,6 +22,7 @@ export interface TopologyEdge {
   id: string;
   source: string;
   target: string;
+  type?: string;
 }
 
 export interface TopologyData {
@@ -30,134 +31,132 @@ export interface TopologyData {
 }
 
 /**
- * Transform TopologyData from API into PatternFly Graph model
+ * Normalise the BFF node type to one of our NODE_TYPES values.
+ * CUDNs and UDNs come from the BFF with type "subnet" but metadata.resource_type set.
  */
-export const transformTopologyData = (data: TopologyData): { nodes: NodeModel[]; edges: EdgeModel[] } => {
-  const nodeMap = new Map<string, NodeModel>();
-  const edgeModels: EdgeModel[] = [];
-
-  // Group nodes by parent for hierarchical layout
-  const nodesByParent = new Map<string, TopologyNode[]>();
-  const vpcNodes: TopologyNode[] = [];
-  const topLevelNodes: TopologyNode[] = [];
-
-  // First pass: organize nodes by parent
-  data.nodes.forEach((node) => {
-    if (node.type === 'vpc') {
-      vpcNodes.push(node);
-      if (!nodesByParent.has('root')) {
-        nodesByParent.set('root', []);
-      }
-      nodesByParent.get('root')!.push(node);
-    } else if (node.parentId) {
-      if (!nodesByParent.has(node.parentId)) {
-        nodesByParent.set(node.parentId, []);
-      }
-      nodesByParent.get(node.parentId)!.push(node);
-    } else {
-      topLevelNodes.push(node);
-    }
-  });
-
-  // Create node models for VPCs (as groups)
-  let vpcIndex = 0;
-  vpcNodes.forEach((vpcNode) => {
-    const childIds = nodesByParent.get(vpcNode.id)?.map((n) => n.id) || [];
-
-    const groupModel = createGroupNode({
-      id: vpcNode.id,
-      label: vpcNode.name,
-      nodeType: NODE_TYPES.VPC,
-      resourceId: vpcNode.resourceId,
-      details: vpcNode.details,
-      children: childIds,
-      width: 600,
-      height: 400,
-      x: vpcIndex * 650,
-      y: 50,
-    });
-
-    nodeMap.set(vpcNode.id, groupModel);
-    vpcIndex++;
-  });
-
-  // Create subnet group nodes (children of VPCs)
-  let subnetIndex = 0;
-  data.nodes.forEach((node) => {
-    if (node.type === 'subnet' && node.parentId) {
-      const childIds = nodesByParent.get(node.id)?.map((n) => n.id) || [];
-
-      const subnetModel = createGroupNode({
-        id: node.id,
-        label: node.name,
-        nodeType: NODE_TYPES.SUBNET,
-        resourceId: node.resourceId,
-        details: node.details,
-        children: childIds,
-        parent: node.parentId,
-        width: 350,
-        height: 250,
-        x: subnetIndex * 50,
-        y: subnetIndex * 50,
-      });
-
-      nodeMap.set(node.id, subnetModel);
-      subnetIndex++;
-    }
-  });
-
-  // Create leaf nodes (VNI, VM, Security Groups, ACLs)
-  let leafIndex = 0;
-  data.nodes.forEach((node) => {
-    if (node.type === 'subnet' || node.type === 'vpc') {
-      return; // Already handled as groups
-    }
-
-    const leafModel = createNodeModel({
-      id: node.id,
-      label: node.name,
-      nodeType: node.type as any,
-      resourceId: node.resourceId,
-      details: node.details,
-      parent: node.parentId,
-      width: 60,
-      height: 60,
-      x: leafIndex * 100,
-      y: leafIndex * 100,
-    });
-
-    nodeMap.set(node.id, leafModel);
-    leafIndex++;
-  });
-
-  // Create edge models
-  data.edges.forEach((edge, index) => {
-    const sourceNode = data.nodes.find((n) => n.id === edge.source);
-    const targetNode = data.nodes.find((n) => n.id === edge.target);
-
-    if (!sourceNode || !targetNode) {
-      return;
-    }
-
-    const edgeType = determineEdgeType(sourceNode.type, targetNode.type);
-    const edgeModel = createEdgeModel({
-      id: edge.id || `edge-${index}`,
-      source: edge.source,
-      target: edge.target,
-      edgeType,
-    });
-
-    edgeModels.push(edgeModel);
-  });
-
-  return {
-    nodes: Array.from(nodeMap.values()),
-    edges: edgeModels,
-  };
+const normalizeNodeType = (node: TopologyNode): string => {
+  if (node.details?.resource_type === 'cudn') return NODE_TYPES.CUDN;
+  if (node.details?.resource_type === 'udn') return NODE_TYPES.UDN;
+  // Map BFF types to our types
+  switch (node.type) {
+    case 'vpc': return NODE_TYPES.VPC;
+    case 'subnet': return NODE_TYPES.SUBNET;
+    case 'vni': return NODE_TYPES.VNI;
+    case 'vm': return NODE_TYPES.VM;
+    case 'security-group': return NODE_TYPES.SECURITY_GROUP;
+    case 'network-acl': return NODE_TYPES.ACL;
+    case 'floating-ip': return NODE_TYPES.FLOATING_IP;
+    default: return node.type;
+  }
 };
 
 /**
- * Create a topology model from nodes and edges
+ * Transform BFF TopologyData into PatternFly graph nodes and edges.
+ *
+ * Layout strategy (Cola force-directed with groups):
+ *   - `contains` and `connected` edges are STRUCTURAL: build parent→child groups
+ *     (VPC groups containing SGs/ACLs/Subnets; Subnet groups containing VNIs)
+ *   - `targets` (FIP→VNI): co-locate FIP into the VNI's subnet group + visible edge
+ *   - `associates` / `protected-by`: visible edges only (no grouping)
+ *
+ * Cola naturally handles disconnected subgraphs (multiple VPCs) by pushing
+ * groups apart and filling the viewport space.
+ */
+export const transformTopologyData = (
+  data: TopologyData
+): { nodes: NodeModel[]; edges: EdgeModel[] } => {
+  // Lookup maps
+  const nodeById = new Map<string, TopologyNode>();
+  const resolvedType = new Map<string, string>();
+  data.nodes.forEach((n) => {
+    nodeById.set(n.id, n);
+    resolvedType.set(n.id, normalizeNodeType(n));
+  });
+
+  // parent→children mapping (built from structural edges)
+  const children = new Map<string, Set<string>>();
+  const parentOf = new Map<string, string>();
+
+  const addChild = (parentId: string, childId: string) => {
+    if (!children.has(parentId)) children.set(parentId, new Set());
+    children.get(parentId)!.add(childId);
+    parentOf.set(childId, parentId);
+  };
+
+  const visibleEdges: EdgeModel[] = [];
+
+  // ── Pass 1: structural edges → group hierarchy ──
+  for (const edge of data.edges) {
+    if (!STRUCTURAL_EDGE_TYPES.has(edge.type ?? '')) continue;
+    if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) continue;
+    addChild(edge.source, edge.target);
+  }
+
+  // ── Pass 2: visible edges + co-location ──
+  for (const edge of data.edges) {
+    if (STRUCTURAL_EDGE_TYPES.has(edge.type ?? '')) continue;
+    if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) continue;
+
+    const sourceType = resolvedType.get(edge.source)!;
+    const targetType = resolvedType.get(edge.target)!;
+
+    // targets: FIP→VNI — place FIP in the same parent as the VNI
+    if (edge.type === BFF_EDGE_TYPES.TARGETS &&
+        sourceType === NODE_TYPES.FLOATING_IP && targetType === NODE_TYPES.VNI) {
+      const vniParent = parentOf.get(edge.target);
+      if (vniParent && !parentOf.has(edge.source)) {
+        addChild(vniParent, edge.source);
+      }
+    }
+
+    visibleEdges.push(
+      createVisibleEdge(edge.id, edge.source, edge.target, edge.type ?? 'targets')
+    );
+  }
+
+  // ── Build NodeModels ──
+  const models: NodeModel[] = [];
+
+  for (const node of data.nodes) {
+    const type = resolvedType.get(node.id)!;
+    const status = mapBFFStatus(node.status);
+    const childSet = children.get(node.id);
+    const childIds = childSet ? Array.from(childSet) : undefined;
+    const isGroupable = type === NODE_TYPES.VPC || type === NODE_TYPES.SUBNET;
+
+    if (isGroupable && childIds && childIds.length > 0) {
+      models.push(
+        createGroupNode({
+          id: node.id,
+          label: node.name,
+          nodeType: type as any,
+          resourceId: node.resourceId,
+          status,
+          details: node.details,
+          children: childIds,
+        })
+      );
+    } else {
+      models.push(
+        createNodeModel({
+          id: node.id,
+          label: node.name,
+          nodeType: type as any,
+          resourceId: node.resourceId,
+          status,
+          details: node.details,
+          width: 75,
+          height: 75,
+        })
+      );
+    }
+  }
+
+  return { nodes: models, edges: visibleEdges };
+};
+
+/**
+ * Create the full PatternFly Model with DagreGroups layout
  */
 export const createTopologyGraph = (
   nodes: NodeModel[],
@@ -237,24 +236,6 @@ export const filterNodesByType = (
 };
 
 /**
- * Build ancestor path for a node
- */
-export const getAncestorPath = (
-  data: TopologyData,
-  nodeId: string
-): TopologyNode[] => {
-  const path: TopologyNode[] = [];
-  let current = findTopologyNode(data, nodeId);
-
-  while (current) {
-    path.unshift(current);
-    current = current.parentId ? findTopologyNode(data, current.parentId) : undefined;
-  }
-
-  return path;
-};
-
-/**
  * Calculate topology statistics
  */
 export interface TopologyStats {
@@ -266,20 +247,16 @@ export interface TopologyStats {
 
 export const calculateTopologyStats = (data: TopologyData): TopologyStats => {
   const nodesByType: Record<string, number> = {};
-  let maxDepth = 0;
 
   data.nodes.forEach((node) => {
-    nodesByType[node.type] = (nodesByType[node.type] || 0) + 1;
-
-    // Calculate depth
-    const path = getAncestorPath(data, node.id);
-    maxDepth = Math.max(maxDepth, path.length);
+    const type = normalizeNodeType(node);
+    nodesByType[type] = (nodesByType[type] || 0) + 1;
   });
 
   return {
     totalNodes: data.nodes.length,
     nodesByType,
     totalEdges: data.edges.length,
-    depth: maxDepth,
+    depth: 0, // Dagre computes depth internally
   };
 };

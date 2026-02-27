@@ -2,6 +2,8 @@
 
 This guide covers creating and managing VPC-backed networks for KubeVirt VMs using ClusterUserDefinedNetworks (CUDNs). Each CUDN provisions a VPC subnet and associated VLAN attachments on all bare metal nodes in the specified zone.
 
+For a complete reference of all valid network type combinations, see [Network Types Reference](../reference/network-types.md).
+
 ## Creating a CUDN
 
 A ClusterUserDefinedNetwork (CUDN) is an OVN-Kubernetes resource that defines a LocalNet network. The VPC Network Operator watches CUDNs annotated with `vpc.roks.ibm.com/*` annotations and provisions the corresponding VPC resources automatically.
@@ -38,22 +40,24 @@ metadata:
     # If omitted, the VPC default ACL is used.
     vpc.roks.ibm.com/acl-id: "r006-cccccccc-cccc-cccc-cccc-cccccccccccc"
 spec:
-  topology: LocalNet
+  namespaceSelector: {}
   network:
-    localNet:
+    topology: Localnet
+    localnet:
       role: Secondary
       physicalNetworkName: production-net
-      subnets:
-        cidrs:
-          - "10.240.10.0/24"
+      ipam:
+        mode: Disabled
 ```
+
+> **Note:** For LocalNet networks, `ipam.mode: Disabled` is required because the VPC API manages IP allocation, not OVN. The CIDR is stored only in the `vpc.roks.ibm.com/cidr` annotation — do not put `subnets` in the CRD spec.
 
 ### Annotation reference
 
 | Annotation | Required | Description |
 |-----------|----------|-------------|
 | `vpc.roks.ibm.com/zone` | Yes | VPC availability zone (e.g., `us-south-1`, `us-south-2`). |
-| `vpc.roks.ibm.com/cidr` | Yes | CIDR block for the VPC subnet. Must match the `spec.network.localNet.subnets.cidrs` entry. |
+| `vpc.roks.ibm.com/cidr` | Yes | CIDR block for the VPC subnet. Stored in annotations only (not in the CRD spec). |
 | `vpc.roks.ibm.com/vpc-id` | Yes | VPC ID where the subnet is created. |
 | `vpc.roks.ibm.com/vlan-id` | Yes | VLAN ID for the LocalNet bridge mapping. Must be unique per bare metal node. |
 | `vpc.roks.ibm.com/security-group-ids` | Yes | Comma-separated security group IDs applied to all VNIs on this network. |
@@ -141,14 +145,14 @@ metadata:
     vpc.roks.ibm.com/vlan-id: "100"
     vpc.roks.ibm.com/security-group-ids: "r006-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 spec:
-  topology: LocalNet
+  namespaceSelector: {}
   network:
-    localNet:
+    topology: Localnet
+    localnet:
       role: Secondary
       physicalNetworkName: production-net-zone1
-      subnets:
-        cidrs:
-          - "10.240.10.0/24"
+      ipam:
+        mode: Disabled
 ---
 # Zone 2
 apiVersion: k8s.ovn.org/v1
@@ -162,14 +166,14 @@ metadata:
     vpc.roks.ibm.com/vlan-id: "100"
     vpc.roks.ibm.com/security-group-ids: "r006-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 spec:
-  topology: LocalNet
+  namespaceSelector: {}
   network:
-    localNet:
+    topology: Localnet
+    localnet:
       role: Secondary
       physicalNetworkName: production-net-zone2
-      subnets:
-        cidrs:
-          - "10.240.20.0/24"
+      ipam:
+        mode: Disabled
 ```
 
 Note that the VLAN ID can be the same across zones because VLAN IDs only need to be unique per bare metal node.
@@ -190,14 +194,19 @@ metadata:
     vpc.roks.ibm.com/vlan-id: "200"
     vpc.roks.ibm.com/security-group-ids: "r006-tenant-a-sg-id"
 spec:
-  topology: LocalNet
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values:
+          - tenant-a
   network:
-    localNet:
+    topology: Localnet
+    localnet:
       role: Secondary
       physicalNetworkName: tenant-a-net
-      subnets:
-        cidrs:
-          - "10.240.30.0/24"
+      ipam:
+        mode: Disabled
 ```
 
 ### Key constraints for multiple networks

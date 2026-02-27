@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useK8sWatchResource } from '@openshift-console/dynamic-plugin-sdk';
 import { apiClient } from './client';
 import {
@@ -15,6 +15,12 @@ import {
   VirtualNetworkInterfaceResource,
   VLANAttachmentResource,
   FloatingIPResource,
+  NetworkDefinition,
+  NetworkTypesInfo,
+  AddressPrefix,
+  RoutingTable,
+  Route,
+  ReservedIP,
   ApiResponse,
   ApiError,
 } from './types';
@@ -160,6 +166,19 @@ export function useSubnet(subnetId: string): {
   return { subnet, loading, error };
 }
 
+// Reserved IP Hooks
+export function useSubnetReservedIPs(subnetId: string): {
+  reservedIPs: ReservedIP[] | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const { data: reservedIPs, loading, error } = useBFFData(
+    () => apiClient.listSubnetReservedIPs(subnetId),
+    [subnetId],
+  );
+  return { reservedIPs, loading, error };
+}
+
 // Virtual Network Interface Hooks
 export function useVNIs(subnetId?: string): {
   vnis: VirtualNetworkInterface[] | null;
@@ -271,6 +290,119 @@ export function useTopology(vpcId?: string): {
     [vpcId],
   );
   return { topology, loading, error };
+}
+
+// Network Definition Hooks
+export function useNetworkDefinitions(): {
+  networks: NetworkDefinition[] | null;
+  loading: boolean;
+  error: ApiError | null;
+  refetch: () => void;
+} {
+  const [networks, setNetworks] = useState<NetworkDefinition[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [fetchCount, setFetchCount] = useState(0);
+
+  const refetch = useCallback(() => setFetchCount((c) => c + 1), []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchData = async () => {
+      setLoading(true);
+      const [cudnResp, udnResp] = await Promise.all([
+        apiClient.listCUDNs(),
+        apiClient.listUDNs(),
+      ]);
+      if (mounted) {
+        const all: NetworkDefinition[] = [];
+        if (cudnResp.data) all.push(...cudnResp.data);
+        if (udnResp.data) all.push(...udnResp.data);
+        setNetworks(all);
+        setError(cudnResp.error || udnResp.error || null);
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+    return () => { mounted = false; };
+  }, [fetchCount]);
+
+  return { networks, loading, error, refetch };
+}
+
+// Network Types Hook (combinations, tiers, IP modes)
+export function useNetworkTypes(): {
+  networkTypes: NetworkTypesInfo | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const { data: networkTypes, loading, error } = useBFFData(
+    () => apiClient.getNetworkTypes(),
+    [],
+  );
+  return { networkTypes, loading, error };
+}
+
+// Single Network Definition Hook (fetches CUDN or UDN by name)
+export function useNetworkDefinition(
+  name: string,
+  kind?: string,
+  namespace?: string,
+): {
+  network: NetworkDefinition | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const { data: network, loading, error } = useBFFData(
+    () => {
+      if (kind === 'UserDefinedNetwork' && namespace) {
+        return apiClient.getUDN(namespace, name);
+      }
+      return apiClient.getCUDN(name);
+    },
+    [name, kind, namespace],
+  );
+  return { network, loading, error };
+}
+
+// Routing Table Hooks
+export function useRoutingTables(): {
+  routingTables: RoutingTable[] | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const { data: routingTables, loading, error } = useBFFData(
+    () => apiClient.listRoutingTables(),
+    [],
+  );
+  return { routingTables, loading, error };
+}
+
+// Address Prefix Hooks
+export function useAddressPrefixes(vpcId?: string): {
+  addressPrefixes: AddressPrefix[] | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const { data: addressPrefixes, loading, error } = useBFFData(
+    () => apiClient.listAddressPrefixes(vpcId),
+    [vpcId],
+  );
+  return { addressPrefixes, loading, error };
+}
+
+export function useRoutes(routingTableId: string): {
+  routes: Route[] | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const { data: routes, loading, error } = useBFFData(
+    () => apiClient.listRoutes(routingTableId),
+    [routingTableId],
+  );
+  return { routes, loading, error };
 }
 
 // Kubernetes CR Hooks

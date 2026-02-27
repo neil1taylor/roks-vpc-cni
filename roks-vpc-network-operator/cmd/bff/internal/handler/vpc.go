@@ -11,13 +11,16 @@ import (
 
 // VPCHandler handles VPC operations
 type VPCHandler struct {
-	vpcClient vpc.ExtendedClient
+	vpcClient    vpc.ExtendedClient
+	defaultVPCID string
 }
 
-// NewVPCHandler creates a new VPC handler
-func NewVPCHandler(vpcClient vpc.ExtendedClient) *VPCHandler {
+// NewVPCHandler creates a new VPC handler. When defaultVPCID is set, ListVPCs
+// returns only that VPC instead of listing all VPCs in the account.
+func NewVPCHandler(vpcClient vpc.ExtendedClient, defaultVPCID string) *VPCHandler {
 	return &VPCHandler{
-		vpcClient: vpcClient,
+		vpcClient:    vpcClient,
+		defaultVPCID: defaultVPCID,
 	}
 }
 
@@ -28,7 +31,27 @@ func (h *VPCHandler) ListVPCs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.DebugContext(r.Context(), "listing VPCs")
+	slog.DebugContext(r.Context(), "listing VPCs", "defaultVPCID", h.defaultVPCID)
+
+	// When scoped to a cluster VPC, fetch only that VPC instead of listing all.
+	// If GetVPC fails (e.g. wrong ID), gracefully fall through to ListVPCs.
+	if h.defaultVPCID != "" {
+		vpcObj, err := h.vpcClient.GetVPC(r.Context(), h.defaultVPCID)
+		if err != nil {
+			slog.WarnContext(r.Context(), "GetVPC failed for configured VPC ID, falling back to ListVPCs",
+				"vpcID", h.defaultVPCID, "error", err)
+			// fall through to ListVPCs below
+		} else {
+			WriteJSON(w, http.StatusOK, []model.VPCResponse{{
+				ID:        vpcObj.ID,
+				Name:      vpcObj.Name,
+				Region:    vpcObj.Region,
+				CreatedAt: vpcObj.CreatedAt,
+				Status:    vpcObj.Status,
+			}})
+			return
+		}
+	}
 
 	vpcs, err := h.vpcClient.ListVPCs(r.Context())
 	if err != nil {

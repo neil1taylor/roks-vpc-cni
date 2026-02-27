@@ -12,15 +12,17 @@ import (
 
 // NetworkACLHandler handles network ACL operations
 type NetworkACLHandler struct {
-	vpcClient vpc.ExtendedClient
-	rbac      *auth.RBACChecker
+	vpcClient    vpc.ExtendedClient
+	rbac         *auth.RBACChecker
+	defaultVPCID string
 }
 
 // NewNetworkACLHandler creates a new network ACL handler
-func NewNetworkACLHandler(vpcClient vpc.ExtendedClient, rbac *auth.RBACChecker) *NetworkACLHandler {
+func NewNetworkACLHandler(vpcClient vpc.ExtendedClient, rbac *auth.RBACChecker, defaultVPCID string) *NetworkACLHandler {
 	return &NetworkACLHandler{
-		vpcClient: vpcClient,
-		rbac:      rbac,
+		vpcClient:    vpcClient,
+		rbac:         rbac,
+		defaultVPCID: defaultVPCID,
 	}
 }
 
@@ -32,6 +34,9 @@ func (h *NetworkACLHandler) ListNetworkACLs(w http.ResponseWriter, r *http.Reque
 	}
 
 	vpcID := GetQueryParam(r, "vpc_id")
+	if vpcID == "" {
+		vpcID = h.defaultVPCID
+	}
 	slog.DebugContext(r.Context(), "listing network ACLs", "vpc_id", vpcID)
 
 	acls, err := h.vpcClient.ListNetworkACLs(r.Context(), vpcID)
@@ -43,10 +48,16 @@ func (h *NetworkACLHandler) ListNetworkACLs(w http.ResponseWriter, r *http.Reque
 
 	responses := make([]model.NetworkACLResponse, 0, len(acls))
 	for _, acl := range acls {
+		subnets := make([]model.RefResponse, 0, len(acl.Subnets))
+		for _, sid := range acl.Subnets {
+			subnets = append(subnets, model.RefResponse{ID: sid})
+		}
 		responses = append(responses, model.NetworkACLResponse{
 			ID:        acl.ID,
 			Name:      acl.Name,
-			VPCID:     acl.VPCID,
+			VPC:       model.RefResponse{ID: acl.VPCID},
+			Status:    "available",
+			Subnets:   subnets,
 			CreatedAt: acl.CreatedAt,
 		})
 	}
@@ -99,7 +110,8 @@ func (h *NetworkACLHandler) CreateNetworkACL(w http.ResponseWriter, r *http.Requ
 	resp := model.NetworkACLResponse{
 		ID:        acl.ID,
 		Name:      acl.Name,
-		VPCID:     acl.VPCID,
+		VPC:       model.RefResponse{ID: acl.VPCID},
+		Status:    "available",
 		CreatedAt: acl.CreatedAt,
 	}
 
@@ -141,10 +153,17 @@ func (h *NetworkACLHandler) GetNetworkACL(w http.ResponseWriter, r *http.Request
 		})
 	}
 
+	subnets := make([]model.RefResponse, 0, len(acl.Subnets))
+	for _, sid := range acl.Subnets {
+		subnets = append(subnets, model.RefResponse{ID: sid})
+	}
+
 	resp := model.NetworkACLResponse{
 		ID:        acl.ID,
 		Name:      acl.Name,
-		VPCID:     acl.VPCID,
+		VPC:       model.RefResponse{ID: acl.VPCID},
+		Status:    "available",
+		Subnets:   subnets,
 		CreatedAt: acl.CreatedAt,
 		Rules:     ruleResponses,
 	}

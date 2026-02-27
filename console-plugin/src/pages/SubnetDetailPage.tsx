@@ -1,40 +1,44 @@
 import React from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom-v5-compat';
 import {
-  Page,
   PageSection,
   PageSectionVariants,
-  Title,
   Card,
   CardBody,
+  CardTitle,
   Breadcrumb,
   BreadcrumbItem,
   Spinner,
+  Button,
   DescriptionList,
   DescriptionListGroup,
   DescriptionListTerm,
   DescriptionListDescription,
+  Label,
 } from '@patternfly/react-core';
-import { useSubnet } from '../api/hooks';
+import { Table, Thead, Tbody, Tr, Th, Td } from '@patternfly/react-table';
+import { Link } from 'react-router-dom-v5-compat';
+import { useSubnet, useSubnetReservedIPs } from '../api/hooks';
 import { StatusBadge } from '../components/StatusBadge';
-import { formatTimestamp } from '../utils/formatters';
+import { formatTimestamp, formatRelativeTime } from '../utils/formatters';
+import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 /**
  * Subnet Detail Page
  * Displays detailed information about a specific subnet
  */
 const SubnetDetailPage: React.FC = () => {
-  const { name } = useParams<{ name: string }>();
-  const { subnet, loading } = useSubnet(name || '');
+  const { id } = useParams<{ id: string }>();
+  const { subnet, loading } = useSubnet(id || '');
+  const { reservedIPs, loading: ripsLoading } = useSubnetReservedIPs(id || '');
 
   return (
-    <Page>
+    <VPCNetworkingShell>
       <PageSection variant={PageSectionVariants.light}>
         <Breadcrumb>
-          <BreadcrumbItem href="/vpc-networking/subnets">Subnets</BreadcrumbItem>
-          <BreadcrumbItem isActive>{name}</BreadcrumbItem>
+          <BreadcrumbItem><Link to="/vpc-networking/subnets">Subnets</Link></BreadcrumbItem>
+          <BreadcrumbItem isActive>{subnet?.name || id}</BreadcrumbItem>
         </Breadcrumb>
-        <Title headingLevel="h1">Subnet: {name}</Title>
       </PageSection>
 
       <PageSection>
@@ -100,8 +104,63 @@ const SubnetDetailPage: React.FC = () => {
             <CardBody>Subnet not found</CardBody>
           </Card>
         )}
+
+        {subnet && (
+          <Card style={{ marginTop: '16px' }}>
+            <CardTitle>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Reserved IPs</span>
+                <Link to={`/vpc-networking/subnets/${id}/reserved-ips`}>
+                  <Button variant="link" size="sm">View all</Button>
+                </Link>
+              </div>
+            </CardTitle>
+            <CardBody>
+              {ripsLoading ? (
+                <div style={{ textAlign: 'center', padding: '20px' }}><Spinner size="md" /></div>
+              ) : !reservedIPs?.length ? (
+                <div style={{ padding: '16px', textAlign: 'center' }}>No reserved IPs</div>
+              ) : (
+                <Table aria-label="Reserved IPs" borders>
+                  <Thead>
+                    <Tr>
+                      <Th>Name</Th>
+                      <Th>Address</Th>
+                      <Th>Owner</Th>
+                      <Th>Target</Th>
+                      <Th>Auto Delete</Th>
+                      <Th>Age</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {reservedIPs.slice(0, 10).map((ip) => (
+                      <Tr key={ip.id}>
+                        <Td>{ip.name || '-'}</Td>
+                        <Td><code>{ip.address}</code></Td>
+                        <Td>{ip.owner || '-'}</Td>
+                        <Td>
+                          {ip.target ? (
+                            <Link to={`/vpc-networking/vnis/${ip.target.id}`}>
+                              {ip.target.name || ip.target.id}
+                            </Link>
+                          ) : '-'}
+                        </Td>
+                        <Td>
+                          <Label color={ip.autoDelete ? 'green' : 'grey'} isCompact>
+                            {ip.autoDelete ? 'Yes' : 'No'}
+                          </Label>
+                        </Td>
+                        <Td>{formatRelativeTime(ip.createdAt)}</Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              )}
+            </CardBody>
+          </Card>
+        )}
       </PageSection>
-    </Page>
+    </VPCNetworkingShell>
   );
 };
 

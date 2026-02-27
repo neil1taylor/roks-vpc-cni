@@ -1,9 +1,9 @@
 CONTAINER_ENGINE ?= podman
-IMG ?= icr.io/roks/vpc-network-operator:latest
-BFF_IMG ?= icr.io/roks/vpc-bff:latest
-PLUGIN_IMG ?= icr.io/roks/vpc-network-console-plugin:latest
+IMG ?= de.icr.io/roks/vpc-network-operator:latest
+BFF_IMG ?= de.icr.io/roks/vpc-network-bff:latest
+PLUGIN_IMG ?= de.icr.io/roks/vpc-network-console-plugin:latest
 
-.PHONY: build test test-unit test-integration docker-build docker-build-bff docker-build-plugin docker-push deploy generate fmt vet lint clean
+.PHONY: build test test-unit test-integration docker-build docker-build-bff docker-build-plugin docker-build-all docker-push docker-push-bff docker-push-plugin docker-push-all deploy generate fmt vet lint clean
 
 build: fmt vet
 	go build -o bin/manager cmd/manager/main.go
@@ -28,8 +28,18 @@ docker-build-bff:
 docker-build-plugin:
 	$(CONTAINER_ENGINE) build -t $(PLUGIN_IMG) ../console-plugin/
 
+docker-build-all: docker-build docker-build-bff docker-build-plugin
+
 docker-push:
 	$(CONTAINER_ENGINE) push $(IMG)
+
+docker-push-bff:
+	$(CONTAINER_ENGINE) push $(BFF_IMG)
+
+docker-push-plugin:
+	$(CONTAINER_ENGINE) push $(PLUGIN_IMG)
+
+docker-push-all: docker-push docker-push-bff docker-push-plugin
 
 deploy:
 	helm upgrade --install roks-vpc-network-operator deploy/helm/roks-vpc-network-operator/ \

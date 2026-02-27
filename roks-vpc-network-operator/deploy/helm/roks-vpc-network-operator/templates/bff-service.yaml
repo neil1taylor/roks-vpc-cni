@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/name: vpc-network-bff
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: bff
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: {{ .Release.Name }}-bff-tls
 spec:
   type: ClusterIP
   ports:

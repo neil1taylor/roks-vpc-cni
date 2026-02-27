@@ -1,139 +1,56 @@
-import { EdgeModel, EdgeTerminalType } from '@patternfly/react-topology';
+import { EdgeModel } from '@patternfly/react-topology';
 
-export const EDGE_TYPES = {
-  CONTAINMENT: 'containment',
-  MEMBERSHIP: 'membership',
-  BINDING: 'binding',
-  ASSOCIATION: 'association',
-  MANAGEMENT: 'management',
+/**
+ * BFF edge types. These match the `type` field returned by GET /api/v1/topology.
+ */
+export const BFF_EDGE_TYPES = {
+  CONTAINS: 'contains',       // VPC→Subnet, VPC→SG, VPC→ACL (structural)
+  CONNECTED: 'connected',     // Subnet→VNI (structural)
+  TARGETS: 'targets',         // FIP→VNI (visible)
+  ASSOCIATES: 'associates',   // CUDN/UDN→Subnet (visible, dashed)
+  PROTECTED_BY: 'protected-by', // Subnet→ACL, VNI→SG (visible)
 } as const;
 
-export type EdgeType = typeof EDGE_TYPES[keyof typeof EDGE_TYPES];
+export type BFFEdgeType = typeof BFF_EDGE_TYPES[keyof typeof BFF_EDGE_TYPES];
 
-export interface EdgeConfig {
-  id: string;
-  source: string;
-  target: string;
-  edgeType: EdgeType;
-  label?: string;
-  animated?: boolean;
-}
+/** Structural edges build parent-child hierarchy; they are NOT rendered as visible edges. */
+export const STRUCTURAL_EDGE_TYPES = new Set<string>([
+  BFF_EDGE_TYPES.CONTAINS,
+  BFF_EDGE_TYPES.CONNECTED,
+]);
 
-/**
- * Edge styling configuration based on edge type
- */
-const EDGE_STYLES: Record<EdgeType, Partial<EdgeModel>> = {
-  [EDGE_TYPES.CONTAINMENT]: {
-    style: {
-      strokeWidth: 2,
-      stroke: '#0066CC',
-    } as any,
-  },
-  [EDGE_TYPES.MEMBERSHIP]: {
-    style: {
-      strokeWidth: 2,
-      stroke: '#00A651',
-    } as any,
-  },
-  [EDGE_TYPES.BINDING]: {
-    style: {
-      strokeWidth: 2,
-      stroke: '#FF6D00',
-    } as any,
-  },
-  [EDGE_TYPES.ASSOCIATION]: {
-    style: {
-      strokeWidth: 2,
-      stroke: '#9900CC',
-      strokeDasharray: '5,5',
-    } as any,
-  },
-  [EDGE_TYPES.MANAGEMENT]: {
-    style: {
-      strokeWidth: 1.5,
-      stroke: '#666666',
-      strokeDasharray: '3,3',
-    } as any,
-  },
+/** Visible edges are rendered as lines/arrows on the topology diagram. */
+export const VISIBLE_EDGE_TYPES = new Set<string>([
+  BFF_EDGE_TYPES.TARGETS,
+  BFF_EDGE_TYPES.ASSOCIATES,
+  BFF_EDGE_TYPES.PROTECTED_BY,
+]);
+
+/** Edge styling by type */
+const EDGE_STYLES: Record<string, { stroke: string; strokeWidth: number; strokeDasharray?: string }> = {
+  [BFF_EDGE_TYPES.CONTAINS]: { stroke: '#4a6785', strokeWidth: 1.5 },
+  [BFF_EDGE_TYPES.TARGETS]: { stroke: '#00BCD4', strokeWidth: 2 },
+  [BFF_EDGE_TYPES.ASSOCIATES]: { stroke: '#2196F3', strokeWidth: 2, strokeDasharray: '6,3' },
+  [BFF_EDGE_TYPES.PROTECTED_BY]: { stroke: '#DC143C', strokeWidth: 1.5, strokeDasharray: '3,3' },
 };
 
 /**
- * Create an edge model from configuration
+ * Create an EdgeModel for a visible edge.
  */
-export const createEdgeModel = (config: EdgeConfig): EdgeModel => {
-  const baseStyle = EDGE_STYLES[config.edgeType];
+export const createVisibleEdge = (
+  id: string,
+  source: string,
+  target: string,
+  edgeType: string
+): EdgeModel => {
+  const style = EDGE_STYLES[edgeType] ?? { stroke: '#666', strokeWidth: 1.5 };
 
-  const model: EdgeModel = {
-    id: config.id,
-    type: config.edgeType,
-    source: config.source,
-    target: config.target,
-    label: config.label,
-    data: { animated: config.animated ?? false },
-    ...baseStyle,
+  return {
+    id,
+    type: 'edge',
+    source,
+    target,
+    style: style as any,
+    data: { edgeType },
   };
-
-  return model;
 };
-
-/**
- * Get description for edge type
- */
-export const getEdgeTypeDescription = (edgeType: EdgeType): string => {
-  const descriptions: Record<EdgeType, string> = {
-    [EDGE_TYPES.CONTAINMENT]: 'VPC contains Subnet',
-    [EDGE_TYPES.MEMBERSHIP]: 'Subnet contains VNI',
-    [EDGE_TYPES.BINDING]: 'VNI bound to VM',
-    [EDGE_TYPES.ASSOCIATION]: 'Resource associated with SG/ACL',
-    [EDGE_TYPES.MANAGEMENT]: 'Management relationship',
-  };
-
-  return descriptions[edgeType];
-};
-
-/**
- * Determine edge type based on source and target node types
- */
-export const determineEdgeType = (
-  sourceNodeType: string,
-  targetNodeType: string
-): EdgeType => {
-  const key = `${sourceNodeType}:${targetNodeType}`;
-
-  const edgeTypeMap: Record<string, EdgeType> = {
-    'vpc:subnet': EDGE_TYPES.CONTAINMENT,
-    'subnet:vni': EDGE_TYPES.MEMBERSHIP,
-    'vni:vm': EDGE_TYPES.BINDING,
-    'security-group:vni': EDGE_TYPES.ASSOCIATION,
-    'security-group:vm': EDGE_TYPES.ASSOCIATION,
-    'acl:subnet': EDGE_TYPES.ASSOCIATION,
-  };
-
-  return edgeTypeMap[key] || EDGE_TYPES.MANAGEMENT;
-};
-
-/**
- * Style configuration for different edge rendering
- */
-export const EDGE_TERMINAL_STYLES = {
-  [EDGE_TYPES.CONTAINMENT]: {
-    startTerminalType: EdgeTerminalType.none,
-    endTerminalType: EdgeTerminalType.none,
-  },
-  [EDGE_TYPES.MEMBERSHIP]: {
-    startTerminalType: EdgeTerminalType.none,
-    endTerminalType: EdgeTerminalType.none,
-  },
-  [EDGE_TYPES.BINDING]: {
-    startTerminalType: EdgeTerminalType.none,
-    endTerminalType: EdgeTerminalType.none,
-  },
-  [EDGE_TYPES.ASSOCIATION]: {
-    startTerminalType: EdgeTerminalType.none,
-    endTerminalType: EdgeTerminalType.circle,
-  },
-  [EDGE_TYPES.MANAGEMENT]: {
-    startTerminalType: EdgeTerminalType.none,
-    endTerminalType: EdgeTerminalType.none,
-  },
-} as const;

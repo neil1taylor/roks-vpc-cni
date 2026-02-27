@@ -166,6 +166,17 @@ export interface NetworkACLRule {
   createdAt?: string;
 }
 
+// Reserved IP Types
+export interface ReservedIP {
+  id: string;
+  name: string;
+  address: string;
+  autoDelete: boolean;
+  owner: string;
+  target?: { id: string; name: string };
+  createdAt?: string;
+}
+
 // Kubernetes CR Types (matching the Go structs)
 
 export interface VPCSubnet extends ResourceMetadata {
@@ -207,15 +218,26 @@ export interface VirtualNetworkInterfaceResource extends ResourceMetadata {
 export interface VLANAttachmentResource extends ResourceMetadata {
   apiVersion?: string;
   kind?: string;
+  metadata?: {
+    name?: string;
+    namespace?: string;
+    creationTimestamp?: string;
+    labels?: Record<string, string>;
+  };
   spec?: {
-    vniId: string;
-    vlan: number;
-    subnetId: string;
+    bmServerID: string;
+    vlanID: number;
+    subnetRef: string;
+    subnetID?: string;
+    allowToFloat?: boolean;
+    nodeName?: string;
   };
   status?: {
-    synced: boolean;
+    syncStatus?: string;
+    attachmentID?: string;
+    attachmentStatus?: string;
     lastSyncTime?: string;
-    syncError?: string;
+    message?: string;
   };
 }
 
@@ -235,6 +257,63 @@ export interface FloatingIPResource extends ResourceMetadata {
     targetId?: string;
     targetName?: string;
   };
+}
+
+// Network Tier and IP Assignment Mode Types
+export type IPAssignmentMode = 'static_reserved' | 'dhcp' | 'none';
+export type NetworkTier = 'recommended' | 'advanced' | 'expert';
+
+export interface NetworkCombination {
+  id: string;
+  topology: 'LocalNet' | 'Layer2';
+  scope: 'ClusterUserDefinedNetwork' | 'UserDefinedNetwork';
+  role: 'Primary' | 'Secondary';
+  tier: NetworkTier;
+  ip_mode: IPAssignmentMode;
+  label: string;
+  description: string;
+  ip_mode_description: string;
+  requires_vpc: boolean;
+}
+
+// Network Definition Types (CUDN/UDN)
+export interface NetworkDefinition {
+  name: string;
+  namespace?: string;
+  kind: 'ClusterUserDefinedNetwork' | 'UserDefinedNetwork';
+  topology: 'LocalNet' | 'Layer2';
+  role?: 'Primary' | 'Secondary';
+  tier?: NetworkTier;
+  ip_mode?: IPAssignmentMode;
+  subnet_id?: string;
+  subnet_name?: string;
+  subnet_status?: string;
+  vpc_id?: string;
+  zone?: string;
+  cidr?: string;
+  vlan_id?: string;
+  vlan_attachments?: string;
+}
+
+export interface CreateNetworkRequest {
+  name: string;
+  namespace?: string;
+  topology: 'LocalNet' | 'Layer2';
+  role?: 'Primary' | 'Secondary';
+  vpc_id?: string;
+  zone?: string;
+  cidr?: string;
+  vlan_id?: string;
+  security_group_ids?: string;
+  acl_id?: string;
+  target_namespaces?: string[];
+}
+
+export interface NetworkTypesInfo {
+  topologies: string[];
+  scopes: string[];
+  roles: string[];
+  combinations: NetworkCombination[];
 }
 
 // Topology Types
@@ -258,6 +337,66 @@ export interface TopologyEdge {
   type?: 'contains' | 'connected' | 'protected-by' | 'associates' | 'targets';
 }
 
+// Routing Table and Route Types
+export interface RoutingTable {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  lifecycleState: string;
+  routeCount: number;
+  createdAt?: string;
+}
+
+export interface Route {
+  id: string;
+  name: string;
+  destination: string;
+  action: 'delegate' | 'delegate_vpc' | 'deliver' | 'drop';
+  nextHop?: string;
+  zone: string;
+  priority: number;
+  origin: 'service' | 'user';
+  lifecycleState: string;
+  createdAt?: string;
+}
+
+export interface CreateRouteRequest {
+  name?: string;
+  destination: string;
+  action: string;
+  nextHopIp?: string;
+  zone: string;
+  priority?: number;
+}
+
+// Request types for BFF create endpoints (flat payloads, not nested response shapes)
+export interface CreateSecurityGroupRequest {
+  name: string;
+  vpc_id: string;
+  description?: string;
+}
+
+export interface CreateNetworkACLRequest {
+  name: string;
+  vpc_id: string;
+}
+
+export interface CreateFloatingIPRequest {
+  name: string;
+  zone: string;
+}
+
+// Namespace Types
+export interface NamespaceInfo {
+  name: string;
+  hasPrimaryLabel: boolean;
+}
+
+export interface CreateNamespaceRequest {
+  name: string;
+  labels?: Record<string, string>;
+}
+
 // API Response Wrappers
 export interface ApiResponse<T> {
   data?: T;
@@ -278,6 +417,7 @@ export interface ApiError {
 // Cluster Info Types
 export interface ClusterInfo {
   clusterMode: 'roks' | 'unmanaged';
+  vpcId?: string;
   features: FeatureFlags;
 }
 
@@ -288,7 +428,12 @@ export interface FeatureFlags {
   securityGroupManagement: boolean;
   networkACLManagement: boolean;
   floatingIPManagement: boolean;
+  routeManagement: boolean;
   roksAPIAvailable: boolean;
+  cudnManagement: boolean;
+  udnManagement: boolean;
+  layer2Support: boolean;
+  multiNetworkVMs: boolean;
 }
 
 // Permissions

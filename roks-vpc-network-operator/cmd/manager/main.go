@@ -17,6 +17,7 @@ import (
 	cudnctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/cudn"
 	fipctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/floatingip"
 	nodectrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/node"
+	udnctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/udn"
 	vlactrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/vlanattachment"
 	vmctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/vm"
 	vnictrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/vni"
@@ -137,6 +138,16 @@ func main() {
 		ClusterID: clusterID,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Unable to create Node controller")
+		os.Exit(1)
+	}
+
+	if err := (&udnctrl.Reconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		VPC:       vpcClient,
+		ClusterID: clusterID,
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "Unable to create UDN controller")
 		os.Exit(1)
 	}
 

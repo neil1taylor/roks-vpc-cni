@@ -1,0 +1,16 @@
+{{- if .Values.bff.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-bff
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vpc-network-bff
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vpc-network-bff
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

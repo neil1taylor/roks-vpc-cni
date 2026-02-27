@@ -1,10 +1,8 @@
 import React from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom-v5-compat';
 import {
-  Page,
   PageSection,
   PageSectionVariants,
-  Title,
   Card,
   CardBody,
   CardTitle,
@@ -16,27 +14,28 @@ import {
   DescriptionListTerm,
   DescriptionListDescription,
 } from '@patternfly/react-core';
+import { Link } from 'react-router-dom-v5-compat';
 import { useNetworkACL } from '../api/hooks';
 import { StatusBadge } from '../components/StatusBadge';
 import { RuleEditor } from '../components/RuleEditor';
 import { formatTimestamp } from '../utils/formatters';
+import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 /**
  * Network ACL Detail Page
  * Displays detailed information about a specific network ACL and its rules
  */
 const NetworkACLDetailPage: React.FC = () => {
-  const { name } = useParams<{ name: string }>();
-  const { networkAcl, loading } = useNetworkACL(name || '');
+  const { id } = useParams<{ id: string }>();
+  const { networkAcl, loading } = useNetworkACL(id || '');
 
   return (
-    <Page>
+    <VPCNetworkingShell>
       <PageSection variant={PageSectionVariants.light}>
         <Breadcrumb>
-          <BreadcrumbItem href="/vpc-networking/network-acls">Network ACLs</BreadcrumbItem>
-          <BreadcrumbItem isActive>{name}</BreadcrumbItem>
+          <BreadcrumbItem><Link to="/vpc-networking/network-acls">Network ACLs</Link></BreadcrumbItem>
+          <BreadcrumbItem isActive>{networkAcl?.name || id}</BreadcrumbItem>
         </Breadcrumb>
-        <Title headingLevel="h1">Network ACL: {name}</Title>
       </PageSection>
 
       <PageSection>
@@ -101,7 +100,7 @@ const NetworkACLDetailPage: React.FC = () => {
           </Card>
         )}
       </PageSection>
-    </Page>
+    </VPCNetworkingShell>
   );
 };
 

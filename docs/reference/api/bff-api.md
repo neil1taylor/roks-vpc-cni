@@ -391,6 +391,234 @@ Get the aggregated network topology graph.
 
 ---
 
+## Network Types
+
+### GET /api/v1/network-types
+
+Returns the valid network topology+scope+role combinations. Use this to populate network creation wizards and validate user selections.
+
+**Response:** `200 OK`
+```json
+{
+  "topologies": ["LocalNet", "Layer2"],
+  "scopes": ["ClusterUserDefinedNetwork", "UserDefinedNetwork"],
+  "roles": ["Primary", "Secondary"],
+  "combinations": [
+    {
+      "id": "localnet-cudn-secondary",
+      "topology": "LocalNet",
+      "scope": "ClusterUserDefinedNetwork",
+      "role": "Secondary",
+      "tier": "recommended",
+      "ip_mode": "static_reserved",
+      "requires_vpc": true,
+      "label": "LocalNet Cluster Secondary",
+      "description": "Cluster-wide secondary network backed by a VPC subnet.",
+      "ip_mode_description": "VPC API reserves a static IP from the subnet when the VNI is created."
+    }
+  ]
+}
+```
+
+**Valid Combinations:**
+
+| ID | Topology | Scope | Role | VPC? | Tier |
+|----|----------|-------|------|------|------|
+| `localnet-cudn-secondary` | LocalNet | CUDN | Secondary | Yes | Recommended |
+| `layer2-cudn-secondary` | Layer2 | CUDN | Secondary | No | Recommended |
+| `layer2-udn-secondary` | Layer2 | UDN | Secondary | No | Advanced |
+| `layer2-cudn-primary` | Layer2 | CUDN | Primary | No | Expert |
+
+---
+
+## CUDNs (ClusterUserDefinedNetworks)
+
+### GET /api/v1/cudns
+
+List all ClusterUserDefinedNetworks in the cluster.
+
+**Response:** `200 OK`
+```json
+[
+  {
+    "name": "production-net",
+    "kind": "ClusterUserDefinedNetwork",
+    "topology": "LocalNet",
+    "role": "Secondary",
+    "tier": "recommended",
+    "ip_mode": "static_reserved",
+    "subnet_id": "0717-abc123",
+    "vpc_id": "r010-def456",
+    "zone": "eu-de-1",
+    "cidr": "10.240.10.0/24",
+    "vlan_id": "100"
+  }
+]
+```
+
+### GET /api/v1/cudns/{name}
+
+Get a specific CUDN by name.
+
+**Response:** `200 OK` (same schema as list item)
+
+### POST /api/v1/cudns
+
+Create a ClusterUserDefinedNetwork.
+
+**Request Body:**
+```json
+{
+  "name": "production-net",
+  "topology": "LocalNet",
+  "role": "Secondary",
+  "vpc_id": "r010-def456",
+  "zone": "eu-de-1",
+  "cidr": "10.240.10.0/24",
+  "vlan_id": "100",
+  "security_group_ids": "r010-sg1,r010-sg2",
+  "acl_id": "r010-acl1",
+  "target_namespaces": ["tenant-a", "tenant-b"]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Network name (DNS-compatible) |
+| `topology` | string | Yes | `LocalNet` or `Layer2` |
+| `role` | string | No | `Primary` or `Secondary` (default: `Secondary`) |
+| `vpc_id` | string | LocalNet only | VPC ID for subnet creation |
+| `zone` | string | LocalNet only | Availability zone |
+| `cidr` | string | LocalNet / Layer2 Primary | Subnet CIDR block |
+| `vlan_id` | string | LocalNet only | VLAN ID (1-4094) |
+| `security_group_ids` | string | No | Comma-separated security group IDs |
+| `acl_id` | string | No | Network ACL ID |
+| `target_namespaces` | string[] | No | Restrict to specific namespaces (empty = all) |
+
+**Response:** `201 Created`
+
+### DELETE /api/v1/cudns/{name}
+
+Delete a CUDN by name.
+
+**Response:** `200 OK`
+```json
+{"status": "deleted"}
+```
+
+---
+
+## UDNs (UserDefinedNetworks)
+
+### GET /api/v1/udns
+
+List all UserDefinedNetworks across namespaces.
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `namespace` | string | No | Filter by namespace |
+
+**Response:** `200 OK`
+```json
+[
+  {
+    "name": "app-net",
+    "namespace": "my-app",
+    "kind": "UserDefinedNetwork",
+    "topology": "Layer2",
+    "role": "Secondary",
+    "tier": "advanced",
+    "ip_mode": "dhcp"
+  }
+]
+```
+
+### GET /api/v1/udns/{namespace}/{name}
+
+Get a specific UDN.
+
+**Response:** `200 OK` (same schema as list item)
+
+### POST /api/v1/udns
+
+Create a UserDefinedNetwork. Only `Layer2` topology with `Secondary` role is supported for UDNs.
+
+**Request Body:**
+```json
+{
+  "name": "app-net",
+  "namespace": "my-app",
+  "topology": "Layer2",
+  "role": "Secondary",
+  "cidr": "10.100.0.0/24"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Network name |
+| `namespace` | string | Yes | Target namespace |
+| `topology` | string | Yes | Must be `Layer2` (UDN does not support LocalNet) |
+| `role` | string | No | Must be `Secondary` (UDN Layer2 does not support Primary) |
+| `cidr` | string | No | Subnet CIDR for OVN IPAM (omit for disabled IPAM) |
+
+**Response:** `201 Created`
+
+**Validation Errors:**
+- `UDN does not support LocalNet topology; use ClusterUserDefinedNetwork instead`
+- `UDN Layer2 only supports Secondary role; use ClusterUserDefinedNetwork for Primary`
+
+### DELETE /api/v1/udns/{namespace}/{name}
+
+Delete a UDN.
+
+**Response:** `200 OK`
+```json
+{"status": "deleted"}
+```
+
+---
+
+## Namespaces
+
+### GET /api/v1/namespaces
+
+List namespaces with primary network label information.
+
+**Response:** `200 OK`
+```json
+[
+  {
+    "name": "default",
+    "hasPrimaryLabel": false
+  },
+  {
+    "name": "primary-net-ns",
+    "hasPrimaryLabel": true
+  }
+]
+```
+
+### POST /api/v1/namespaces
+
+Create a namespace with optional labels.
+
+**Request Body:**
+```json
+{
+  "name": "my-namespace",
+  "labels": {
+    "k8s.ovn.org/primary-user-defined-network": ""
+  }
+}
+```
+
+**Response:** `201 Created`
+
+---
+
 ## Cluster Info
 
 ### GET /api/v1/cluster-info

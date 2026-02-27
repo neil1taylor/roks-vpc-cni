@@ -5,6 +5,8 @@ metadata:
   labels:
     app.kubernetes.io/name: roks-vpc-network-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
 webhooks:
 - name: vm-mutating.vpc.roks.ibm.com
   admissionReviewVersions:
@@ -14,7 +16,7 @@ webhooks:
       name: roks-vpc-network-operator-webhook
       namespace: {{ .Release.Namespace }}
       path: /mutate-virtualmachine
-      port: {{ .Values.webhook.port | default 9443 }}
+      port: 443
   failurePolicy: Fail
   matchPolicy: Equivalent
   rules:

@@ -1,13 +1,17 @@
+global:
+  imagePullSecrets: []
+
 replicaCount: 1
 
 image:
-  repository: icr.io/roks/vpc-network-operator
+  repository: de.icr.io/roks/vpc-network-operator
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 # VPC configuration
 vpc:
   region: "us-south"
+  id: ""
   resourceGroupID: ""
 
 # Cluster identity
@@ -23,6 +27,16 @@ credentials:
 webhook:
   port: 9443
   certDir: /tmp/k8s-webhook-server/serving-certs
+
+# Operator container security context
+operator:
+  securityContext:
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
 
 # Resource limits
 resources:
@@ -46,14 +60,13 @@ gc:
 bff:
   enabled: true
   image:
-    repository: icr.io/roks/vpc-network-bff
+    repository: de.icr.io/roks/vpc-network-bff
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   replicas: 2
   port: 8443
-  clusterMode: "roks"
   apiKeySecretName: "ibm-vpc-api-key"
-  csiMountPath: "/var/run/ibm-vpc-credentials"
+  csiMountPath: ""  # Set to mount path (e.g. /var/run/ibm-vpc-credentials) to enable CSI credential loading
   logLevel: "info"
   resources:
     requests:
@@ -62,14 +75,18 @@ bff:
     limits:
       cpu: 500m
       memory: 512Mi
+  metrics:
+    serviceMonitor:
+      enabled: false
 
 # Console plugin
 consolePlugin:
   enabled: true
+  hookImage: "registry.redhat.io/openshift4/ose-cli:latest"
   image:
-    repository: icr.io/roks/vpc-network-console-plugin
+    repository: de.icr.io/roks/vpc-network-console-plugin
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   replicas: 2
   port: 9443
   resources:
@@ -83,5 +100,8 @@ consolePlugin:
 # RBAC for console plugin users
 pluginRbac:
   createAdminBinding: true
+  adminGroups:
+    - cluster-admins
+    - ibm-admins
   createDeveloperBinding: false
   developerNamespaces: []

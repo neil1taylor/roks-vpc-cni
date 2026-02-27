@@ -1,10 +1,8 @@
 import React from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom-v5-compat';
 import {
-  Page,
   PageSection,
   PageSectionVariants,
-  Title,
   Card,
   CardBody,
   CardTitle,
@@ -16,27 +14,28 @@ import {
   DescriptionListTerm,
   DescriptionListDescription,
 } from '@patternfly/react-core';
+import { Link } from 'react-router-dom-v5-compat';
 import { useSecurityGroup } from '../api/hooks';
 import { StatusBadge } from '../components/StatusBadge';
 import { RuleEditor } from '../components/RuleEditor';
 import { formatTimestamp } from '../utils/formatters';
+import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 /**
  * Security Group Detail Page
  * Displays detailed information about a specific security group and its rules
  */
 const SecurityGroupDetailPage: React.FC = () => {
-  const { name } = useParams<{ name: string }>();
-  const { securityGroup, loading } = useSecurityGroup(name || '');
+  const { id } = useParams<{ id: string }>();
+  const { securityGroup, loading } = useSecurityGroup(id || '');
 
   return (
-    <Page>
+    <VPCNetworkingShell>
       <PageSection variant={PageSectionVariants.light}>
         <Breadcrumb>
-          <BreadcrumbItem href="/vpc-networking/security-groups">Security Groups</BreadcrumbItem>
-          <BreadcrumbItem isActive>{name}</BreadcrumbItem>
+          <BreadcrumbItem><Link to="/vpc-networking/security-groups">Security Groups</Link></BreadcrumbItem>
+          <BreadcrumbItem isActive>{securityGroup?.name || id}</BreadcrumbItem>
         </Breadcrumb>
-        <Title headingLevel="h1">Security Group: {name}</Title>
       </PageSection>
 
       <PageSection>
@@ -101,7 +100,7 @@ const SecurityGroupDetailPage: React.FC = () => {
           </Card>
         )}
       </PageSection>
-    </Page>
+    </VPCNetworkingShell>
   );
 };
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import './topology.css';
 import {
   Toolbar,
   ToolbarContent,
@@ -35,8 +36,19 @@ import {
   TopologyView,
   useVisualizationController,
   VisualizationProvider,
+  ColaLayout,
+  DefaultNode,
+  DefaultGroup,
+  DefaultEdge,
+  ModelKind,
+  GraphComponent,
+  withPanZoom,
+  withSelection,
+  ComponentFactory,
+  Graph,
 } from '@patternfly/react-topology';
 import { apiClient } from '../api/client';
+import { useClusterInfo } from '../api/hooks';
 import {
   transformTopologyData,
   createTopologyGraph,
@@ -57,17 +69,53 @@ interface SelectedNodeInfo {
   connectedNodeCount: number;
 }
 
-const TOPOLOGY_NODE_TYPES = [
-  NODE_TYPES.VPC,
-  NODE_TYPES.SUBNET,
+/** Leaf node types shown in the filter toolbar */
+const FILTER_NODE_TYPES = [
   NODE_TYPES.VNI,
-  NODE_TYPES.VM,
+  NODE_TYPES.FLOATING_IP,
   NODE_TYPES.SECURITY_GROUP,
   NODE_TYPES.ACL,
+  NODE_TYPES.CUDN,
+  NODE_TYPES.UDN,
 ];
+
+const layoutFactory = (type: string, graph: Graph) => {
+  if (type === 'Cola') {
+    return new ColaLayout(graph, {
+      layoutOnDrag: false,
+    });
+  }
+  return undefined;
+};
+
+const componentFactory: ComponentFactory = (kind: ModelKind, type: string) => {
+  switch (kind) {
+    case ModelKind.graph:
+      return withPanZoom()(GraphComponent);
+    case ModelKind.node:
+      if (type === 'vpc-group' || type === 'subnet-group') {
+        return DefaultGroup;
+      }
+      return withSelection()(DefaultNode);
+    case ModelKind.edge:
+      return DefaultEdge;
+    default:
+      return undefined;
+  }
+};
 
 const TopologyViewerInner: React.FC = () => {
   const controller = useVisualizationController();
+  const { clusterInfo } = useClusterInfo();
+  const isROKSManaged =
+    clusterInfo?.features.vniManagement === false &&
+    clusterInfo?.features.roksAPIAvailable === false;
+
+  // In ROKS mode, exclude VNI from the filter list
+  const filterNodeTypes = isROKSManaged
+    ? FILTER_NODE_TYPES.filter((t) => t !== NODE_TYPES.VNI)
+    : FILTER_NODE_TYPES;
+
   const [topologyData, setTopologyData] = useState<TopologyData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,8 +123,16 @@ const TopologyViewerInner: React.FC = () => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [stats, setStats] = useState<TopologyStats | null>(null);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(
-    new Set(TOPOLOGY_NODE_TYPES)
+    new Set(FILTER_NODE_TYPES)
   );
+
+  // Register layout and component factories
+  useEffect(() => {
+    if (controller) {
+      controller.registerLayoutFactory(layoutFactory);
+      controller.registerComponentFactory(componentFactory);
+    }
+  }, [controller]);
 
   // Fetch topology data
   useEffect(() => {
@@ -92,12 +148,14 @@ const TopologyViewerInner: React.FC = () => {
               id: n.id,
               name: n.label,
               type: n.type as any,
+              status: n.status,
               details: n.metadata as Record<string, string> | undefined,
             })),
             edges: response.data.edges.map((e) => ({
               id: e.id,
               source: e.source,
               target: e.target,
+              type: e.type,
             })),
           };
           setTopologyData(topoData);
@@ -119,25 +177,62 @@ const TopologyViewerInner: React.FC = () => {
       return;
     }
 
+    let fitTimer: ReturnType<typeof setTimeout> | undefined;
+
     try {
       const transformedData = transformTopologyData(topologyData);
 
-      // Filter nodes based on visible types
-      const filteredNodes = transformedData.nodes.filter((node) =>
-        visibleTypes.has(node.type)
-      );
+      // Filter leaf nodes based on visible types (groups always visible)
+      const filteredNodes = transformedData.nodes.filter((node) => {
+        if (node.group) return true; // always show groups
+        const nodeType = (node.data as any)?.nodeType || node.type;
+        return visibleTypes.has(nodeType);
+      });
 
-      // Filter edges to only include those where both source and target are visible
+      // Rebuild group children to exclude hidden nodes
       const visibleNodeIds = new Set(filteredNodes.map((n) => n.id));
+      const adjustedNodes = filteredNodes.map((node) => {
+        if (node.group && node.children) {
+          return {
+            ...node,
+            children: node.children.filter((childId) => visibleNodeIds.has(childId)),
+          };
+        }
+        return node;
+      });
+
+      // Remove empty groups (groups with no visible children)
+      const nonEmptyNodes = adjustedNodes.filter((node) => {
+        if (node.group && (!node.children || node.children.length === 0)) {
+          visibleNodeIds.delete(node.id);
+          return false;
+        }
+        return true;
+      });
+
+      // Filter edges to only include those where both ends are visible
       const filteredEdges = transformedData.edges.filter(
         (edge) => visibleNodeIds.has(edge.source!) && visibleNodeIds.has(edge.target!)
       );
 
-      const model = createTopologyGraph(filteredNodes, filteredEdges);
+      const model = createTopologyGraph(nonEmptyNodes, filteredEdges);
       controller.fromModel(model, true);
+
+      // DagreGroups layout is synchronous — short timeout for fit
+      fitTimer = setTimeout(() => {
+        try {
+          controller.getGraph().fit(80);
+        } catch {
+          // graph may not be ready yet
+        }
+      }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to render topology');
     }
+
+    return () => {
+      if (fitTimer) clearTimeout(fitTimer);
+    };
   }, [topologyData, controller, visibleTypes]);
 
   // Register node click handler on controller
@@ -188,18 +283,42 @@ const TopologyViewerInner: React.FC = () => {
       try {
         const transformedData = transformTopologyData(topologyData);
 
-        const filteredNodes = transformedData.nodes.filter((node) =>
-          visibleTypes.has(node.type)
-        );
+        const filteredNodes = transformedData.nodes.filter((node) => {
+          if (node.group) return true;
+          const nodeType = (node.data as any)?.nodeType || node.type;
+          return visibleTypes.has(nodeType);
+        });
 
         const visibleNodeIds = new Set(filteredNodes.map((n) => n.id));
+        const adjustedNodes = filteredNodes.map((node) => {
+          if (node.group && node.children) {
+            return { ...node, children: node.children.filter((id) => visibleNodeIds.has(id)) };
+          }
+          return node;
+        });
+
+        const nonEmptyNodes = adjustedNodes.filter((node) => {
+          if (node.group && (!node.children || node.children.length === 0)) {
+            visibleNodeIds.delete(node.id);
+            return false;
+          }
+          return true;
+        });
+
         const filteredEdges = transformedData.edges.filter(
           (edge) => visibleNodeIds.has(edge.source!) && visibleNodeIds.has(edge.target!)
         );
 
-        const model = createTopologyGraph(filteredNodes, filteredEdges);
+        const model = createTopologyGraph(nonEmptyNodes, filteredEdges);
         controller.fromModel(model, true);
         controller.getGraph().layout();
+        setTimeout(() => {
+          try {
+            controller.getGraph().fit(80);
+          } catch {
+            // ignore
+          }
+        }, 1500);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to reset layout');
       }
@@ -219,151 +338,155 @@ const TopologyViewerInner: React.FC = () => {
     [visibleTypes]
   );
 
-  return (
-    <Drawer isExpanded={isDrawerOpen}>
-      <DrawerContent
-        panelContent={
-          isDrawerOpen && selectedNode ? (
-            <DrawerPanelContent>
-              <DrawerHead>
-                <Title headingLevel="h2">{selectedNode.name}</Title>
-                <DrawerActions>
-                  <DrawerCloseButton onClick={() => setIsDrawerOpen(false)} />
-                </DrawerActions>
-              </DrawerHead>
-              <Divider />
+  const topologyToolbar = (
+    <Toolbar>
+      <ToolbarContent>
+        <ToolbarItem>
+          <Split hasGutter>
+            <SplitItem>
+              <Button
+                icon={<SearchPlusIcon />}
+                variant={ButtonVariant.control}
+                onClick={handleZoomIn}
+                aria-label="Zoom in"
+              />
+            </SplitItem>
+            <SplitItem>
+              <Button
+                icon={<SearchMinusIcon />}
+                variant={ButtonVariant.control}
+                onClick={handleZoomOut}
+                aria-label="Zoom out"
+              />
+            </SplitItem>
+            <SplitItem>
+              <Button
+                icon={<CompressIcon />}
+                variant={ButtonVariant.control}
+                onClick={handleFitToScreen}
+                aria-label="Fit to screen"
+              />
+            </SplitItem>
+            <SplitItem>
+              <Button
+                icon={<UndoIcon />}
+                variant={ButtonVariant.control}
+                onClick={handleResetLayout}
+                aria-label="Reset layout"
+              />
+            </SplitItem>
+          </Split>
+        </ToolbarItem>
 
-              <div style={{ padding: '16px' }}>
-                <DescriptionList>
-                  <DescriptionListGroup>
-                    <DescriptionListTerm>Type</DescriptionListTerm>
-                    <DescriptionListDescription>
-                      {getNodeTypeLabel(selectedNode.type as any)}
-                    </DescriptionListDescription>
-                  </DescriptionListGroup>
+        <ToolbarItem>
+          <div style={{ marginLeft: '16px', display: 'flex', gap: '8px' }}>
+            {filterNodeTypes.map((nodeType) => (
+              <Checkbox
+                key={nodeType}
+                id={`filter-${nodeType}`}
+                label={getNodeTypeLabel(nodeType)}
+                isChecked={visibleTypes.has(nodeType)}
+                onChange={() => handleTypeToggle(nodeType)}
+              />
+            ))}
+          </div>
+        </ToolbarItem>
 
-                  {selectedNode.resourceId && (
-                    <DescriptionListGroup>
-                      <DescriptionListTerm>Resource ID</DescriptionListTerm>
-                      <DescriptionListDescription>
-                        <code>{selectedNode.resourceId}</code>
-                      </DescriptionListDescription>
-                    </DescriptionListGroup>
-                  )}
-
-                  <DescriptionListGroup>
-                    <DescriptionListTerm>Connected Resources</DescriptionListTerm>
-                    <DescriptionListDescription>
-                      {selectedNode.connectedNodeCount}
-                    </DescriptionListDescription>
-                  </DescriptionListGroup>
-
-                  {selectedNode.details && Object.keys(selectedNode.details).length > 0 && (
-                    <>
-                      <Divider style={{ margin: '16px 0' }} />
-                      <Title headingLevel="h3" size="md">
-                        Details
-                      </Title>
-                      {Object.entries(selectedNode.details).map(([key, value]) => (
-                        <DescriptionListGroup key={key}>
-                          <DescriptionListTerm>{key}</DescriptionListTerm>
-                          <DescriptionListDescription>{value}</DescriptionListDescription>
-                        </DescriptionListGroup>
-                      ))}
-                    </>
-                  )}
-                </DescriptionList>
-              </div>
-            </DrawerPanelContent>
-          ) : null
-        }
-      >
-        <TopologyView
-          controlBar={false}
-          sideBar={false}
-          sideBarResizable={false}
-        >
-          <Toolbar>
-            <ToolbarContent>
-              <ToolbarItem>
-                <Split hasGutter>
-                  <SplitItem>
-                    <Button
-                      icon={<SearchPlusIcon />}
-                      variant={ButtonVariant.control}
-                      onClick={handleZoomIn}
-                      aria-label="Zoom in"
-                    />
-                  </SplitItem>
-                  <SplitItem>
-                    <Button
-                      icon={<SearchMinusIcon />}
-                      variant={ButtonVariant.control}
-                      onClick={handleZoomOut}
-                      aria-label="Zoom out"
-                    />
-                  </SplitItem>
-                  <SplitItem>
-                    <Button
-                      icon={<CompressIcon />}
-                      variant={ButtonVariant.control}
-                      onClick={handleFitToScreen}
-                      aria-label="Fit to screen"
-                    />
-                  </SplitItem>
-                  <SplitItem>
-                    <Button
-                      icon={<UndoIcon />}
-                      variant={ButtonVariant.control}
-                      onClick={handleResetLayout}
-                      aria-label="Reset layout"
-                    />
-                  </SplitItem>
-                </Split>
-              </ToolbarItem>
-
-              <ToolbarItem>
-                <div style={{ marginLeft: '16px', display: 'flex', gap: '8px' }}>
-                  {TOPOLOGY_NODE_TYPES.map((nodeType) => (
-                    <Checkbox
-                      key={nodeType}
-                      id={`filter-${nodeType}`}
-                      label={getNodeTypeLabel(nodeType)}
-                      isChecked={visibleTypes.has(nodeType)}
-                      onChange={() => handleTypeToggle(nodeType)}
-                    />
-                  ))}
-                </div>
-              </ToolbarItem>
-
-              {stats && (
-                <ToolbarItem>
-                  <div style={{ fontSize: '0.875rem', color: '#666' }}>
-                    {stats.totalNodes} nodes | {stats.totalEdges} connections
-                  </div>
-                </ToolbarItem>
-              )}
-            </ToolbarContent>
-          </Toolbar>
-
-          {isLoading && (
-            <div style={{ textAlign: 'center', padding: '50px' }}>
-              <Spinner size="lg" />
+        {stats && (
+          <ToolbarItem>
+            <div style={{ fontSize: '0.875rem', color: '#666' }}>
+              {stats.totalNodes} nodes | {stats.totalEdges} connections
             </div>
+          </ToolbarItem>
+        )}
+      </ToolbarContent>
+    </Toolbar>
+  );
+
+  if (isLoading) {
+    return (
+      <div style={{ textAlign: 'center', padding: '50px' }}>
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Alert variant={AlertVariant.danger} title="Error" isInline>
+        {error}
+      </Alert>
+    );
+  }
+
+  const drawerPanel = isDrawerOpen && selectedNode ? (
+    <DrawerPanelContent>
+      <DrawerHead>
+        <Title headingLevel="h2">{selectedNode.name}</Title>
+        <DrawerActions>
+          <DrawerCloseButton onClick={() => setIsDrawerOpen(false)} />
+        </DrawerActions>
+      </DrawerHead>
+      <Divider />
+      <div style={{ padding: '16px' }}>
+        <DescriptionList>
+          <DescriptionListGroup>
+            <DescriptionListTerm>Type</DescriptionListTerm>
+            <DescriptionListDescription>
+              {getNodeTypeLabel(selectedNode.type as any)}
+            </DescriptionListDescription>
+          </DescriptionListGroup>
+
+          {selectedNode.resourceId && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>Resource ID</DescriptionListTerm>
+              <DescriptionListDescription>
+                <code>{selectedNode.resourceId}</code>
+              </DescriptionListDescription>
+            </DescriptionListGroup>
           )}
 
-          {error && (
-            <Alert variant={AlertVariant.danger} title="Error" isInline>
-              {error}
-            </Alert>
-          )}
+          <DescriptionListGroup>
+            <DescriptionListTerm>Connected Resources</DescriptionListTerm>
+            <DescriptionListDescription>
+              {selectedNode.connectedNodeCount}
+            </DescriptionListDescription>
+          </DescriptionListGroup>
 
-          {!isLoading && !error && (
+          {selectedNode.details && Object.keys(selectedNode.details).length > 0 && (
+            <>
+              <Divider style={{ margin: '16px 0' }} />
+              <Title headingLevel="h3" size="md">
+                Details
+              </Title>
+              {Object.entries(selectedNode.details).map(([key, value]) => (
+                <DescriptionListGroup key={key}>
+                  <DescriptionListTerm>{key}</DescriptionListTerm>
+                  <DescriptionListDescription>{value}</DescriptionListDescription>
+                </DescriptionListGroup>
+              ))}
+            </>
+          )}
+        </DescriptionList>
+      </div>
+    </DrawerPanelContent>
+  ) : undefined;
+
+  return (
+    <div style={{ height: 'calc(100vh - 220px)', display: 'flex', flexDirection: 'column' }}>
+      {isROKSManaged && (
+        <Alert variant={AlertVariant.info} isInline title="ROKS-managed VNIs" isPlain style={{ marginBottom: '8px' }}>
+          VNI nodes reflect Kubernetes CRD status. VNI details are managed by the ROKS platform.
+        </Alert>
+      )}
+      <Drawer isExpanded={isDrawerOpen}>
+        <DrawerContent panelContent={drawerPanel}>
+          <TopologyView viewToolbar={topologyToolbar}>
             <VisualizationSurface state={{}} />
-          )}
-        </TopologyView>
-      </DrawerContent>
-    </Drawer>
+          </TopologyView>
+        </DrawerContent>
+      </Drawer>
+    </div>
   );
 };
 

@@ -337,3 +337,150 @@ func TestReconcileROKS_Pending(t *testing.T) {
 		t.Errorf("expected SyncStatus = 'Pending', got %q", updated.Status.SyncStatus)
 	}
 }
+
+func TestReconcile_ModeUnmanaged_UsesVPCClient(t *testing.T) {
+	scheme := newTestScheme()
+
+	vla := &v1alpha1.VLANAttachment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "unmanaged-vla",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VLANAttachmentSpec{
+			BMServerID: "bm-server-1",
+			VLANID:     200,
+			SubnetRef:  "my-subnet",
+			SubnetID:   "subnet-456",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vla).
+		WithStatusSubresource(vla).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.CreateVLANAttachmentFn = func(ctx context.Context, opts vpc.CreateVLANAttachmentOptions) (*vpc.VLANAttachment, error) {
+		return &vpc.VLANAttachment{
+			ID:         "att-unmanaged-1",
+			Name:       opts.Name,
+			VLANID:     opts.VLANID,
+			BMServerID: opts.BMServerID,
+		}, nil
+	}
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       mockVPC,
+		ClusterID: "cluster-abc",
+		Mode:      roks.ModeUnmanaged,
+		// ROKS is intentionally nil — unmanaged mode should not use it
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "unmanaged-vla", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	if mockVPC.CallCount("CreateVLANAttachment") != 1 {
+		t.Errorf("expected VPC CreateVLANAttachment to be called once, got %d", mockVPC.CallCount("CreateVLANAttachment"))
+	}
+}
+
+func TestReconcile_ModeROKS_DoesNotCallVPCClient(t *testing.T) {
+	scheme := newTestScheme()
+
+	vla := &v1alpha1.VLANAttachment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "roks-only-vla",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VLANAttachmentSpec{
+			BMServerID: "bm-server-1",
+			VLANID:     200,
+			SubnetRef:  "my-subnet",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vla).
+		WithStatusSubresource(vla).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       mockVPC,
+		ROKS:      roks.NewStubClient("cluster-abc"),
+		ClusterID: "cluster-abc",
+		Mode:      roks.ModeROKS,
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "roks-only-vla", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	if mockVPC.CallCount("CreateVLANAttachment") != 0 {
+		t.Errorf("expected VPC CreateVLANAttachment NOT to be called in ROKS mode, got %d calls", mockVPC.CallCount("CreateVLANAttachment"))
+	}
+}
+
+func TestReconcileROKS_NilClient_PendingStatus(t *testing.T) {
+	scheme := newTestScheme()
+
+	vla := &v1alpha1.VLANAttachment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "roks-nil-vla",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VLANAttachmentSpec{
+			BMServerID: "bm-server-1",
+			VLANID:     200,
+			SubnetRef:  "my-subnet",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vla).
+		WithStatusSubresource(vla).
+		Build()
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       vpc.NewMockClient(),
+		ROKS:      nil, // nil ROKS client
+		ClusterID: "cluster-abc",
+		Mode:      roks.ModeROKS,
+	}
+
+	result, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "roks-nil-vla", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter == 0 {
+		t.Error("expected requeue when ROKS client is nil")
+	}
+
+	updated := &v1alpha1.VLANAttachment{}
+	_ = fakeClient.Get(context.Background(), types.NamespacedName{Name: "roks-nil-vla", Namespace: "default"}, updated)
+	if updated.Status.SyncStatus != "Pending" {
+		t.Errorf("expected SyncStatus = 'Pending', got %q", updated.Status.SyncStatus)
+	}
+}

@@ -13,22 +13,24 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// LoadCredentials loads VPC API credentials based on deployment mode.
-// In ROKS mode, reads from CSI-mounted file.
-// Otherwise, reads from Kubernetes Secret.
+// LoadCredentials loads VPC API credentials.
+// If CSI_MOUNT_PATH is set, tries the CSI-mounted file first.
+// Falls back to reading from a Kubernetes Secret.
 func LoadCredentials(ctx context.Context) (string, error) {
-	clusterMode := os.Getenv("BFF_CLUSTER_MODE")
-
-	if clusterMode == "roks" {
-		return loadFromFile(ctx)
+	if csiPath := os.Getenv("CSI_MOUNT_PATH"); csiPath != "" {
+		apiKey, err := loadFromFile(ctx)
+		if err == nil {
+			return apiKey, nil
+		}
+		slog.WarnContext(ctx, "CSI credentials unavailable, falling back to Secret", "error", err)
 	}
 
 	return loadFromSecret(ctx)
 }
 
-// loadFromFile reads the API key from a CSI-mounted file (ROKS mode)
+// loadFromFile reads the API key from a CSI-mounted file
 func loadFromFile(ctx context.Context) (string, error) {
-	csiPath := os.Getenv("BFF_CSI_MOUNT_PATH")
+	csiPath := os.Getenv("CSI_MOUNT_PATH")
 	if csiPath == "" {
 		csiPath = "/etc/vpc-credentials"
 	}

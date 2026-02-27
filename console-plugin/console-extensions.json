@@ -2,73 +2,10 @@
   {
     "type": "console.navigation/href",
     "properties": {
-      "id": "vpc-networking-dashboard",
-      "section": "Networking",
-      "name": "VPC Dashboard",
+      "id": "vpc-networking",
+      "section": "networking",
+      "name": "IBM VPC Networking",
       "href": "/vpc-networking"
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "vpc-subnets",
-      "section": "Networking",
-      "name": "VPC Subnets",
-      "href": "/vpc-networking/subnets"
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "vpc-vnis",
-      "section": "Networking",
-      "name": "Virtual Network Interfaces",
-      "href": "/vpc-networking/vnis"
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "vpc-vlan-attachments",
-      "section": "Networking",
-      "name": "VLAN Attachments",
-      "href": "/vpc-networking/vlan-attachments"
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "vpc-floating-ips",
-      "section": "Networking",
-      "name": "Floating IPs",
-      "href": "/vpc-networking/floating-ips"
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "vpc-security-groups",
-      "section": "Networking",
-      "name": "Security Groups",
-      "href": "/vpc-networking/security-groups"
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "vpc-network-acls",
-      "section": "Networking",
-      "name": "Network ACLs",
-      "href": "/vpc-networking/network-acls"
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "vpc-topology",
-      "section": "Networking",
-      "name": "Network Topology",
-      "href": "/vpc-networking/topology"
     }
   },
   {
@@ -91,8 +28,16 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
-      "path": "/vpc-networking/subnets/:name",
+      "path": "/vpc-networking/subnets/:id",
       "component": { "$codeRef": "SubnetDetail" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/subnets/:id/reserved-ips",
+      "component": { "$codeRef": "ReservedIPs" }
     }
   },
   {
@@ -107,7 +52,7 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
-      "path": "/vpc-networking/vnis/:name",
+      "path": "/vpc-networking/vnis/:id",
       "component": { "$codeRef": "VNIDetail" }
     }
   },
@@ -131,6 +76,14 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
+      "path": "/vpc-networking/floating-ips/:id",
+      "component": { "$codeRef": "FloatingIPDetail" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
       "path": "/vpc-networking/security-groups",
       "component": { "$codeRef": "SecurityGroupsList" }
     }
@@ -139,7 +92,7 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
-      "path": "/vpc-networking/security-groups/:name",
+      "path": "/vpc-networking/security-groups/:id",
       "component": { "$codeRef": "SecurityGroupDetail" }
     }
   },
@@ -155,8 +108,16 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
-      "path": "/vpc-networking/network-acls/:name",
+      "path": "/vpc-networking/network-acls/:id",
       "component": { "$codeRef": "NetworkACLDetail" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/routes",
+      "component": { "$codeRef": "Routes" }
     }
   },
   {
@@ -165,6 +126,22 @@
       "exact": true,
       "path": "/vpc-networking/topology",
       "component": { "$codeRef": "Topology" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/networks",
+      "component": { "$codeRef": "NetworksList" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/networks/:name",
+      "component": { "$codeRef": "NetworkDetail" }
     }
   }
 ]

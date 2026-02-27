@@ -14,6 +14,10 @@ import (
 	"github.com/IBM/roks-vpc-network-operator/cmd/bff/internal/handler"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -57,21 +61,53 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create dynamic client for unstructured resources (CUDN, UDN)
+	dynClient, err := dynamic.NewForConfig(k8sConfig)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create dynamic K8s client", "error", err)
+		os.Exit(1)
+	}
+
 	// Create RBAC checker
 	rbacChecker := auth.NewRBACChecker(k8sClient)
 
+	// Enable Bearer token authentication via TokenReview
+	auth.SetTokenReviewClient(k8sClient)
+
 	// Determine cluster mode (ROKS vs unmanaged)
-	// BFF_CLUSTER_MODE is set by the Helm chart from .Values.bff.clusterMode
+	// BFF_CLUSTER_MODE env var overrides auto-detection if explicitly set.
 	clusterMode := os.Getenv("BFF_CLUSTER_MODE")
 	if clusterMode == "" {
-		clusterMode = "unmanaged"
+		clusterMode = detectClusterPlatform(ctx, dynClient)
 	}
-	slog.InfoContext(ctx, "cluster mode", "mode", clusterMode)
+
+	// Validate VPC_ID at startup — if it fails, fall back to unscoped mode
+	vpcID := os.Getenv("VPC_ID")
+	if vpcID != "" {
+		if _, err := vpcClient.GetVPC(ctx, vpcID); err != nil {
+			slog.ErrorContext(ctx, "VPC_ID validation failed — falling back to unscoped mode",
+				"vpcID", vpcID, "error", err)
+			vpcID = ""
+		} else {
+			slog.InfoContext(ctx, "VPC_ID validated successfully", "vpcID", vpcID)
+		}
+	}
+
+	slog.InfoContext(ctx, "cluster info",
+		"mode", clusterMode,
+		"region", os.Getenv("VPC_REGION"),
+		"vpcID", vpcID,
+	)
+	if os.Getenv("VPC_REGION") == "" {
+		slog.WarnContext(ctx, "VPC_REGION is empty — zone listing will fail")
+	}
 
 	// Create HTTP server
 	mux := http.NewServeMux()
-	handler.SetupRoutesWithClusterInfo(mux, vpcClient, rbacChecker, k8sClient, handler.ClusterInfo{
-		Mode: clusterMode,
+	handler.SetupRoutesWithClusterInfo(mux, vpcClient, rbacChecker, k8sClient, dynClient, handler.ClusterInfo{
+		Mode:   clusterMode,
+		Region: os.Getenv("VPC_REGION"),
+		VPCID:  vpcID,
 	})
 
 	listenAddr := os.Getenv("BFF_LISTEN_ADDR")
@@ -81,18 +117,29 @@ func main() {
 
 	server := &http.Server{
 		Addr:         listenAddr,
-		Handler:      mux,
+		Handler:      handler.LoggingMiddleware(mux),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// TLS cert/key paths (provided by OpenShift service-serving-cert-signer)
+	tlsCert := os.Getenv("BFF_TLS_CERT")
+	tlsKey := os.Getenv("BFF_TLS_KEY")
+
 	// Start server in background
 	errs := make(chan error, 1)
 	go func() {
-		slog.InfoContext(ctx, "starting BFF server", "addr", listenAddr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errs <- err
+		if tlsCert != "" && tlsKey != "" {
+			slog.InfoContext(ctx, "starting BFF server with TLS", "addr", listenAddr, "cert", tlsCert)
+			if err := server.ListenAndServeTLS(tlsCert, tlsKey); err != nil && err != http.ErrServerClosed {
+				errs <- err
+			}
+		} else {
+			slog.InfoContext(ctx, "starting BFF server (plain HTTP)", "addr", listenAddr)
+			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				errs <- err
+			}
 		}
 	}()
 
@@ -115,4 +162,24 @@ func main() {
 		}
 		slog.InfoContext(ctx, "server shutdown successfully")
 	}
+}
+
+// detectClusterPlatform queries the OpenShift Infrastructure CR to determine
+// whether this is a ROKS (IBMCloud) cluster or an unmanaged cluster.
+func detectClusterPlatform(ctx context.Context, dynClient dynamic.Interface) string {
+	infraGVR := schema.GroupVersionResource{
+		Group: "config.openshift.io", Version: "v1", Resource: "infrastructures",
+	}
+	obj, err := dynClient.Resource(infraGVR).Get(ctx, "cluster", metav1.GetOptions{})
+	if err != nil {
+		slog.WarnContext(ctx, "could not read Infrastructure object, defaulting to unmanaged", "error", err)
+		return "unmanaged"
+	}
+	platform, _, _ := unstructured.NestedString(obj.Object, "status", "platform")
+	if platform == "IBMCloud" {
+		slog.InfoContext(ctx, "auto-detected ROKS cluster", "platform", platform)
+		return "roks"
+	}
+	slog.InfoContext(ctx, "detected non-ROKS cluster", "platform", platform)
+	return "unmanaged"
 }

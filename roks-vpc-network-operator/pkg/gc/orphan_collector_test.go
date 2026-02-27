@@ -54,6 +54,20 @@ func TestParseVNIName(t *testing.T) {
 			wantNS:    "ns",
 			wantVM:    "vm",
 		},
+		{
+			name:      "multi-network VNI name",
+			vniName:   "roks-cluster-abc-default-my-vm-localnet1",
+			clusterID: "cluster-abc",
+			wantNS:    "default",
+			wantVM:    "my-vm-localnet1",
+		},
+		{
+			name:      "multi-network VNI with dashes",
+			vniName:   "roks-cluster-abc-myns-web-server-prod-net",
+			clusterID: "cluster-abc",
+			wantNS:    "myns",
+			wantVM:    "web-server-prod-net",
+		},
 	}
 
 	for _, tt := range tests {

@@ -76,11 +76,46 @@ func (c *vpcClient) DeleteFloatingIP(ctx context.Context, fipID string) error {
 	return nil
 }
 
+// ListFloatingIPs lists all floating IPs in the account. Used by the BFF for the Floating IPs tab.
+func (c *vpcClient) ListFloatingIPs(ctx context.Context) ([]FloatingIP, error) {
+	if err := c.limiter.Acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer c.limiter.Release()
+
+	var allFIPs []FloatingIP
+	var start *string
+
+	for {
+		listOpts := &vpcv1.ListFloatingIpsOptions{}
+		if start != nil {
+			listOpts.Start = start
+		}
+
+		result, _, err := c.service.ListFloatingIpsWithContext(ctx, listOpts)
+		if err != nil {
+			return nil, fmt.Errorf("VPC API ListFloatingIPs: %w", err)
+		}
+
+		for i := range result.FloatingIps {
+			allFIPs = append(allFIPs, *fipFromSDK(&result.FloatingIps[i]))
+		}
+
+		if result.Next == nil || result.Next.Href == nil {
+			break
+		}
+		start = result.Next.Href
+	}
+
+	return allFIPs, nil
+}
+
 func fipFromSDK(f *vpcv1.FloatingIP) *FloatingIP {
 	fip := &FloatingIP{
 		ID:      derefString(f.ID),
 		Name:    derefString(f.Name),
 		Address: derefString(f.Address),
+		Status:  derefString(f.Status),
 	}
 	if f.Zone != nil {
 		fip.Zone = derefString(f.Zone.Name)
@@ -89,7 +124,11 @@ func fipFromSDK(f *vpcv1.FloatingIP) *FloatingIP {
 		switch t := f.Target.(type) {
 		case *vpcv1.FloatingIPTarget:
 			fip.Target = derefString(t.ID)
+			fip.TargetName = derefString(t.Name)
 		}
+	}
+	if f.CreatedAt != nil {
+		fip.CreatedAt = f.CreatedAt.String()
 	}
 	return fip
 }

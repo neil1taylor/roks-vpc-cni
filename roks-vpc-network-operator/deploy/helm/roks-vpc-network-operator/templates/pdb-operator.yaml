@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: roks-vpc-network-operator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: roks-vpc-network-operator
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: roks-vpc-network-operator

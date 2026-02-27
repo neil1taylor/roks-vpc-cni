@@ -29,8 +29,14 @@ const (
 	// SubnetID is the VPC subnet ID created by the operator
 	SubnetID = Prefix + "subnet-id"
 
+	// SubnetName is the human-readable VPC subnet name (e.g. "roks-<cluster>-<network>")
+	SubnetName = Prefix + "subnet-name"
+
 	// SubnetStatus is the current status of the VPC subnet ("active", "pending", "error")
 	SubnetStatus = Prefix + "subnet-status"
+
+	// SubnetError holds an error message when subnet creation fails (e.g. CIDR mismatch)
+	SubnetError = Prefix + "subnet-error"
 
 	// VLANAttachments maps node names to VLAN attachment IDs ("node1:att-id-1,node2:att-id-2")
 	VLANAttachments = Prefix + "vlan-attachments"
@@ -59,11 +65,19 @@ const (
 
 	// FIPAddress is the public floating IP address (if requested)
 	FIPAddress = Prefix + "fip-address"
+
+	// ── Multi-network VM Annotations ──
+
+	// NetworkInterfaces is a JSON array of VMNetworkInterface entries for multi-network VMs
+	NetworkInterfaces = Prefix + "network-interfaces"
+
+	// FIPNetworks is a comma-separated list of interface names requesting floating IPs
+	FIPNetworks = Prefix + "fip-networks"
 )
 
-// RequiredCUDNAnnotations lists all annotations that must be present on a CUDN
-// for the operator to process it.
-var RequiredCUDNAnnotations = []string{
+// RequiredLocalNetAnnotations lists all annotations that must be present on a
+// LocalNet CUDN/UDN for the operator to provision VPC resources.
+var RequiredLocalNetAnnotations = []string{
 	Zone,
 	CIDR,
 	VPCID,
@@ -71,3 +85,10 @@ var RequiredCUDNAnnotations = []string{
 	SecurityGroupIDs,
 	ACLID,
 }
+
+// RequiredCUDNAnnotations is an alias for backwards compatibility.
+var RequiredCUDNAnnotations = RequiredLocalNetAnnotations
+
+// RequiredLayer2Annotations lists annotations required for Layer2 networks.
+// Layer2 networks don't need VPC resources, so this is empty.
+var RequiredLayer2Annotations = []string{}

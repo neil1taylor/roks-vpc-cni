@@ -16,6 +16,10 @@ const (
 	// VMCleanup is added to VirtualMachines to ensure VNI, reserved IP, and
 	// floating IP are deleted before the VM object is removed.
 	VMCleanup = "vpc.roks.ibm.com/vm-cleanup"
+
+	// UDNCleanup is added to UserDefinedNetworks to ensure VPC subnet and
+	// VLAN attachments are deleted before the UDN object is removed.
+	UDNCleanup = "vpc.roks.ibm.com/udn-cleanup"
 )
 
 // Add adds the given finalizer to the object if not already present.

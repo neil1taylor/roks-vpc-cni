@@ -12,15 +12,17 @@ import (
 
 // SecurityGroupHandler handles security group operations
 type SecurityGroupHandler struct {
-	vpcClient vpc.ExtendedClient
-	rbac      *auth.RBACChecker
+	vpcClient    vpc.ExtendedClient
+	rbac         *auth.RBACChecker
+	defaultVPCID string
 }
 
 // NewSecurityGroupHandler creates a new security group handler
-func NewSecurityGroupHandler(vpcClient vpc.ExtendedClient, rbac *auth.RBACChecker) *SecurityGroupHandler {
+func NewSecurityGroupHandler(vpcClient vpc.ExtendedClient, rbac *auth.RBACChecker, defaultVPCID string) *SecurityGroupHandler {
 	return &SecurityGroupHandler{
-		vpcClient: vpcClient,
-		rbac:      rbac,
+		vpcClient:    vpcClient,
+		rbac:         rbac,
+		defaultVPCID: defaultVPCID,
 	}
 }
 
@@ -32,6 +34,9 @@ func (h *SecurityGroupHandler) ListSecurityGroups(w http.ResponseWriter, r *http
 	}
 
 	vpcID := GetQueryParam(r, "vpc_id")
+	if vpcID == "" {
+		vpcID = h.defaultVPCID
+	}
 	slog.DebugContext(r.Context(), "listing security groups", "vpc_id", vpcID)
 
 	// Call VPC client to list security groups
@@ -48,8 +53,9 @@ func (h *SecurityGroupHandler) ListSecurityGroups(w http.ResponseWriter, r *http
 		responses = append(responses, model.SecurityGroupResponse{
 			ID:          sg.ID,
 			Name:        sg.Name,
-			VPCID:       sg.VPCID,
+			VPC:         model.RefResponse{ID: sg.VPCID},
 			Description: sg.Description,
+			Status:      "available",
 			CreatedAt:   sg.CreatedAt,
 		})
 	}
@@ -104,8 +110,9 @@ func (h *SecurityGroupHandler) CreateSecurityGroup(w http.ResponseWriter, r *htt
 	resp := model.SecurityGroupResponse{
 		ID:          sg.ID,
 		Name:        sg.Name,
-		VPCID:       sg.VPCID,
+		VPC:         model.RefResponse{ID: sg.VPCID},
 		Description: sg.Description,
+		Status:      "available",
 		CreatedAt:   sg.CreatedAt,
 	}
 
@@ -134,22 +141,15 @@ func (h *SecurityGroupHandler) GetSecurityGroup(w http.ResponseWriter, r *http.R
 	// Convert rules from the SG (GetSecurityGroup returns rules inline)
 	ruleResponses := make([]model.RuleResponse, 0, len(sg.Rules))
 	for _, rule := range sg.Rules {
-		ruleResponses = append(ruleResponses, model.RuleResponse{
-			ID:         rule.ID,
-			Direction:  rule.Direction,
-			Protocol:   rule.Protocol,
-			PortMin:    rule.PortMin,
-			PortMax:    rule.PortMax,
-			RemoteCIDR: rule.Remote.CIDRBlock,
-			RemoteSGID: rule.Remote.SecurityGroupID,
-		})
+		ruleResponses = append(ruleResponses, ruleToResponse(&rule))
 	}
 
 	resp := model.SecurityGroupResponse{
 		ID:          sg.ID,
 		Name:        sg.Name,
-		VPCID:       sg.VPCID,
+		VPC:         model.RefResponse{ID: sg.VPCID},
 		Description: sg.Description,
+		Status:      "available",
 		CreatedAt:   sg.CreatedAt,
 		Rules:       ruleResponses,
 	}
@@ -245,17 +245,7 @@ func (h *SecurityGroupHandler) AddSecurityGroupRule(w http.ResponseWriter, r *ht
 		return
 	}
 
-	resp := model.RuleResponse{
-		ID:         rule.ID,
-		Direction:  rule.Direction,
-		Protocol:   rule.Protocol,
-		PortMin:    rule.PortMin,
-		PortMax:    rule.PortMax,
-		RemoteCIDR: rule.Remote.CIDRBlock,
-		RemoteSGID: rule.Remote.SecurityGroupID,
-	}
-
-	WriteJSON(w, http.StatusCreated, resp)
+	WriteJSON(w, http.StatusCreated, ruleToResponse(rule))
 }
 
 // UpdateSecurityGroupRule handles PATCH /api/v1/security-groups/{id}/rules/{ruleId}
@@ -323,17 +313,7 @@ func (h *SecurityGroupHandler) UpdateSecurityGroupRule(w http.ResponseWriter, r 
 		return
 	}
 
-	resp := model.RuleResponse{
-		ID:         rule.ID,
-		Direction:  rule.Direction,
-		Protocol:   rule.Protocol,
-		PortMin:    rule.PortMin,
-		PortMax:    rule.PortMax,
-		RemoteCIDR: rule.Remote.CIDRBlock,
-		RemoteSGID: rule.Remote.SecurityGroupID,
-	}
-
-	WriteJSON(w, http.StatusOK, resp)
+	WriteJSON(w, http.StatusOK, ruleToResponse(rule))
 }
 
 // DeleteSecurityGroupRule handles DELETE /api/v1/security-groups/{id}/rules/{ruleId}
@@ -378,4 +358,24 @@ func (h *SecurityGroupHandler) DeleteSecurityGroupRule(w http.ResponseWriter, r 
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ruleToResponse converts a VPC SecurityGroupRule to a RuleResponse with
+// unified Remote/RemoteType fields matching the frontend SecurityGroupRule interface.
+func ruleToResponse(rule *vpc.SecurityGroupRule) model.RuleResponse {
+	resp := model.RuleResponse{
+		ID:        rule.ID,
+		Direction: rule.Direction,
+		Protocol:  rule.Protocol,
+		PortMin:   rule.PortMin,
+		PortMax:   rule.PortMax,
+	}
+	if rule.Remote.CIDRBlock != "" {
+		resp.Remote = rule.Remote.CIDRBlock
+		resp.RemoteType = "cidr"
+	} else if rule.Remote.SecurityGroupID != "" {
+		resp.Remote = rule.Remote.SecurityGroupID
+		resp.RemoteType = "sg"
+	}
+	return resp
 }

@@ -1,11 +1,11 @@
 import React from 'react';
 import {
-  Page,
   PageSection,
-  PageSectionVariants,
-  Title,
+  Text,
+  TextVariants,
 } from '@patternfly/react-core';
 import { TopologyViewer } from '../topology/TopologyViewer';
+import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 /**
  * Network Topology Page
@@ -13,15 +13,16 @@ import { TopologyViewer } from '../topology/TopologyViewer';
  */
 const TopologyPage: React.FC = () => {
   return (
-    <Page>
-      <PageSection variant={PageSectionVariants.light}>
-        <Title headingLevel="h1">Network Topology</Title>
+    <VPCNetworkingShell>
+      <PageSection padding={{ default: 'padding' }}>
+        <Text component={TextVariants.p} style={{ color: 'var(--pf-v5-global--Color--200)' }}>
+          Visual map of VPC resources and their relationships — subnets, VNIs, security groups, and networks.
+        </Text>
       </PageSection>
-
-      <PageSection isFilled style={{ minHeight: '600px' }}>
+      <PageSection isFilled padding={{ default: 'noPadding' }}>
         <TopologyViewer />
       </PageSection>
-    </Page>
+    </VPCNetworkingShell>
   );
 };
 

@@ -26,9 +26,14 @@ var cudnGVK = schema.GroupVersionKind{
 	Kind:    "ClusterUserDefinedNetwork",
 }
 
+var udnGVK = schema.GroupVersionKind{
+	Group:   "k8s.ovn.org",
+	Version: "v1",
+	Kind:    "UserDefinedNetwork",
+}
+
 // Reconciler reconciles Node objects to ensure VLAN attachments exist
-// for all LocalNet CUDNs on every bare metal node.
-// See DESIGN.md §6.2 for the full specification.
+// for all LocalNet CUDNs and UDNs on every bare metal node.
 type Reconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
@@ -65,7 +70,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	return r.reconcileNormal(ctx, node)
 }
 
-// reconcileNormal ensures the node has VLAN attachments for all LocalNet CUDNs.
+// reconcileNormal ensures the node has VLAN attachments for all LocalNet CUDNs and UDNs.
 func (r *Reconciler) reconcileNormal(ctx context.Context, node *corev1.Node) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -75,7 +80,62 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, node *corev1.Node) (ct
 		return ctrl.Result{}, nil
 	}
 
-	// List all CUDNs
+	// Collect all LocalNet network definitions (CUDNs + UDNs)
+	localNetworks, err := r.listLocalNetNetworks(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	for _, netObj := range localNetworks {
+		cudnAnnots := netObj.GetAnnotations()
+		if cudnAnnots == nil {
+			continue
+		}
+
+		subnetID := cudnAnnots[annotations.SubnetID]
+		if subnetID == "" {
+			continue
+		}
+
+		existingAttachments := parseAttachments(cudnAnnots[annotations.VLANAttachments])
+		if _, exists := existingAttachments[node.Name]; exists {
+			continue
+		}
+
+		vlanID, _ := strconv.ParseInt(cudnAnnots[annotations.VLANID], 10, 64)
+		att, err := r.VPC.CreateVLANAttachment(ctx, vpc.CreateVLANAttachmentOptions{
+			BMServerID: bmServerID,
+			Name:       fmt.Sprintf("roks-%s-vlan%d", netObj.GetName(), vlanID),
+			VLANID:     vlanID,
+			SubnetID:   subnetID,
+		})
+		if err != nil {
+			logger.Error(err, "Failed to create VLAN attachment", "node", node.Name, "network", netObj.GetName())
+			operatormetrics.ReconcileOpsTotal.WithLabelValues("node", "create_vlan_attachment", "error").Inc()
+			continue
+		}
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("node", "create_vlan_attachment", "success").Inc()
+
+		existingAttachments[node.Name] = att.ID
+		cudnAnnots[annotations.VLANAttachments] = serializeAttachments(existingAttachments)
+		netObj.SetAnnotations(cudnAnnots)
+		if err := r.Update(ctx, netObj); err != nil {
+			logger.Error(err, "Failed to update network annotations", "network", netObj.GetName())
+			continue
+		}
+
+		logger.Info("Created VLAN attachment for node", "node", node.Name, "network", netObj.GetName(), "attachmentID", att.ID)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// listLocalNetNetworks returns all LocalNet CUDNs and UDNs as unstructured objects.
+func (r *Reconciler) listLocalNetNetworks(ctx context.Context) ([]*unstructured.Unstructured, error) {
+	logger := log.FromContext(ctx)
+	var result []*unstructured.Unstructured
+
+	// List CUDNs
 	cudnList := &unstructured.UnstructuredList{}
 	cudnList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   cudnGVK.Group,
@@ -84,63 +144,39 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, node *corev1.Node) (ct
 	})
 	if err := r.List(ctx, cudnList); err != nil {
 		logger.Error(err, "Failed to list CUDNs")
-		return ctrl.Result{}, err
+		return nil, err
 	}
 
 	for i := range cudnList.Items {
 		cudn := &cudnList.Items[i]
-
-		// Only handle LocalNet CUDNs
+		// Only include LocalNet CUDNs — Layer2 CUDNs don't need VLAN attachments
 		topology, _, _ := unstructured.NestedString(cudn.Object, "spec", "topology")
-		if topology != "LocalNet" {
-			continue
+		if topology == "LocalNet" {
+			result = append(result, cudn)
 		}
-
-		cudnAnnots := cudn.GetAnnotations()
-		if cudnAnnots == nil {
-			continue
-		}
-
-		// Check if subnet is ready
-		subnetID := cudnAnnots[annotations.SubnetID]
-		if subnetID == "" {
-			continue
-		}
-
-		// Check if this node already has a VLAN attachment
-		existingAttachments := parseAttachments(cudnAnnots[annotations.VLANAttachments])
-		if _, exists := existingAttachments[node.Name]; exists {
-			continue
-		}
-
-		// Create VLAN attachment
-		vlanID, _ := strconv.ParseInt(cudnAnnots[annotations.VLANID], 10, 64)
-		att, err := r.VPC.CreateVLANAttachment(ctx, vpc.CreateVLANAttachmentOptions{
-			BMServerID: bmServerID,
-			Name:       fmt.Sprintf("roks-%s-vlan%d", cudn.GetName(), vlanID),
-			VLANID:     vlanID,
-			SubnetID:   subnetID,
-		})
-		if err != nil {
-			logger.Error(err, "Failed to create VLAN attachment", "node", node.Name, "cudn", cudn.GetName())
-			operatormetrics.ReconcileOpsTotal.WithLabelValues("node", "create_vlan_attachment", "error").Inc()
-			continue
-		}
-		operatormetrics.ReconcileOpsTotal.WithLabelValues("node", "create_vlan_attachment", "success").Inc()
-
-		// Update CUDN annotation
-		existingAttachments[node.Name] = att.ID
-		cudnAnnots[annotations.VLANAttachments] = serializeAttachments(existingAttachments)
-		cudn.SetAnnotations(cudnAnnots)
-		if err := r.Update(ctx, cudn); err != nil {
-			logger.Error(err, "Failed to update CUDN annotations", "cudn", cudn.GetName())
-			continue
-		}
-
-		logger.Info("Created VLAN attachment for node", "node", node.Name, "cudn", cudn.GetName(), "attachmentID", att.ID)
 	}
 
-	return ctrl.Result{}, nil
+	// List UDNs across all namespaces
+	udnList := &unstructured.UnstructuredList{}
+	udnList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   udnGVK.Group,
+		Version: udnGVK.Version,
+		Kind:    "UserDefinedNetworkList",
+	})
+	if err := r.List(ctx, udnList); err != nil {
+		// UDN CRD may not be installed — log and continue with CUDNs only
+		logger.V(1).Info("Failed to list UDNs (CRD may not be installed)", "error", err)
+	} else {
+		for i := range udnList.Items {
+			udn := &udnList.Items[i]
+			topology, _, _ := unstructured.NestedString(udn.Object, "spec", "topology")
+			if topology == "LocalNet" {
+				result = append(result, udn)
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // reconcileDelete cleans up VLAN attachments when a node is removed.
@@ -148,21 +184,14 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, nodeName string) (ctrl
 	logger := log.FromContext(ctx)
 	logger.Info("Cleaning up VLAN attachments for removed node", "node", nodeName)
 
-	// List all CUDNs
-	cudnList := &unstructured.UnstructuredList{}
-	cudnList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   cudnGVK.Group,
-		Version: cudnGVK.Version,
-		Kind:    "ClusterUserDefinedNetworkList",
-	})
-	if err := r.List(ctx, cudnList); err != nil {
-		logger.Error(err, "Failed to list CUDNs for node cleanup")
+	// Clean up from all network definitions (CUDNs + UDNs)
+	allNetworks, err := r.listAllNetworks(ctx)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	for i := range cudnList.Items {
-		cudn := &cudnList.Items[i]
-		cudnAnnots := cudn.GetAnnotations()
+	for _, netObj := range allNetworks {
+		cudnAnnots := netObj.GetAnnotations()
 		if cudnAnnots == nil {
 			continue
 		}
@@ -173,23 +202,54 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, nodeName string) (ctrl
 			continue
 		}
 
-		// We can't resolve the BM server ID since the node is deleted.
-		// The VPC API may still allow deletion by attachment ID if we can
-		// find the BM server ID from the attachment annotation or VPC API.
-		// For now, we'll try to look up existing attachments.
 		logger.Info("Node removed, VLAN attachment orphaned — will be handled by GC",
 			"node", nodeName, "attachmentID", attachmentID)
 
-		// Remove from CUDN annotation
 		delete(existingAttachments, nodeName)
 		cudnAnnots[annotations.VLANAttachments] = serializeAttachments(existingAttachments)
-		cudn.SetAnnotations(cudnAnnots)
-		if err := r.Update(ctx, cudn); err != nil {
-			logger.Error(err, "Failed to update CUDN annotations during node cleanup", "cudn", cudn.GetName())
+		netObj.SetAnnotations(cudnAnnots)
+		if err := r.Update(ctx, netObj); err != nil {
+			logger.Error(err, "Failed to update network annotations during node cleanup", "network", netObj.GetName())
 		}
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// listAllNetworks returns all CUDNs and UDNs regardless of topology.
+func (r *Reconciler) listAllNetworks(ctx context.Context) ([]*unstructured.Unstructured, error) {
+	logger := log.FromContext(ctx)
+	var result []*unstructured.Unstructured
+
+	cudnList := &unstructured.UnstructuredList{}
+	cudnList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   cudnGVK.Group,
+		Version: cudnGVK.Version,
+		Kind:    "ClusterUserDefinedNetworkList",
+	})
+	if err := r.List(ctx, cudnList); err != nil {
+		logger.Error(err, "Failed to list CUDNs for node cleanup")
+		return nil, err
+	}
+	for i := range cudnList.Items {
+		result = append(result, &cudnList.Items[i])
+	}
+
+	udnList := &unstructured.UnstructuredList{}
+	udnList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   udnGVK.Group,
+		Version: udnGVK.Version,
+		Kind:    "UserDefinedNetworkList",
+	})
+	if err := r.List(ctx, udnList); err != nil {
+		logger.V(1).Info("Failed to list UDNs for node cleanup", "error", err)
+	} else {
+		for i := range udnList.Items {
+			result = append(result, &udnList.Items[i])
+		}
+	}
+
+	return result, nil
 }
 
 // SetupWithManager registers the Node reconciler with the controller manager.
@@ -216,7 +276,6 @@ func isNodeReady(node *corev1.Node) bool {
 }
 
 // extractBMServerID extracts the bare metal server ID from a node's provider ID.
-// Expected format: "ibm://<account>/<region>/<zone>/<server-id>"
 func extractBMServerID(providerID string) string {
 	if providerID == "" {
 		return ""

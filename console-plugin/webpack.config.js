@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const path = require('path');
+const webpack = require('webpack');
 const { ConsoleRemotePlugin } = require('@openshift-console/dynamic-plugin-sdk-webpack');
 
 module.exports = {
@@ -7,8 +8,8 @@ module.exports = {
   entry: {},
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: '[name]-bundle.js',
-    chunkFilename: '[name]-chunk.js',
+    filename: '[name]-bundle.[contenthash:8].js',
+    chunkFilename: '[name]-chunk.[contenthash:8].js',
   },
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
@@ -40,17 +41,13 @@ module.exports = {
   },
   plugins: [
     new ConsoleRemotePlugin({ validateSharedModules: false }),
+    new webpack.ProvidePlugin({
+      React: 'react',
+    }),
   ],
-  externals: {
-    react: 'React',
-    'react-dom': 'ReactDOM',
-    'react-router-dom': 'ReactRouterDOM',
-  },
   optimization: {
+    chunkIds: 'named',
     minimize: true,
-    splitChunks: {
-      chunks: 'all',
-    },
   },
   devtool: 'source-map',
 };

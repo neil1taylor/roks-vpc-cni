@@ -18,6 +18,8 @@ const routes: Array<{ path: string; heading: RegExp }> = [
   { path: '/vpc-networking/security-groups/web-sg', heading: /Security Group: web-sg/ },
   { path: '/vpc-networking/network-acls', heading: /Network ACLs/ },
   { path: '/vpc-networking/network-acls/prod-acl', heading: /Network ACL: prod-acl/ },
+  { path: '/vpc-networking/networks', heading: /Networks/ },
+  { path: '/vpc-networking/networks/localnet-cudn', heading: /Network:.*localnet-cudn/ },
   { path: '/vpc-networking/topology', heading: /Network Topology/ },
 ];
 

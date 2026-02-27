@@ -21,6 +21,29 @@ rules:
   - update
   - patch
   - delete
+# OVN-Kubernetes CUDNs and UDNs
+- apiGroups:
+  - k8s.ovn.org
+  resources:
+  - clusteruserdefinednetworks
+  - userdefinednetworks
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+# Namespace management (list, create for primary UDN label)
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - create
 # Subject access reviews for authorization checks
 - apiGroups:
   - authorization.k8s.io
@@ -38,4 +61,11 @@ rules:
   verbs:
   - get
   - watch
+# OpenShift Infrastructure object for platform auto-detection
+- apiGroups:
+  - config.openshift.io
+  resources:
+  - infrastructures
+  verbs:
+  - get
 {{- end }}

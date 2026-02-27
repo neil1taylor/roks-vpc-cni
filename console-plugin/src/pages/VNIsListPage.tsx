@@ -1,27 +1,24 @@
 import React from 'react';
 import {
-  Page,
   PageSection,
-  PageSectionVariants,
-  Title,
   Card,
   CardBody,
-  Button,
-  ButtonVariant,
-  Toolbar,
-  ToolbarContent,
-  ToolbarItem,
   EmptyState,
   EmptyStateIcon,
   EmptyStateBody,
   EmptyStateHeader,
   Spinner,
+  Alert,
+  Text,
+  TextVariants,
 } from '@patternfly/react-core';
-import { PlusCircleIcon, CubesIcon } from '@patternfly/react-icons';
+import { CubesIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tbody, Tr, Th, Td } from '@patternfly/react-table';
+import { Link } from 'react-router-dom-v5-compat';
 import { useVNIs, useClusterInfo } from '../api/hooks';
 import StatusBadge from '../components/StatusBadge';
 import { formatRelativeTime } from '../utils/formatters';
+import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 /**
  * Virtual Network Interfaces List Page
@@ -43,11 +40,7 @@ const VNIsListPage: React.FC = () => {
   // ROKS cluster without ROKS API — show Coming Soon
   if (!clusterInfoLoading && !vniManagementEnabled && !roksAPIAvailable) {
     return (
-      <Page>
-        <PageSection variant={PageSectionVariants.light}>
-          <Title headingLevel="h1">Virtual Network Interfaces</Title>
-        </PageSection>
-
+      <VPCNetworkingShell>
         <PageSection>
           <Card>
             <CardBody>
@@ -70,27 +63,23 @@ const VNIsListPage: React.FC = () => {
             </CardBody>
           </Card>
         </PageSection>
-      </Page>
+      </VPCNetworkingShell>
     );
   }
 
   return (
-    <Page>
-      <PageSection variant={PageSectionVariants.light}>
-        <Title headingLevel="h1">Virtual Network Interfaces</Title>
-      </PageSection>
-
+    <VPCNetworkingShell>
       <PageSection>
+        <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
+          Virtual Network Interfaces created for VMs on LocalNet networks. VNIs are provisioned automatically when a VM is created.
+        </Text>
+        <Alert variant="info" isInline title="VNIs are created automatically" style={{ marginBottom: '16px' }}>
+          When a VirtualMachine is created, the operator's mutating webhook provisions a VNI
+          on the appropriate VPC subnet, assigns a MAC address and reserved IP, and injects
+          them into the VM spec. VNIs are deleted when the VM is removed.
+        </Alert>
+
         <Card>
-          <Toolbar>
-            <ToolbarContent>
-              <ToolbarItem>
-                <Button variant={ButtonVariant.primary} icon={<PlusCircleIcon />}>
-                  Create VNI
-                </Button>
-              </ToolbarItem>
-            </ToolbarContent>
-          </Toolbar>
           <CardBody>
             {loading ? (
               <div style={{ textAlign: 'center', padding: '40px' }}><Spinner size="lg" /></div>
@@ -102,6 +91,7 @@ const VNIsListPage: React.FC = () => {
                   <Tr>
                     <Th>Name</Th>
                     <Th>Subnet</Th>
+                    <Th>Primary IP</Th>
                     <Th>Status</Th>
                     <Th>Age</Th>
                   </Tr>
@@ -109,8 +99,9 @@ const VNIsListPage: React.FC = () => {
                 <Tbody>
                   {vnis.map((vni) => (
                     <Tr key={vni.id || vni.name}>
-                      <Td>{vni.name || '-'}</Td>
+                      <Td><Link to={`/vpc-networking/vnis/${vni.id}`}>{vni.name || '-'}</Link></Td>
                       <Td>{vni.subnet?.name || '-'}</Td>
+                      <Td>{vni.primaryIp?.address ? <code>{vni.primaryIp.address}</code> : '-'}</Td>
                       <Td><StatusBadge status={vni.status} /></Td>
                       <Td>{formatRelativeTime(vni.createdAt)}</Td>
                     </Tr>
@@ -121,7 +112,7 @@ const VNIsListPage: React.FC = () => {
           </CardBody>
         </Card>
       </PageSection>
-    </Page>
+    </VPCNetworkingShell>
   );
 };
 

@@ -11,6 +11,19 @@ import {
   FloatingIP,
   TopologyData,
   ClusterInfo,
+  NetworkDefinition,
+  CreateNetworkRequest,
+  NetworkTypesInfo,
+  AddressPrefix,
+  RoutingTable,
+  Route,
+  CreateRouteRequest,
+  CreateSecurityGroupRequest,
+  CreateNetworkACLRequest,
+  CreateFloatingIPRequest,
+  ReservedIP,
+  NamespaceInfo,
+  CreateNamespaceRequest,
   ApiResponse,
   ApiError,
 } from './types';
@@ -51,26 +64,77 @@ class VPCNetworkClient {
       const response = await consoleFetch(url, options);
 
       if (!response.ok) {
-        const error = (await response.json()) as ApiError;
-        return {
-          error: error || {
-            code: 'HTTP_ERROR',
-            message: `HTTP ${response.status}: ${response.statusText}`,
-          },
-        };
+        try {
+          const body = await response.json();
+          // BFF wraps errors as { error: { code, message } }
+          const apiError: ApiError = body.error || body;
+          return {
+            error: {
+              code: apiError.code || 'HTTP_ERROR',
+              message: apiError.message || `HTTP ${response.status}: ${response.statusText}`,
+            },
+          };
+        } catch {
+          return {
+            error: {
+              code: 'HTTP_ERROR',
+              message: `HTTP ${response.status}: ${response.statusText}`,
+            },
+          };
+        }
       }
 
       const data = (await response.json()) as T;
       return { data };
     } catch (err) {
-      const error = err as Error;
       return {
         error: {
           code: 'NETWORK_ERROR',
-          message: error.message || 'Unknown network error',
+          message: this.extractErrorMessage(err),
         },
       };
     }
+  }
+
+  /**
+   * Safely extract an error message from any thrown value.
+   * consoleFetch may throw Error, Response-like objects, HttpError with .json,
+   * plain objects, or strings — this handles all shapes.
+   */
+  private extractErrorMessage(err: unknown): string {
+    if (typeof err === 'string') {
+      return err;
+    }
+    if (err && typeof err === 'object') {
+      const obj = err as Record<string, unknown>;
+      // HttpError with json body (OpenShift Console SDK throws this on non-2xx)
+      if (obj.json && typeof obj.json === 'object') {
+        const json = obj.json as Record<string, unknown>;
+        if (json.error && typeof json.error === 'object') {
+          const inner = json.error as Record<string, unknown>;
+          if (typeof inner.message === 'string') return inner.message;
+        }
+        if (typeof json.message === 'string') return json.message;
+      }
+      // Plain object with message (Error instances, HttpError, etc.)
+      if (typeof obj.message === 'string' && obj.message) return obj.message;
+      // Response-like with status/statusText
+      if (typeof obj.status === 'number' && typeof obj.statusText === 'string') {
+        return `HTTP ${obj.status}: ${obj.statusText}`;
+      }
+      // HttpError with only a numeric status and response
+      if (typeof obj.status === 'number') {
+        return `HTTP error ${obj.status}`;
+      }
+      // Last resort: try JSON.stringify to avoid [object Object]
+      try {
+        const s = JSON.stringify(err);
+        if (s && s !== '{}') return s;
+      } catch {
+        // ignore
+      }
+    }
+    return 'An unexpected error occurred';
   }
 
   // VPC Operations
@@ -127,6 +191,10 @@ class VPCNetworkClient {
     return this.request<void>('DELETE', `/subnets/${subnetId}`);
   }
 
+  async listSubnetReservedIPs(subnetId: string): Promise<ApiResponse<ReservedIP[]>> {
+    return this.request<ReservedIP[]>('GET', `/subnets/${subnetId}/reserved-ips`);
+  }
+
   // Virtual Network Interface Operations
   async listVNIs(subnetId?: string): Promise<ApiResponse<VirtualNetworkInterface[]>> {
     const endpoint = subnetId ? `/vnis?subnetId=${subnetId}` : '/vnis';
@@ -163,8 +231,8 @@ class VPCNetworkClient {
     return this.request<FloatingIP>('GET', `/floating-ips/${floatingIpId}`);
   }
 
-  async createFloatingIP(floatingIp: Partial<FloatingIP>): Promise<ApiResponse<FloatingIP>> {
-    return this.request<FloatingIP>('POST', '/floating-ips', floatingIp as Record<string, unknown>);
+  async createFloatingIP(floatingIp: CreateFloatingIPRequest): Promise<ApiResponse<FloatingIP>> {
+    return this.request<FloatingIP>('POST', '/floating-ips', floatingIp as unknown as Record<string, unknown>);
   }
 
   async updateFloatingIP(floatingIpId: string, floatingIp: Partial<FloatingIP>): Promise<ApiResponse<FloatingIP>> {
@@ -185,8 +253,8 @@ class VPCNetworkClient {
     return this.request<SecurityGroup>('GET', `/security-groups/${sgId}`);
   }
 
-  async createSecurityGroup(sg: Partial<SecurityGroup>): Promise<ApiResponse<SecurityGroup>> {
-    return this.request<SecurityGroup>('POST', '/security-groups', sg as Record<string, unknown>);
+  async createSecurityGroup(sg: CreateSecurityGroupRequest): Promise<ApiResponse<SecurityGroup>> {
+    return this.request<SecurityGroup>('POST', '/security-groups', sg as unknown as Record<string, unknown>);
   }
 
   async updateSecurityGroup(sgId: string, sg: Partial<SecurityGroup>): Promise<ApiResponse<SecurityGroup>> {
@@ -223,8 +291,8 @@ class VPCNetworkClient {
     return this.request<NetworkACL>('GET', `/network-acls/${aclId}`);
   }
 
-  async createNetworkACL(acl: Partial<NetworkACL>): Promise<ApiResponse<NetworkACL>> {
-    return this.request<NetworkACL>('POST', '/network-acls', acl as Record<string, unknown>);
+  async createNetworkACL(acl: CreateNetworkACLRequest): Promise<ApiResponse<NetworkACL>> {
+    return this.request<NetworkACL>('POST', '/network-acls', acl as unknown as Record<string, unknown>);
   }
 
   async updateNetworkACL(aclId: string, acl: Partial<NetworkACL>): Promise<ApiResponse<NetworkACL>> {
@@ -260,6 +328,90 @@ class VPCNetworkClient {
   async getTopology(vpcId?: string): Promise<ApiResponse<TopologyData>> {
     const endpoint = vpcId ? `/topology?vpcId=${vpcId}` : '/topology';
     return this.request<TopologyData>('GET', endpoint);
+  }
+
+  // Network (CUDN/UDN) Operations
+  async listCUDNs(): Promise<ApiResponse<NetworkDefinition[]>> {
+    return this.request<NetworkDefinition[]>('GET', '/cudns');
+  }
+
+  async getCUDN(name: string): Promise<ApiResponse<NetworkDefinition>> {
+    return this.request<NetworkDefinition>('GET', `/cudns/${name}`);
+  }
+
+  async createCUDN(network: CreateNetworkRequest): Promise<ApiResponse<NetworkDefinition>> {
+    return this.request<NetworkDefinition>('POST', '/cudns', network as unknown as Record<string, unknown>);
+  }
+
+  async deleteCUDN(name: string): Promise<ApiResponse<void>> {
+    return this.request<void>('DELETE', `/cudns/${name}`);
+  }
+
+  async getUDN(namespace: string, name: string): Promise<ApiResponse<NetworkDefinition>> {
+    return this.request<NetworkDefinition>('GET', `/udns/${namespace}/${name}`);
+  }
+
+  async listUDNs(namespace?: string): Promise<ApiResponse<NetworkDefinition[]>> {
+    const endpoint = namespace ? `/udns?namespace=${namespace}` : '/udns';
+    return this.request<NetworkDefinition[]>('GET', endpoint);
+  }
+
+  async createUDN(network: CreateNetworkRequest): Promise<ApiResponse<NetworkDefinition>> {
+    return this.request<NetworkDefinition>('POST', '/udns', network as unknown as Record<string, unknown>);
+  }
+
+  async deleteUDN(namespace: string, name: string): Promise<ApiResponse<void>> {
+    return this.request<void>('DELETE', `/udns/${namespace}/${name}`);
+  }
+
+  async getNetworkTypes(): Promise<ApiResponse<NetworkTypesInfo>> {
+    return this.request<NetworkTypesInfo>('GET', '/network-types');
+  }
+
+  // Namespace Operations
+  async listNamespaces(label?: string): Promise<ApiResponse<NamespaceInfo[]>> {
+    const endpoint = label ? `/namespaces?label=${encodeURIComponent(label)}` : '/namespaces';
+    return this.request<NamespaceInfo[]>('GET', endpoint);
+  }
+
+  async createNamespace(req: CreateNamespaceRequest): Promise<ApiResponse<NamespaceInfo>> {
+    return this.request<NamespaceInfo>('POST', '/namespaces', req as unknown as Record<string, unknown>);
+  }
+
+  // Address Prefix Operations
+  async listAddressPrefixes(vpcId?: string): Promise<ApiResponse<AddressPrefix[]>> {
+    const endpoint = vpcId ? `/address-prefixes?vpc_id=${vpcId}` : '/address-prefixes';
+    return this.request<AddressPrefix[]>('GET', endpoint);
+  }
+
+  async createAddressPrefix(opts: {
+    vpcId?: string;
+    cidr: string;
+    zone: string;
+    name?: string;
+  }): Promise<ApiResponse<AddressPrefix>> {
+    return this.request<AddressPrefix>('POST', '/address-prefixes', opts as unknown as Record<string, unknown>);
+  }
+
+  // Routing Table and Route Operations
+  async listRoutingTables(): Promise<ApiResponse<RoutingTable[]>> {
+    return this.request<RoutingTable[]>('GET', '/routing-tables');
+  }
+
+  async getRoutingTable(rtId: string): Promise<ApiResponse<RoutingTable>> {
+    return this.request<RoutingTable>('GET', `/routing-tables/${rtId}`);
+  }
+
+  async listRoutes(rtId: string): Promise<ApiResponse<Route[]>> {
+    return this.request<Route[]>('GET', `/routing-tables/${rtId}/routes`);
+  }
+
+  async createRoute(rtId: string, route: CreateRouteRequest): Promise<ApiResponse<Route>> {
+    return this.request<Route>('POST', `/routing-tables/${rtId}/routes`, route as unknown as Record<string, unknown>);
+  }
+
+  async deleteRoute(rtId: string, routeId: string): Promise<ApiResponse<void>> {
+    return this.request<void>('DELETE', `/routing-tables/${rtId}/routes/${routeId}`);
   }
 }
 

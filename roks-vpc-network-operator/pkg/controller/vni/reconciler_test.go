@@ -335,3 +335,154 @@ func TestReconcileROKS_Pending(t *testing.T) {
 		t.Errorf("expected SyncStatus = 'Pending', got %q", updated.Status.SyncStatus)
 	}
 }
+
+func TestReconcile_ModeUnmanaged_UsesVPCClient(t *testing.T) {
+	scheme := newTestScheme()
+
+	vniObj := &v1alpha1.VirtualNetworkInterface{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "unmanaged-vni",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VNISpec{
+			SubnetRef:        "my-subnet",
+			SubnetID:         "subnet-123",
+			SecurityGroupIDs: []string{"sg-1"},
+			ClusterID:        "cluster-abc",
+			VMRef: &v1alpha1.VMReference{
+				Namespace: "default",
+				Name:      "my-vm",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vniObj).
+		WithStatusSubresource(vniObj).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.CreateVNIFn = func(ctx context.Context, opts vpc.CreateVNIOptions) (*vpc.VNI, error) {
+		return &vpc.VNI{
+			ID:         "vni-unmanaged-1",
+			Name:       opts.Name,
+			MACAddress: "fa:16:3e:dd:ee:ff",
+			PrimaryIP: vpc.ReservedIP{
+				ID:      "rip-456",
+				Address: "10.240.0.10",
+			},
+		}, nil
+	}
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       mockVPC,
+		ClusterID: "cluster-abc",
+		Mode:      roks.ModeUnmanaged,
+		// ROKS is intentionally nil — unmanaged mode should not use it
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "unmanaged-vni", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	if mockVPC.CallCount("CreateVNI") != 1 {
+		t.Errorf("expected VPC CreateVNI to be called once, got %d", mockVPC.CallCount("CreateVNI"))
+	}
+}
+
+func TestReconcile_ModeROKS_DoesNotCallVPCClient(t *testing.T) {
+	scheme := newTestScheme()
+
+	vniObj := &v1alpha1.VirtualNetworkInterface{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "roks-only-vni",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VNISpec{
+			SubnetRef: "my-subnet",
+			SubnetID:  "subnet-123",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vniObj).
+		WithStatusSubresource(vniObj).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       mockVPC,
+		ROKS:      roks.NewStubClient("cluster-abc"),
+		ClusterID: "cluster-abc",
+		Mode:      roks.ModeROKS,
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "roks-only-vni", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	if mockVPC.CallCount("CreateVNI") != 0 {
+		t.Errorf("expected VPC CreateVNI NOT to be called in ROKS mode, got %d calls", mockVPC.CallCount("CreateVNI"))
+	}
+}
+
+func TestReconcileROKS_NilClient_PendingStatus(t *testing.T) {
+	scheme := newTestScheme()
+
+	vniObj := &v1alpha1.VirtualNetworkInterface{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "roks-nil-vni",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VNISpec{
+			SubnetRef: "my-subnet",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vniObj).
+		WithStatusSubresource(vniObj).
+		Build()
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       vpc.NewMockClient(),
+		ROKS:      nil, // nil ROKS client
+		ClusterID: "cluster-abc",
+		Mode:      roks.ModeROKS,
+	}
+
+	result, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "roks-nil-vni", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter == 0 {
+		t.Error("expected requeue when ROKS client is nil")
+	}
+
+	updated := &v1alpha1.VirtualNetworkInterface{}
+	_ = fakeClient.Get(context.Background(), types.NamespacedName{Name: "roks-nil-vni", Namespace: "default"}, updated)
+	if updated.Status.SyncStatus != "Pending" {
+		t.Errorf("expected SyncStatus = 'Pending', got %q", updated.Status.SyncStatus)
+	}
+}

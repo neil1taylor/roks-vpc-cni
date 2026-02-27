@@ -47,6 +47,13 @@ func (c *InstrumentedClient) DeleteSubnet(ctx context.Context, subnetID string) 
 	return err
 }
 
+func (c *InstrumentedClient) ListSubnets(ctx context.Context, vpcID string) ([]Subnet, error) {
+	start := time.Now()
+	result, err := c.inner.ListSubnets(ctx, vpcID)
+	recordCall("ListSubnets", start, err)
+	return result, err
+}
+
 func (c *InstrumentedClient) CreateVNI(ctx context.Context, opts CreateVNIOptions) (*VNI, error) {
 	start := time.Now()
 	result, err := c.inner.CreateVNI(ctx, opts)
@@ -58,6 +65,13 @@ func (c *InstrumentedClient) GetVNI(ctx context.Context, vniID string) (*VNI, er
 	start := time.Now()
 	result, err := c.inner.GetVNI(ctx, vniID)
 	recordCall("GetVNI", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) UpdateVNI(ctx context.Context, vniID, name string) (*VNI, error) {
+	start := time.Now()
+	result, err := c.inner.UpdateVNI(ctx, vniID, name)
+	recordCall("UpdateVNI", start, err)
 	return result, err
 }
 
@@ -96,6 +110,13 @@ func (c *InstrumentedClient) ListVLANAttachments(ctx context.Context, bmServerID
 	return result, err
 }
 
+func (c *InstrumentedClient) EnsurePCIAllowedVLAN(ctx context.Context, bmServerID string, vlanID int64) error {
+	start := time.Now()
+	err := c.inner.EnsurePCIAllowedVLAN(ctx, bmServerID, vlanID)
+	recordCall("EnsurePCIAllowedVLAN", start, err)
+	return err
+}
+
 func (c *InstrumentedClient) CreateFloatingIP(ctx context.Context, opts CreateFloatingIPOptions) (*FloatingIP, error) {
 	start := time.Now()
 	result, err := c.inner.CreateFloatingIP(ctx, opts)
@@ -115,6 +136,34 @@ func (c *InstrumentedClient) DeleteFloatingIP(ctx context.Context, fipID string)
 	err := c.inner.DeleteFloatingIP(ctx, fipID)
 	recordCall("DeleteFloatingIP", start, err)
 	return err
+}
+
+func (c *InstrumentedClient) ListVPCAddressPrefixes(ctx context.Context, vpcID string) ([]AddressPrefix, error) {
+	start := time.Now()
+	result, err := c.inner.ListVPCAddressPrefixes(ctx, vpcID)
+	recordCall("ListVPCAddressPrefixes", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) CreateVPCAddressPrefix(ctx context.Context, opts CreateAddressPrefixOptions) (*AddressPrefix, error) {
+	start := time.Now()
+	result, err := c.inner.CreateVPCAddressPrefix(ctx, opts)
+	recordCall("CreateVPCAddressPrefix", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) ListSubnetReservedIPs(ctx context.Context, subnetID string) ([]ReservedIP, error) {
+	start := time.Now()
+	result, err := c.inner.ListSubnetReservedIPs(ctx, subnetID)
+	recordCall("ListSubnetReservedIPs", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) ListBareMetalServers(ctx context.Context, vpcID string) ([]BareMetalServerInfo, error) {
+	start := time.Now()
+	result, err := c.inner.ListBareMetalServers(ctx, vpcID)
+	recordCall("ListBareMetalServers", start, err)
+	return result, err
 }
 
 var _ Client = (*InstrumentedClient)(nil)

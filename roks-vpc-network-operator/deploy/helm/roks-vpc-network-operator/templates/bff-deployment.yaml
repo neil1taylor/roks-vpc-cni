@@ -26,10 +26,14 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: {{ .Release.Name }}-bff
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65534
-        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: bff
         image: "{{ .Values.bff.image.repository }}:{{ .Values.bff.image.tag }}"
@@ -42,17 +46,25 @@ spec:
           containerPort: 8080
           protocol: TCP
         env:
-        - name: BFF_CLUSTER_MODE
-          value: "{{ .Values.bff.clusterMode }}"
         - name: BFF_LISTEN_ADDR
           value: "0.0.0.0:{{ .Values.bff.port }}"
         - name: BFF_LOG_LEVEL
           value: "{{ .Values.bff.logLevel }}"
+        - name: BFF_TLS_CERT
+          value: "/var/run/secrets/serving-cert/tls.crt"
+        - name: BFF_TLS_KEY
+          value: "/var/run/secrets/serving-cert/tls.key"
         - name: VPC_REGION
           value: "{{ .Values.vpc.region }}"
+        - name: VPC_ID
+          value: "{{ .Values.vpc.id }}"
         - name: CLUSTER_ID
           value: "{{ .Values.cluster.id }}"
-        {{- if eq .Values.bff.clusterMode "roks" }}
+        - name: BFF_SECRET_NAME
+          value: "{{ .Values.bff.apiKeySecretName }}"
+        - name: BFF_SECRET_NAMESPACE
+          value: "{{ .Release.Namespace }}"
+        {{- if .Values.bff.csiMountPath }}
         - name: CSI_MOUNT_PATH
           value: "{{ .Values.bff.csiMountPath }}"
         {{- end }}
@@ -89,27 +101,31 @@ spec:
             drop:
             - ALL
         volumeMounts:
-        {{- if eq .Values.bff.clusterMode "roks" }}
-        - name: csi-credentials
-          mountPath: {{ .Values.bff.csiMountPath }}
-          readOnly: true
-        {{- else }}
         - name: api-key-secret
           mountPath: /var/run/secrets/api-key
           readOnly: true
+        {{- if .Values.bff.csiMountPath }}
+        - name: csi-credentials
+          mountPath: {{ .Values.bff.csiMountPath }}
+          readOnly: true
         {{- end }}
+        - name: serving-cert
+          mountPath: /var/run/secrets/serving-cert
+          readOnly: true
         - name: tmp
           mountPath: /tmp
       volumes:
-      {{- if eq .Values.bff.clusterMode "roks" }}
+      - name: serving-cert
+        secret:
+          secretName: {{ .Release.Name }}-bff-tls
+      - name: api-key-secret
+        secret:
+          secretName: {{ .Values.bff.apiKeySecretName }}
+      {{- if .Values.bff.csiMountPath }}
       - name: csi-credentials
         csi:
           driver: ibm-vpc-credentials.roks.ibm.com
           readOnly: true
-      {{- else }}
-      - name: api-key-secret
-        secret:
-          secretName: {{ .Values.bff.apiKeySecretName }}
       {{- end }}
       - name: tmp
         emptyDir: {}

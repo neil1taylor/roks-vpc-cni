@@ -10,13 +10,15 @@ import (
 
 // ZoneHandler handles zone operations
 type ZoneHandler struct {
-	vpcClient vpc.ExtendedClient
+	vpcClient     vpc.ExtendedClient
+	defaultRegion string
 }
 
 // NewZoneHandler creates a new zone handler
-func NewZoneHandler(vpcClient vpc.ExtendedClient) *ZoneHandler {
+func NewZoneHandler(vpcClient vpc.ExtendedClient, defaultRegion string) *ZoneHandler {
 	return &ZoneHandler{
-		vpcClient: vpcClient,
+		vpcClient:     vpcClient,
+		defaultRegion: defaultRegion,
 	}
 }
 
@@ -28,6 +30,10 @@ func (h *ZoneHandler) ListZones(w http.ResponseWriter, r *http.Request) {
 	}
 
 	region := GetQueryParam(r, "region")
+	if region == "" {
+		region = h.defaultRegion
+	}
+
 	slog.DebugContext(r.Context(), "listing zones", "region", region)
 
 	zones, err := h.vpcClient.ListZones(r.Context(), region)

@@ -1,10 +1,8 @@
 import React from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom-v5-compat';
 import {
-  Page,
   PageSection,
   PageSectionVariants,
-  Title,
   Card,
   CardBody,
   Breadcrumb,
@@ -14,15 +12,18 @@ import {
   EmptyStateBody,
   EmptyStateHeader,
   Spinner,
+  Alert,
   DescriptionList,
   DescriptionListGroup,
   DescriptionListTerm,
   DescriptionListDescription,
 } from '@patternfly/react-core';
 import { CubesIcon } from '@patternfly/react-icons';
+import { Link } from 'react-router-dom-v5-compat';
 import { useVNI, useClusterInfo } from '../api/hooks';
 import { StatusBadge } from '../components/StatusBadge';
 import { formatTimestamp } from '../utils/formatters';
+import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 /**
  * Virtual Network Interface Detail Page
@@ -31,24 +32,23 @@ import { formatTimestamp } from '../utils/formatters';
  * is available for VNI management.
  */
 const VNIDetailPage: React.FC = () => {
-  const { name } = useParams<{ name: string }>();
+  const { id } = useParams<{ id: string }>();
   const { clusterInfo, loading: clusterInfoLoading } = useClusterInfo();
   const vniManagementEnabled = clusterInfo?.features?.vniManagement !== false;
   const roksAPIAvailable = clusterInfo?.features?.roksAPIAvailable === true;
 
-  const { vni, loading: vniLoading } = useVNI(name || '');
+  const { vni, loading: vniLoading } = useVNI(id || '');
   const loading = clusterInfoLoading || vniLoading;
 
   // ROKS cluster without ROKS API — show Coming Soon
   if (!clusterInfoLoading && !vniManagementEnabled && !roksAPIAvailable) {
     return (
-      <Page>
+      <VPCNetworkingShell>
         <PageSection variant={PageSectionVariants.light}>
           <Breadcrumb>
-            <BreadcrumbItem href="/vpc-networking/vnis">VNIs</BreadcrumbItem>
-            <BreadcrumbItem isActive>{name}</BreadcrumbItem>
+            <BreadcrumbItem><Link to="/vpc-networking/vnis">VNIs</Link></BreadcrumbItem>
+            <BreadcrumbItem isActive>{vni?.name || id}</BreadcrumbItem>
           </Breadcrumb>
-          <Title headingLevel="h1">VNI: {name}</Title>
         </PageSection>
 
         <PageSection>
@@ -69,24 +69,29 @@ const VNIDetailPage: React.FC = () => {
             </CardBody>
           </Card>
         </PageSection>
-      </Page>
+      </VPCNetworkingShell>
     );
   }
 
   return (
-    <Page>
+    <VPCNetworkingShell>
       <PageSection variant={PageSectionVariants.light}>
         <Breadcrumb>
-          <BreadcrumbItem href="/vpc-networking/vnis">VNIs</BreadcrumbItem>
-          <BreadcrumbItem isActive>{name}</BreadcrumbItem>
+          <BreadcrumbItem><Link to="/vpc-networking/vnis">VNIs</Link></BreadcrumbItem>
+          <BreadcrumbItem isActive>{vni?.name || id}</BreadcrumbItem>
         </Breadcrumb>
-        <Title headingLevel="h1">VNI: {name}</Title>
       </PageSection>
 
       <PageSection>
         {loading ? (
           <Spinner size="lg" />
         ) : vni ? (
+          <>
+          <Alert variant="info" isInline title="VNIs are created automatically" style={{ marginBottom: '16px' }}>
+            When a VirtualMachine is created, the operator's mutating webhook provisions a VNI
+            on the appropriate VPC subnet, assigns a MAC address and reserved IP, and injects
+            them into the VM spec. VNIs are deleted when the VM is removed.
+          </Alert>
           <Card>
             <CardBody>
               <DescriptionList>
@@ -137,13 +142,14 @@ const VNIDetailPage: React.FC = () => {
               </DescriptionList>
             </CardBody>
           </Card>
+          </>
         ) : (
           <Card>
             <CardBody>VNI not found</CardBody>
           </Card>
         )}
       </PageSection>
-    </Page>
+    </VPCNetworkingShell>
   );
 };
 

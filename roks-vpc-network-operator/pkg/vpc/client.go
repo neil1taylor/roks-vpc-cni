@@ -15,9 +15,24 @@ type Client interface {
 	VNIService
 	VLANAttachmentService
 	FloatingIPService
+	AddressPrefixService
+	BareMetalServerService
+	SubnetReservedIPService
 }
 
-// ExtendedClient adds security group, ACL, VPC, and zone operations
+// BareMetalServerService handles listing VPC bare metal servers.
+type BareMetalServerService interface {
+	ListBareMetalServers(ctx context.Context, vpcID string) ([]BareMetalServerInfo, error)
+}
+
+// BareMetalServerInfo holds the ID and name of a VPC bare metal server.
+type BareMetalServerInfo struct {
+	ID   string
+	Name string
+	Zone string
+}
+
+// ExtendedClient adds security group, ACL, VPC, zone, and route operations
 // used by the BFF service for console plugin data.
 type ExtendedClient interface {
 	Client
@@ -25,7 +40,20 @@ type ExtendedClient interface {
 	NetworkACLService
 	VPCService
 	ZoneService
-	SubnetLister
+	VNILister
+	FloatingIPLister
+	RoutingTableService
+	RouteService
+}
+
+// VNILister lists all VNIs in the account.
+type VNILister interface {
+	ListVNIs(ctx context.Context) ([]VNI, error)
+}
+
+// FloatingIPLister lists all floating IPs in the account.
+type FloatingIPLister interface {
+	ListFloatingIPs(ctx context.Context) ([]FloatingIP, error)
 }
 
 // SubnetService handles VPC subnet CRUD.
@@ -33,12 +61,14 @@ type SubnetService interface {
 	CreateSubnet(ctx context.Context, opts CreateSubnetOptions) (*Subnet, error)
 	GetSubnet(ctx context.Context, subnetID string) (*Subnet, error)
 	DeleteSubnet(ctx context.Context, subnetID string) error
+	ListSubnets(ctx context.Context, vpcID string) ([]Subnet, error)
 }
 
 // VNIService handles Virtual Network Interface CRUD.
 type VNIService interface {
 	CreateVNI(ctx context.Context, opts CreateVNIOptions) (*VNI, error)
 	GetVNI(ctx context.Context, vniID string) (*VNI, error)
+	UpdateVNI(ctx context.Context, vniID, name string) (*VNI, error)
 	DeleteVNI(ctx context.Context, vniID string) error
 	ListVNIsByTag(ctx context.Context, clusterID, namespace, vmName string) ([]VNI, error)
 }
@@ -48,6 +78,7 @@ type VLANAttachmentService interface {
 	CreateVLANAttachment(ctx context.Context, opts CreateVLANAttachmentOptions) (*VLANAttachment, error)
 	DeleteVLANAttachment(ctx context.Context, bmServerID, attachmentID string) error
 	ListVLANAttachments(ctx context.Context, bmServerID string) ([]VLANAttachment, error)
+	EnsurePCIAllowedVLAN(ctx context.Context, bmServerID string, vlanID int64) error
 }
 
 // FloatingIPService handles floating IP CRUD.
@@ -96,9 +127,36 @@ type ZoneService interface {
 	ListZones(ctx context.Context, region string) ([]Zone, error)
 }
 
-// ListSubnets lists all subnets, optionally filtered by VPC.
-type SubnetLister interface {
-	ListSubnets(ctx context.Context, vpcID string) ([]Subnet, error)
+// RoutingTableService handles VPC routing table operations.
+type RoutingTableService interface {
+	ListRoutingTables(ctx context.Context, vpcID string) ([]RoutingTable, error)
+	GetRoutingTable(ctx context.Context, vpcID, routingTableID string) (*RoutingTable, error)
+}
+
+// RouteService handles VPC route CRUD.
+type RouteService interface {
+	ListRoutes(ctx context.Context, vpcID, routingTableID string) ([]Route, error)
+	CreateRoute(ctx context.Context, vpcID, routingTableID string, opts CreateRouteOptions) (*Route, error)
+	DeleteRoute(ctx context.Context, vpcID, routingTableID, routeID string) error
+}
+
+// AddressPrefixService handles VPC address prefix operations.
+type AddressPrefixService interface {
+	ListVPCAddressPrefixes(ctx context.Context, vpcID string) ([]AddressPrefix, error)
+	CreateVPCAddressPrefix(ctx context.Context, opts CreateAddressPrefixOptions) (*AddressPrefix, error)
+}
+
+// CreateAddressPrefixOptions holds parameters for creating a VPC address prefix.
+type CreateAddressPrefixOptions struct {
+	VPCID string
+	CIDR  string
+	Zone  string
+	Name  string
+}
+
+// SubnetReservedIPService lists reserved IPs for a subnet.
+type SubnetReservedIPService interface {
+	ListSubnetReservedIPs(ctx context.Context, subnetID string) ([]ReservedIP, error)
 }
 
 // ── Option types ──
@@ -139,22 +197,42 @@ type CreateFloatingIPOptions struct {
 // ── Response types ──
 
 type Subnet struct {
-	ID     string
-	Name   string
-	CIDR   string
-	Status string
+	ID                        string
+	Name                      string
+	CIDR                      string
+	Status                    string
+	VPCID                     string
+	VPCName                   string
+	Zone                      string
+	NetworkACLID              string
+	NetworkACLName            string
+	AvailableIPv4AddressCount int64
+	TotalIPv4AddressCount     int64
+	CreatedAt                 string
 }
 
 type VNI struct {
-	ID         string
-	Name       string
-	MACAddress string
-	PrimaryIP  ReservedIP
+	ID                      string
+	Name                    string
+	MACAddress              string
+	PrimaryIP               ReservedIP
+	SubnetID                string
+	SubnetName              string
+	AllowIPSpoofing         bool
+	EnableInfrastructureNat bool
+	Status                  string
+	CreatedAt               string
 }
 
 type ReservedIP struct {
-	ID      string
-	Address string
+	ID         string
+	Address    string
+	Name       string
+	AutoDelete bool
+	CreatedAt  string
+	Owner      string // "user", "provider", etc.
+	Target     string // VNI name or resource name if bound
+	TargetID   string
 }
 
 type VLANAttachment struct {
@@ -165,11 +243,14 @@ type VLANAttachment struct {
 }
 
 type FloatingIP struct {
-	ID      string
-	Name    string
-	Address string
-	Zone    string
-	Target  string // VNI ID if bound
+	ID         string
+	Name       string
+	Address    string
+	Zone       string
+	Target     string // VNI ID if bound
+	TargetName string
+	Status     string
+	CreatedAt  string
 }
 
 // ── Security Group types ──
@@ -309,6 +390,49 @@ type Zone struct {
 	Status string
 }
 
+// ── Address Prefix types ──
+
+type AddressPrefix struct {
+	ID        string
+	Name      string
+	CIDR      string
+	Zone      string
+	IsDefault bool
+}
+
+// ── Routing Table and Route types ──
+
+type RoutingTable struct {
+	ID             string
+	Name           string
+	IsDefault      bool
+	LifecycleState string
+	RouteCount     int
+	CreatedAt      string
+}
+
+type Route struct {
+	ID             string
+	Name           string
+	Destination    string
+	Action         string // "delegate", "delegate_vpc", "deliver", "drop"
+	NextHop        string // IP address for "deliver" action
+	Zone           string
+	Priority       int64
+	Origin         string // "service" or "user"
+	LifecycleState string
+	CreatedAt      string
+}
+
+type CreateRouteOptions struct {
+	Name        string
+	Destination string
+	Action      string
+	NextHopIP   string
+	Zone        string
+	Priority    *int64
+}
+
 // ── Implementation ──
 
 // vpcClient implements Client using the IBM VPC Go SDK.
@@ -339,7 +463,6 @@ func NewExtendedClient(cfg ClientConfig) (ExtendedClient, error) {
 }
 
 // NewClient creates a new VPC API client.
-// TODO: Implement using vpcv1.NewVpcV1(&vpcv1.VpcV1Options{...})
 func NewClient(cfg ClientConfig) (Client, error) {
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("VPC API key is required")

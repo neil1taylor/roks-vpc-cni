@@ -5,18 +5,18 @@ metadata:
   name: vpc-network-management
 spec:
   displayName: VPC Network Management
-  service:
-    basePath: /
-    name: {{ .Release.Name }}-console-plugin
-    namespace: {{ .Release.Namespace }}
-    port: {{ .Values.consolePlugin.port }}
+  backend:
+    type: Service
+    service:
+      basePath: /
+      name: {{ .Release.Name }}-console-plugin
+      namespace: {{ .Release.Namespace }}
+      port: {{ .Values.consolePlugin.port }}
   proxy:
   - alias: bff
     authorization: UserToken
-    caCert:
-      name: {{ .Release.Name }}-bff-serving-cert
-      namespace: {{ .Release.Namespace }}
     endpoint:
+      type: Service
       service:
         name: {{ .Release.Name }}-bff
         namespace: {{ .Release.Namespace }}

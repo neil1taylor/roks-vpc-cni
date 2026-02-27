@@ -2,6 +2,8 @@ package vm
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -12,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/IBM/roks-vpc-network-operator/pkg/annotations"
+	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	"github.com/IBM/roks-vpc-network-operator/pkg/finalizers"
 	operatormetrics "github.com/IBM/roks-vpc-network-operator/pkg/metrics"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
@@ -25,7 +28,6 @@ var vmGVK = schema.GroupVersionKind{
 
 // Reconciler reconciles VirtualMachine objects that have been processed
 // by the mutating webhook (identified by operator-managed annotations).
-// See DESIGN.md §6.3 for the full specification.
 type Reconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
@@ -50,7 +52,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	// Skip VMs without our annotations (not managed by this operator)
 	annots := vm.GetAnnotations()
-	if annots == nil || annots[annotations.VNIID] == "" {
+	if annots == nil || (annots[annotations.NetworkInterfaces] == "" && annots[annotations.VNIID] == "") {
 		return ctrl.Result{}, nil
 	}
 
@@ -68,19 +70,57 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, vm client.Object) (ctr
 	logger := log.FromContext(ctx)
 	annots := vm.GetAnnotations()
 
-	// Step 1: Delete floating IP if present
+	// Try multi-network annotation first
+	if raw := annots[annotations.NetworkInterfaces]; raw != "" {
+		var interfaces []network.VMNetworkInterface
+		if err := json.Unmarshal([]byte(raw), &interfaces); err != nil {
+			logger.Error(err, "Failed to parse network-interfaces annotation")
+		} else {
+			for _, iface := range interfaces {
+				if iface.Topology != "LocalNet" || iface.VNIID == "" {
+					continue
+				}
+
+				// Delete FIP first
+				if iface.FIPID != "" {
+					if err := r.VPC.DeleteFloatingIP(ctx, iface.FIPID); err != nil {
+						logger.Error(err, "Failed to delete floating IP", "fipID", iface.FIPID, "network", iface.NetworkName)
+						operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_fip", "error").Inc()
+					} else {
+						operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_fip", "success").Inc()
+						logger.Info("Deleted floating IP", "fipID", iface.FIPID, "network", iface.NetworkName)
+					}
+				}
+
+				// Delete VNI
+				if err := r.VPC.DeleteVNI(ctx, iface.VNIID); err != nil {
+					logger.Error(err, "Failed to delete VNI", "vniID", iface.VNIID, "network", iface.NetworkName)
+					operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "error").Inc()
+					return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+				}
+				operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "success").Inc()
+				logger.Info("Deleted VNI", "vniID", iface.VNIID, "network", iface.NetworkName)
+			}
+
+			// Remove finalizer after all VNIs deleted
+			if err := finalizers.EnsureRemoved(ctx, r.Client, vm, finalizers.VMCleanup); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+	}
+
+	// Fall back to legacy single-annotation cleanup
 	if fipID := annots[annotations.FIPID]; fipID != "" {
 		if err := r.VPC.DeleteFloatingIP(ctx, fipID); err != nil {
 			logger.Error(err, "Failed to delete floating IP", "fipID", fipID)
 			operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_fip", "error").Inc()
-			// Continue — don't block on FIP deletion failure
 		} else {
 			operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_fip", "success").Inc()
 			logger.Info("Deleted floating IP", "fipID", fipID)
 		}
 	}
 
-	// Step 2: Delete VNI (this auto-deletes the reserved IP if auto_delete was true)
 	if vniID := annots[annotations.VNIID]; vniID != "" {
 		if err := r.VPC.DeleteVNI(ctx, vniID); err != nil {
 			logger.Error(err, "Failed to delete VNI", "vniID", vniID)
@@ -91,7 +131,6 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, vm client.Object) (ctr
 		logger.Info("Deleted VNI", "vniID", vniID)
 	}
 
-	// Step 3: Remove finalizer
 	if err := finalizers.EnsureRemoved(ctx, r.Client, vm, finalizers.VMCleanup); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -100,26 +139,70 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, vm client.Object) (ctr
 }
 
 // reconcileDriftCheck verifies that VPC resources referenced by the VM still exist.
+// It also renames VNIs that have random-word names (VPC API bug) to the expected
+// "roks-..." naming convention.
 func (r *Reconciler) reconcileDriftCheck(ctx context.Context, vm client.Object) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	annots := vm.GetAnnotations()
 
-	// Check VNI still exists
+	// Try multi-network annotation first
+	if raw := annots[annotations.NetworkInterfaces]; raw != "" {
+		var interfaces []network.VMNetworkInterface
+		if err := json.Unmarshal([]byte(raw), &interfaces); err == nil {
+			for _, iface := range interfaces {
+				if iface.Topology != "LocalNet" || iface.VNIID == "" {
+					continue
+				}
+				vni, err := r.VPC.GetVNI(ctx, iface.VNIID)
+				if err != nil {
+					operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "drift_check", "drift_detected").Inc()
+					logger.Error(err, "VNI drift detected",
+						"vniID", iface.VNIID, "network", iface.NetworkName, "vm", vm.GetName())
+					continue
+				}
+				// Backfill rename: if the VNI has a random-word name, rename it
+				expectedName := network.TruncateVPCName(fmt.Sprintf("roks-%s-%s-%s-%s",
+					r.ClusterID, vm.GetNamespace(), vm.GetName(), iface.NetworkName))
+				r.renameVNIIfNeeded(ctx, vni, expectedName)
+			}
+			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+		}
+	}
+
+	// Fall back to legacy single-VNI check
 	if vniID := annots[annotations.VNIID]; vniID != "" {
-		_, err := r.VPC.GetVNI(ctx, vniID)
+		vni, err := r.VPC.GetVNI(ctx, vniID)
 		if err != nil {
 			operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "drift_check", "drift_detected").Inc()
 			logger.Error(err, "VNI drift detected — VNI may have been deleted out-of-band",
 				"vniID", vniID, "vm", vm.GetName())
+		} else {
+			expectedName := network.TruncateVPCName(fmt.Sprintf("roks-%s-%s-%s",
+				r.ClusterID, vm.GetNamespace(), vm.GetName()))
+			r.renameVNIIfNeeded(ctx, vni, expectedName)
 		}
 	}
 
-	// Requeue for periodic drift checks (every 5 minutes)
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
+// renameVNIIfNeeded renames a VNI if its current name doesn't match the expected name.
+func (r *Reconciler) renameVNIIfNeeded(ctx context.Context, vni *vpc.VNI, expectedName string) {
+	if vni.Name == expectedName {
+		return
+	}
+	logger := log.FromContext(ctx)
+	logger.Info("Renaming VNI from random name to expected name",
+		"vniID", vni.ID, "currentName", vni.Name, "expectedName", expectedName)
+	if _, err := r.VPC.UpdateVNI(ctx, vni.ID, expectedName); err != nil {
+		logger.Error(err, "Failed to rename VNI", "vniID", vni.ID)
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "rename_vni", "error").Inc()
+	} else {
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "rename_vni", "success").Inc()
+	}
+}
+
 // SetupWithManager registers the VM reconciler with the controller manager.
-// Uses unstructured watch to avoid importing KubeVirt types.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(vmGVK)

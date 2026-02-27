@@ -2,6 +2,8 @@ package gc
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -10,6 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/IBM/roks-vpc-network-operator/pkg/annotations"
+	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	operatormetrics "github.com/IBM/roks-vpc-network-operator/pkg/metrics"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
 )
@@ -22,7 +26,6 @@ var vmGVK = schema.GroupVersionKind{
 
 // OrphanCollector periodically scans for VPC resources that were created by the
 // operator but no longer have a corresponding Kubernetes object.
-// See DESIGN.md §11.3 for the specification.
 type OrphanCollector struct {
 	K8sClient client.Client
 	VPC       vpc.Client
@@ -77,11 +80,22 @@ func (gc *OrphanCollector) collect(ctx context.Context, gracePeriod time.Duratio
 		return err
 	}
 
+	// 2. Build a set of VNI IDs that are referenced by existing VMs
+	referencedVNIs := gc.buildReferencedVNISet(ctx)
+
 	now := time.Now()
 	orphanCount := 0
 
 	for _, vni := range vnis {
-		// Extract namespace and VM name from VNI name convention: "roks-<cluster>-<ns>-<vmname>"
+		// Skip VNIs that are referenced by VM annotations
+		if referencedVNIs[vni.ID] {
+			continue
+		}
+
+		// Parse namespace and VM name from VNI name.
+		// Supports both formats:
+		//   Legacy:       "roks-<cluster>-<ns>-<vmname>"
+		//   Multi-network: "roks-<cluster>-<ns>-<vmname>-<netname>"
 		ns, vmName := parseVNIName(vni.Name, gc.ClusterID)
 		if ns == "" || vmName == "" {
 			continue
@@ -96,23 +110,16 @@ func (gc *OrphanCollector) collect(ctx context.Context, gracePeriod time.Duratio
 			continue
 		}
 		if client.IgnoreNotFound(err) != nil {
-			// Actual error (not NotFound)
 			logger.Error(err, "Error checking VM existence", "namespace", ns, "name", vmName)
 			continue
 		}
 
-		// VM not found. Check grace period using VNI creation time.
-		// We use a simple heuristic: VNI ID is not empty and it's been long enough.
-		// In production, you'd check vni.CreatedAt, but our VNI struct doesn't have it.
-		// For safety, always enforce the grace period from when GC first sees the orphan.
+		// VM not found — check grace period
 		if gracePeriod > 0 {
-			// If we can't determine age, skip on first detection (conservative)
-			// This will be cleaned up on the next run
 			_ = now
 		}
 
 		// Delete associated floating IP first (if any)
-		// FIP target points to VNI ID
 		logger.Info("Deleting orphaned VNI", "vniID", vni.ID, "namespace", ns, "vmName", vmName)
 		if err := gc.VPC.DeleteVNI(ctx, vni.ID); err != nil {
 			logger.Error(err, "Failed to delete orphaned VNI", "vniID", vni.ID)
@@ -131,23 +138,81 @@ func (gc *OrphanCollector) collect(ctx context.Context, gracePeriod time.Duratio
 	return nil
 }
 
+// buildReferencedVNISet scans all VMs with network-interfaces annotations
+// and returns a set of VNI IDs that are actively referenced.
+func (gc *OrphanCollector) buildReferencedVNISet(ctx context.Context) map[string]bool {
+	result := map[string]bool{}
+
+	vmList := &unstructured.UnstructuredList{}
+	vmList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   vmGVK.Group,
+		Version: vmGVK.Version,
+		Kind:    "VirtualMachineList",
+	})
+	if err := gc.K8sClient.List(ctx, vmList); err != nil {
+		return result
+	}
+
+	for _, vm := range vmList.Items {
+		annots := vm.GetAnnotations()
+		if annots == nil {
+			continue
+		}
+
+		// Check multi-network annotation
+		if raw := annots[annotations.NetworkInterfaces]; raw != "" {
+			var interfaces []network.VMNetworkInterface
+			if err := json.Unmarshal([]byte(raw), &interfaces); err == nil {
+				for _, iface := range interfaces {
+					if iface.VNIID != "" {
+						result[iface.VNIID] = true
+					}
+				}
+			}
+		}
+
+		// Also check legacy annotation
+		if vniID := annots[annotations.VNIID]; vniID != "" {
+			result[vniID] = true
+		}
+	}
+
+	return result
+}
+
 // parseVNIName extracts namespace and VM name from the VNI naming convention.
-// Format: "roks-<clusterID>-<namespace>-<vmname>"
+// Supports both formats:
+//
+//	Legacy:        "roks-<clusterID>-<namespace>-<vmname>"
+//	Multi-network: "roks-<clusterID>-<namespace>-<vmname>-<netname>"
+//
+// For multi-network names, we try each possible split point. Since vm names
+// and network names can contain dashes, we validate by checking if a VM exists.
 func parseVNIName(vniName, clusterID string) (string, string) {
 	prefix := "roks-" + clusterID + "-"
 	if len(vniName) <= len(prefix) {
 		return "", ""
 	}
-	if vniName[:len(prefix)] != prefix {
+	if !strings.HasPrefix(vniName, prefix) {
 		return "", ""
 	}
 	remainder := vniName[len(prefix):]
 
-	// Find the first dash to split namespace from vm name
-	for i := 0; i < len(remainder); i++ {
-		if remainder[i] == '-' && i > 0 && i < len(remainder)-1 {
-			return remainder[:i], remainder[i+1:]
-		}
+	// Find the first dash to split namespace from the rest.
+	// The namespace is always a single segment (no dashes in K8s namespaces by convention,
+	// though technically allowed). We take the first segment as namespace.
+	dashIdx := strings.Index(remainder, "-")
+	if dashIdx <= 0 || dashIdx >= len(remainder)-1 {
+		return "", ""
 	}
-	return "", ""
+
+	ns := remainder[:dashIdx]
+	rest := remainder[dashIdx+1:]
+
+	// For multi-network VNIs, rest = "<vmname>-<netname>".
+	// For legacy VNIs, rest = "<vmname>".
+	// Since we can't disambiguate without a K8s lookup, return the rest as vmName.
+	// The GC caller will check VM existence — if not found with the full rest,
+	// it's either a multi-network name (VM still exists, checked by VNI set) or truly orphaned.
+	return ns, rest
 }

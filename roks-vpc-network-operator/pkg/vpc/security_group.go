@@ -181,7 +181,7 @@ func (c *vpcClient) AddSecurityGroupRule(ctx context.Context, sgID string, opts 
 		prototype = rule
 
 	default: // "all"
-		rule := &vpcv1.SecurityGroupRulePrototypeSecurityGroupRuleProtocolAll{
+		rule := &vpcv1.SecurityGroupRulePrototypeSecurityGroupRuleProtocolAnyPrototype{
 			Direction: &opts.Direction,
 			Protocol:  core.StringPtr("all"),
 		}
@@ -307,17 +307,6 @@ func sgRuleFromSDKIntf(ruleIntf vpcv1.SecurityGroupRuleIntf) *SecurityGroupRule 
 				rule.Remote.SecurityGroupID = derefString(remote.ID)
 			}
 		}
-	case *vpcv1.SecurityGroupRuleSecurityGroupRuleProtocolAll:
-		rule.ID = derefString(r.ID)
-		rule.Direction = derefString(r.Direction)
-		rule.Protocol = derefString(r.Protocol)
-		if r.Remote != nil {
-			switch remote := r.Remote.(type) {
-			case *vpcv1.SecurityGroupRuleRemote:
-				rule.Remote.CIDRBlock = derefString(remote.CIDRBlock)
-				rule.Remote.SecurityGroupID = derefString(remote.ID)
-			}
-		}
 	case *vpcv1.SecurityGroupRuleSecurityGroupRuleProtocolTcpudp:
 		rule.ID = derefString(r.ID)
 		rule.Direction = derefString(r.Direction)
@@ -337,6 +326,39 @@ func sgRuleFromSDKIntf(ruleIntf vpcv1.SecurityGroupRuleIntf) *SecurityGroupRule 
 		rule.Protocol = derefString(r.Protocol)
 		rule.ICMPType = r.Type
 		rule.ICMPCode = r.Code
+		if r.Remote != nil {
+			switch remote := r.Remote.(type) {
+			case *vpcv1.SecurityGroupRuleRemote:
+				rule.Remote.CIDRBlock = derefString(remote.CIDRBlock)
+				rule.Remote.SecurityGroupID = derefString(remote.ID)
+			}
+		}
+	case *vpcv1.SecurityGroupRuleProtocolAny:
+		rule.ID = derefString(r.ID)
+		rule.Direction = derefString(r.Direction)
+		rule.Protocol = derefString(r.Protocol)
+		if r.Remote != nil {
+			switch remote := r.Remote.(type) {
+			case *vpcv1.SecurityGroupRuleRemote:
+				rule.Remote.CIDRBlock = derefString(remote.CIDRBlock)
+				rule.Remote.SecurityGroupID = derefString(remote.ID)
+			}
+		}
+	case *vpcv1.SecurityGroupRuleProtocolIcmptcpudp:
+		rule.ID = derefString(r.ID)
+		rule.Direction = derefString(r.Direction)
+		rule.Protocol = derefString(r.Protocol)
+		if r.Remote != nil {
+			switch remote := r.Remote.(type) {
+			case *vpcv1.SecurityGroupRuleRemote:
+				rule.Remote.CIDRBlock = derefString(remote.CIDRBlock)
+				rule.Remote.SecurityGroupID = derefString(remote.ID)
+			}
+		}
+	case *vpcv1.SecurityGroupRuleProtocolIndividual:
+		rule.ID = derefString(r.ID)
+		rule.Direction = derefString(r.Direction)
+		rule.Protocol = derefString(r.Protocol)
 		if r.Remote != nil {
 			switch remote := r.Remote.(type) {
 			case *vpcv1.SecurityGroupRuleRemote:

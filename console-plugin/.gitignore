@@ -31,6 +31,9 @@ coverage/
 dist-test/
 test-results/
 playwright-report/
+playwright-report-live/
+e2e/live/.auth/
+e2e/live/.auth/chrome-profile/
 
 # Docker
 .dockerignore

@@ -53,7 +53,8 @@ Want to understand the internals?
 6. [Dual Cluster Mode](architecture/dual-cluster-mode.md) — ROKS vs. unmanaged
 7. [CRD References](reference/crds/vpcsubnet.md) — Detailed field documentation
 8. [BFF API Reference](reference/api/bff-api.md) — Complete endpoint docs
-9. [Metrics Reference](reference/metrics.md) — Prometheus metrics
+9. [Network Types Reference](reference/network-types.md) — Valid OVN network combinations
+10. [Metrics Reference](reference/metrics.md) — Prometheus metrics
 
 ### I'm a Console User
 
@@ -77,6 +78,7 @@ Want to use the OpenShift Console plugin?
 | All Helm values | [Helm Values Reference](reference/helm-values.md) |
 | All CRDs | [VPCSubnet](reference/crds/vpcsubnet.md) / [VNI](reference/crds/virtualnetworkinterface.md) / [VLANAttachment](reference/crds/vlanattachment.md) / [FloatingIP](reference/crds/floatingip.md) |
 | BFF API | [BFF API Reference](reference/api/bff-api.md) |
+| Network types | [Network Types Reference](reference/network-types.md) |
 | Prometheus metrics | [Metrics Reference](reference/metrics.md) |
 | Troubleshooting | [Troubleshooting](troubleshooting.md) |
 | FAQ | [FAQ](faq.md) |

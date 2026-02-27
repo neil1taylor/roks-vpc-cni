@@ -85,13 +85,84 @@ func (c *vpcClient) DeleteSubnet(ctx context.Context, subnetID string) error {
 	return nil
 }
 
-func subnetFromSDK(s *vpcv1.Subnet) *Subnet {
-	return &Subnet{
-		ID:     derefString(s.ID),
-		Name:   derefString(s.Name),
-		CIDR:   derefString(s.Ipv4CIDRBlock),
-		Status: derefString(s.Status),
+// ListSubnetReservedIPs lists all reserved IPs in a subnet.
+func (c *vpcClient) ListSubnetReservedIPs(ctx context.Context, subnetID string) ([]ReservedIP, error) {
+	if err := c.limiter.Acquire(ctx); err != nil {
+		return nil, err
 	}
+	defer c.limiter.Release()
+
+	var allIPs []ReservedIP
+	var start *string
+
+	for {
+		listOpts := &vpcv1.ListSubnetReservedIpsOptions{
+			SubnetID: &subnetID,
+		}
+		if start != nil {
+			listOpts.Start = start
+		}
+
+		result, _, err := c.service.ListSubnetReservedIpsWithContext(ctx, listOpts)
+		if err != nil {
+			return nil, fmt.Errorf("VPC API ListSubnetReservedIps(%s): %w", subnetID, err)
+		}
+
+		for i := range result.ReservedIps {
+			rip := &result.ReservedIps[i]
+			ip := ReservedIP{
+				ID:         derefString(rip.ID),
+				Address:    derefString(rip.Address),
+				Name:       derefString(rip.Name),
+				AutoDelete: rip.AutoDelete != nil && *rip.AutoDelete,
+				Owner:      derefString(rip.Owner),
+			}
+			if rip.CreatedAt != nil {
+				ip.CreatedAt = rip.CreatedAt.String()
+			}
+			if rip.Target != nil {
+				switch t := rip.Target.(type) {
+				case *vpcv1.ReservedIPTarget:
+					ip.TargetID = derefString(t.ID)
+					ip.Target = derefString(t.Name)
+				}
+			}
+			allIPs = append(allIPs, ip)
+		}
+
+		if result.Next == nil || result.Next.Href == nil {
+			break
+		}
+		start = result.Next.Href
+	}
+
+	return allIPs, nil
+}
+
+func subnetFromSDK(s *vpcv1.Subnet) *Subnet {
+	sub := &Subnet{
+		ID:                        derefString(s.ID),
+		Name:                      derefString(s.Name),
+		CIDR:                      derefString(s.Ipv4CIDRBlock),
+		Status:                    derefString(s.Status),
+		AvailableIPv4AddressCount: derefInt64(s.AvailableIpv4AddressCount),
+		TotalIPv4AddressCount:     derefInt64(s.TotalIpv4AddressCount),
+	}
+	if s.VPC != nil {
+		sub.VPCID = derefString(s.VPC.ID)
+		sub.VPCName = derefString(s.VPC.Name)
+	}
+	if s.Zone != nil {
+		sub.Zone = derefString(s.Zone.Name)
+	}
+	if s.NetworkACL != nil {
+		sub.NetworkACLID = derefString(s.NetworkACL.ID)
+		sub.NetworkACLName = derefString(s.NetworkACL.Name)
+	}
+	if s.CreatedAt != nil {
+		sub.CreatedAt = s.CreatedAt.String()
+	}
+	return sub
 }
 
 // Suppress unused import warnings
