@@ -1,0 +1,324 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vpcl2bridges.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VPCL2Bridge
+    listKind: VPCL2BridgeList
+    plural: vpcl2bridges
+    singular: vpcl2bridge
+    shortNames:
+    - vlb
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Type
+      type: string
+      jsonPath: .spec.type
+    - name: Network
+      type: string
+      jsonPath: .spec.networkRef.name
+    - name: Remote
+      type: string
+      jsonPath: .spec.remote.endpoint
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Tunnel IP
+      type: string
+      jsonPath: .status.tunnelEndpoint
+      priority: 1
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: >-
+          VPCL2Bridge is the Schema for the vpcl2bridges API.
+          It represents an L2 bridge that extends a VPC network segment to a remote site via a tunnel.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPCL2BridgeSpec defines the desired state of a VPCL2Bridge.
+            type: object
+            required:
+            - type
+            - gatewayRef
+            - networkRef
+            - remote
+            properties:
+              type:
+                description: Type is the tunnel technology used for L2 bridging.
+                type: string
+                enum:
+                - gretap-wireguard
+                - l2vpn
+                - evpn-vxlan
+              gatewayRef:
+                description: GatewayRef is the name of the VPCGateway this bridge is associated with.
+                type: string
+                minLength: 1
+              networkRef:
+                description: NetworkRef identifies the network this bridge extends to the remote site.
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    description: Name is the name of the network resource.
+                    type: string
+                    minLength: 1
+                  kind:
+                    description: Kind is the kind of the network resource.
+                    type: string
+                    enum:
+                    - ClusterUserDefinedNetwork
+                    - UserDefinedNetwork
+                    default: ClusterUserDefinedNetwork
+                  namespace:
+                    description: Namespace is the namespace of the network resource (required when Kind is UserDefinedNetwork).
+                    type: string
+              remote:
+                description: Remote defines the remote endpoint and tunnel-type-specific configuration.
+                type: object
+                required:
+                - endpoint
+                properties:
+                  endpoint:
+                    description: Endpoint is the remote endpoint IP address or hostname.
+                    type: string
+                    minLength: 1
+                  wireGuard:
+                    description: >-
+                      WireGuard contains WireGuard-specific tunnel configuration.
+                      Required when spec.type is "gretap-wireguard".
+                    type: object
+                    required:
+                    - privateKey
+                    - peerPublicKey
+                    - tunnelAddressLocal
+                    - tunnelAddressRemote
+                    properties:
+                      privateKey:
+                        description: PrivateKey is a reference to a Secret containing the WireGuard private key.
+                        type: object
+                        required:
+                        - name
+                        - key
+                        properties:
+                          name:
+                            description: Name is the name of the Secret.
+                            type: string
+                            minLength: 1
+                          key:
+                            description: Key is the key within the Secret data.
+                            type: string
+                            minLength: 1
+                      peerPublicKey:
+                        description: PeerPublicKey is the WireGuard public key of the remote peer.
+                        type: string
+                        minLength: 1
+                      listenPort:
+                        description: ListenPort is the UDP port for WireGuard.
+                        type: integer
+                        format: int32
+                        minimum: 1
+                        maximum: 65535
+                        default: 51820
+                      tunnelAddressLocal:
+                        description: TunnelAddressLocal is the local tunnel IP address (e.g., "10.99.0.1/30").
+                        type: string
+                        minLength: 1
+                      tunnelAddressRemote:
+                        description: TunnelAddressRemote is the remote tunnel IP address (e.g., "10.99.0.2/30").
+                        type: string
+                        minLength: 1
+                  l2vpn:
+                    description: >-
+                      L2VPN contains NSX-T L2VPN-specific configuration.
+                      Required when spec.type is "l2vpn".
+                    type: object
+                    required:
+                    - nsxManagerHost
+                    - l2vpnServiceID
+                    - credentials
+                    properties:
+                      nsxManagerHost:
+                        description: NSXManagerHost is the hostname or IP of the NSX-T Manager.
+                        type: string
+                        minLength: 1
+                      l2vpnServiceID:
+                        description: L2VPNServiceID is the NSX-T L2VPN service ID.
+                        type: string
+                        minLength: 1
+                      credentials:
+                        description: Credentials is a reference to a Secret containing NSX-T credentials.
+                        type: object
+                        required:
+                        - name
+                        - key
+                        properties:
+                          name:
+                            description: Name is the name of the Secret.
+                            type: string
+                            minLength: 1
+                          key:
+                            description: Key is the key within the Secret data.
+                            type: string
+                            minLength: 1
+                      edgeImage:
+                        description: EdgeImage overrides the default NSX-T edge container image.
+                        type: string
+                  evpn:
+                    description: >-
+                      EVPN contains EVPN-VXLAN-specific configuration.
+                      Required when spec.type is "evpn-vxlan".
+                    type: object
+                    required:
+                    - asn
+                    - vni
+                    - peerASN
+                    properties:
+                      asn:
+                        description: ASN is the local BGP Autonomous System Number.
+                        type: integer
+                        format: int64
+                        minimum: 1
+                        maximum: 4294967295
+                      vni:
+                        description: VNI is the VXLAN Network Identifier.
+                        type: integer
+                        format: int32
+                        minimum: 1
+                        maximum: 16777215
+                      peerASN:
+                        description: PeerASN is the remote BGP Autonomous System Number.
+                        type: integer
+                        format: int64
+                        minimum: 1
+                        maximum: 4294967295
+                      routeReflector:
+                        description: RouteReflector is the IP address of the BGP route reflector.
+                        type: string
+                      frrImage:
+                        description: FRRImage overrides the default FRR container image.
+                        type: string
+              mtu:
+                description: MTU defines MTU and TCP MSS clamping settings for the tunnel.
+                type: object
+                properties:
+                  tunnelMTU:
+                    description: TunnelMTU is the MTU for the tunnel interface.
+                    type: integer
+                    format: int32
+                    minimum: 1200
+                    maximum: 9000
+                    default: 1400
+                  mssClamp:
+                    description: MSSClamp enables TCP MSS clamping on tunnel traffic to prevent fragmentation.
+                    type: boolean
+                    default: true
+              pod:
+                description: Pod defines pod-level overrides for the bridge pod.
+                type: object
+                properties:
+                  image:
+                    description: Image is the container image to use for the gateway/router pod.
+                    type: string
+          status:
+            description: VPCL2BridgeStatus defines the observed state of a VPCL2Bridge.
+            type: object
+            properties:
+              phase:
+                description: Phase is the current lifecycle phase of the bridge.
+                type: string
+                enum:
+                - Pending
+                - Provisioning
+                - Established
+                - Degraded
+                - Error
+              tunnelEndpoint:
+                description: TunnelEndpoint is the local tunnel endpoint IP address.
+                type: string
+              remoteMACsLearned:
+                description: RemoteMACsLearned is the number of remote MAC addresses learned via the tunnel.
+                type: integer
+                format: int32
+              localMACsAdvertised:
+                description: LocalMACsAdvertised is the number of local MAC addresses advertised to the remote peer.
+                type: integer
+                format: int32
+              bytesIn:
+                description: BytesIn is the total bytes received through the tunnel.
+                type: integer
+                format: int64
+              bytesOut:
+                description: BytesOut is the total bytes sent through the tunnel.
+                type: integer
+                format: int64
+              lastHandshake:
+                description: LastHandshake is the timestamp of the last successful tunnel handshake.
+                type: string
+                format: date-time
+              podName:
+                description: PodName is the name of the bridge pod.
+                type: string
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync with the VPC API.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations of the bridge's state.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message
