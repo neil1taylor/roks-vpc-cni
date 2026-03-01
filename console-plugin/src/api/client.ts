@@ -21,9 +21,14 @@ import {
   CreateSecurityGroupRequest,
   CreateNetworkACLRequest,
   CreateFloatingIPRequest,
+  UpdateFloatingIPRequest,
   ReservedIP,
   NamespaceInfo,
   CreateNamespaceRequest,
+  Gateway,
+  CreateGatewayRequest,
+  Router,
+  CreateRouterRequest,
   ApiResponse,
   ApiError,
 } from './types';
@@ -235,8 +240,8 @@ class VPCNetworkClient {
     return this.request<FloatingIP>('POST', '/floating-ips', floatingIp as unknown as Record<string, unknown>);
   }
 
-  async updateFloatingIP(floatingIpId: string, floatingIp: Partial<FloatingIP>): Promise<ApiResponse<FloatingIP>> {
-    return this.request<FloatingIP>('PATCH', `/floating-ips/${floatingIpId}`, floatingIp as Record<string, unknown>);
+  async updateFloatingIP(floatingIpId: string, req: UpdateFloatingIPRequest): Promise<ApiResponse<FloatingIP>> {
+    return this.request<FloatingIP>('PATCH', `/floating-ips/${floatingIpId}`, req as unknown as Record<string, unknown>);
   }
 
   async deleteFloatingIP(floatingIpId: string): Promise<ApiResponse<void>> {
@@ -412,6 +417,40 @@ class VPCNetworkClient {
 
   async deleteRoute(rtId: string, routeId: string): Promise<ApiResponse<void>> {
     return this.request<void>('DELETE', `/routing-tables/${rtId}/routes/${routeId}`);
+  }
+
+  // Gateway Operations
+  async listGateways(): Promise<ApiResponse<Gateway[]>> {
+    return this.request<Gateway[]>('GET', '/gateways');
+  }
+
+  async getGateway(name: string): Promise<ApiResponse<Gateway>> {
+    return this.request<Gateway>('GET', `/gateways/${name}`);
+  }
+
+  async createGateway(req: CreateGatewayRequest): Promise<ApiResponse<Gateway>> {
+    return this.request<Gateway>('POST', '/gateways', req as unknown as Record<string, unknown>);
+  }
+
+  async deleteGateway(name: string): Promise<ApiResponse<void>> {
+    return this.request<void>('DELETE', `/gateways/${name}`);
+  }
+
+  // Router Operations
+  async listRouters(): Promise<ApiResponse<Router[]>> {
+    return this.request<Router[]>('GET', '/routers');
+  }
+
+  async getRouter(name: string): Promise<ApiResponse<Router>> {
+    return this.request<Router>('GET', `/routers/${name}`);
+  }
+
+  async createRouter(req: CreateRouterRequest): Promise<ApiResponse<Router>> {
+    return this.request<Router>('POST', '/routers', req as unknown as Record<string, unknown>);
+  }
+
+  async deleteRouter(name: string): Promise<ApiResponse<void>> {
+    return this.request<void>('DELETE', `/routers/${name}`);
   }
 }
 

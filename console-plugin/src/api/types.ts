@@ -386,6 +386,10 @@ export interface CreateFloatingIPRequest {
   zone: string;
 }
 
+export interface UpdateFloatingIPRequest {
+  target_id: string;
+}
+
 // Namespace Types
 export interface NamespaceInfo {
   name: string;
@@ -442,4 +446,55 @@ export interface UserPermissions {
   canWrite: boolean;
   canDelete: boolean;
   resources?: string[];
+}
+
+// ── VPCGateway (T0) ──
+
+export interface Gateway {
+  name: string;
+  namespace: string;
+  zone: string;
+  phase: string;
+  uplinkNetwork: string;
+  transitNetwork: string;
+  vniID?: string;
+  reservedIP?: string;
+  floatingIP?: string;
+  vpcRouteCount: number;
+  natRuleCount: number;
+  syncStatus: string;
+  createdAt?: string;
+}
+
+export interface CreateGatewayRequest {
+  name: string;
+  zone: string;
+  uplink: string;
+  transit?: string;
+}
+
+// ── VPCRouter (T1) ──
+
+export interface Router {
+  name: string;
+  namespace: string;
+  gateway: string;
+  phase: string;
+  transitIP?: string;
+  networks: RouterNetwork[];
+  advertisedRoutes?: string[];
+  functions?: string[];
+  syncStatus: string;
+  createdAt?: string;
+}
+
+export interface RouterNetwork {
+  name: string;
+  address: string;
+  connected: boolean;
+}
+
+export interface CreateRouterRequest {
+  name: string;
+  gateway: string;
 }

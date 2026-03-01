@@ -293,7 +293,7 @@ export function useTopology(vpcId?: string): {
 }
 
 // Network Definition Hooks
-export function useNetworkDefinitions(): {
+export function useNetworkDefinitions(paused?: boolean): {
   networks: NetworkDefinition[] | null;
   loading: boolean;
   error: ApiError | null;
@@ -307,10 +307,11 @@ export function useNetworkDefinitions(): {
   const refetch = useCallback(() => setFetchCount((c) => c + 1), []);
 
   useEffect(() => {
+    if (paused) return;
     let mounted = true;
 
     const fetchData = async () => {
-      setLoading(true);
+      if (fetchCount === 0) setLoading(true);
       const [cudnResp, udnResp] = await Promise.all([
         apiClient.listCUDNs(),
         apiClient.listUDNs(),
@@ -326,8 +327,9 @@ export function useNetworkDefinitions(): {
     };
 
     fetchData();
-    return () => { mounted = false; };
-  }, [fetchCount]);
+    const interval = setInterval(fetchData, 10000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, [fetchCount, paused]);
 
   return { networks, loading, error, refetch };
 }
@@ -403,6 +405,40 @@ export function useRoutes(routingTableId: string): {
     [routingTableId],
   );
   return { routes, loading, error };
+}
+
+// Gateway Hooks
+export function useGateways() {
+  const { data: gateways, loading, error } = useBFFData(
+    () => apiClient.listGateways(),
+    [],
+  );
+  return { gateways, loading, error };
+}
+
+export function useGateway(name: string) {
+  const { data: gateway, loading, error } = useBFFData(
+    () => apiClient.getGateway(name),
+    [name],
+  );
+  return { gateway, loading, error };
+}
+
+// Router Hooks
+export function useRouters() {
+  const { data: routers, loading, error } = useBFFData(
+    () => apiClient.listRouters(),
+    [],
+  );
+  return { routers, loading, error };
+}
+
+export function useRouter(name: string) {
+  const { data: router, loading, error } = useBFFData(
+    () => apiClient.getRouter(name),
+    [name],
+  );
+  return { router, loading, error };
 }
 
 // Kubernetes CR Hooks
