@@ -156,6 +156,11 @@ type FloatingIPRequest struct {
 	Zone string `json:"zone"`
 }
 
+// FloatingIPUpdateRequest represents a request to bind/unbind a floating IP.
+type FloatingIPUpdateRequest struct {
+	TargetID string `json:"target_id"` // VNI ID to bind; empty string to unbind
+}
+
 // FloatingIPResponse represents a floating IP.
 type FloatingIPResponse struct {
 	ID        string       `json:"id"`
@@ -387,4 +392,60 @@ type CreateRouteRequest struct {
 	NextHopIP   string `json:"nextHopIp,omitempty"`
 	Zone        string `json:"zone"`
 	Priority    *int64 `json:"priority,omitempty"`
+}
+
+// ── Gateway (T0) ──
+
+// GatewayResponse represents a VPCGateway resource.
+type GatewayResponse struct {
+	Name           string `json:"name"`
+	Namespace      string `json:"namespace"`
+	Zone           string `json:"zone"`
+	Phase          string `json:"phase"`
+	UplinkNetwork  string `json:"uplinkNetwork"`
+	TransitNetwork string `json:"transitNetwork"`
+	VNIID          string `json:"vniID,omitempty"`
+	ReservedIP     string `json:"reservedIP,omitempty"`
+	FloatingIP     string `json:"floatingIP,omitempty"`
+	VPCRouteCount  int    `json:"vpcRouteCount"`
+	NATRuleCount   int    `json:"natRuleCount"`
+	SyncStatus     string `json:"syncStatus"`
+	CreatedAt      string `json:"createdAt,omitempty"`
+}
+
+// GatewayRequest represents a request to create a VPCGateway.
+type GatewayRequest struct {
+	Name    string `json:"name"`
+	Zone    string `json:"zone"`
+	Uplink  string `json:"uplink"`
+	Transit string `json:"transit,omitempty"`
+}
+
+// ── Router (T1) ──
+
+// RouterResponse represents a VPCRouter resource.
+type RouterResponse struct {
+	Name             string              `json:"name"`
+	Namespace        string              `json:"namespace"`
+	Gateway          string              `json:"gateway"`
+	Phase            string              `json:"phase"`
+	TransitIP        string              `json:"transitIP,omitempty"`
+	Networks         []RouterNetworkResp `json:"networks"`
+	AdvertisedRoutes []string            `json:"advertisedRoutes,omitempty"`
+	Functions        []string            `json:"functions,omitempty"`
+	SyncStatus       string              `json:"syncStatus"`
+	CreatedAt        string              `json:"createdAt,omitempty"`
+}
+
+// RouterNetworkResp represents a network attached to a router.
+type RouterNetworkResp struct {
+	Name      string `json:"name"`
+	Address   string `json:"address"`
+	Connected bool   `json:"connected"`
+}
+
+// RouterRequest represents a request to create a VPCRouter.
+type RouterRequest struct {
+	Name    string `json:"name"`
+	Gateway string `json:"gateway"`
 }

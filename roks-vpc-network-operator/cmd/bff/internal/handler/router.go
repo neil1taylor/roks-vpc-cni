@@ -124,7 +124,16 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
 		}
 	})
-	mux.HandleFunc("/api/v1/floating-ips/", wrapHandler(authMiddleware(fipHandler.GetFloatingIP)))
+	mux.HandleFunc("/api/v1/floating-ips/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(fipHandler.GetFloatingIP).ServeHTTP(w, r)
+		case http.MethodPatch:
+			authMiddleware(fipHandler.UpdateFloatingIP).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
 
 	// Route management routes
 	routeHandler := NewRouteHandler(vpcClient, rbacChecker, clusterInfo.VPCID)
@@ -208,6 +217,52 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 	})
 
 	mux.HandleFunc("/api/v1/network-types", wrapHandler(authMiddleware(networkHandler.GetNetworkTypes)))
+
+	// VPCGateway routes
+	gwHandler := NewGatewayHandler(dynClient, rbacChecker)
+	mux.HandleFunc("/api/v1/gateways", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(gwHandler.ListGateways).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(gwHandler.CreateGateway).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+	mux.HandleFunc("/api/v1/gateways/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(gwHandler.GetGateway).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(gwHandler.DeleteGateway).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+
+	// VPCRouter routes
+	rtHandler := NewRouterHandler(dynClient, rbacChecker)
+	mux.HandleFunc("/api/v1/routers", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(rtHandler.ListRouters).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(rtHandler.CreateRouter).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+	mux.HandleFunc("/api/v1/routers/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(rtHandler.GetRouter).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(rtHandler.DeleteRouter).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
 
 	// Cluster info endpoint — tells the console plugin what mode the cluster is in
 	// This allows the frontend to show/hide features based on ROKS vs unmanaged
