@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -16,7 +17,10 @@ import (
 	vpcv1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
 	cudnctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/cudn"
 	fipctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/floatingip"
+	gatewayctr "github.com/IBM/roks-vpc-network-operator/pkg/controller/gateway"
+	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	nodectrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/node"
+	routerctr "github.com/IBM/roks-vpc-network-operator/pkg/controller/router"
 	udnctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/udn"
 	vlactrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/vlanattachment"
 	vmctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/vm"
@@ -59,15 +63,35 @@ func main() {
 	region := os.Getenv("VPC_REGION")
 	clusterID := os.Getenv("CLUSTER_ID")
 	resourceGroupID := os.Getenv("RESOURCE_GROUP_ID")
+	vpcID := os.Getenv("VPC_ID")
 
 	clusterMode := roks.ClusterMode(os.Getenv("CLUSTER_MODE")) // "roks" or "unmanaged"
 	if clusterMode == "" {
 		clusterMode = roks.ModeUnmanaged
 	}
 
-	if apiKey == "" || region == "" || clusterID == "" {
+	// ── NNCP configuration ──
+
+	nncpConfig := network.NNCPConfig{
+		Enabled:      os.Getenv("NNCP_ENABLED") != "false", // enabled by default
+		BridgeName:   os.Getenv("NNCP_BRIDGE_NAME"),
+		SecondaryNIC: os.Getenv("NNCP_SECONDARY_NIC"),
+	}
+	if nncpConfig.BridgeName == "" {
+		nncpConfig.BridgeName = "br-localnet"
+	}
+	if nncpConfig.SecondaryNIC == "" {
+		nncpConfig.SecondaryNIC = "bond1"
+	}
+	if selectorStr := os.Getenv("NNCP_NODE_SELECTOR"); selectorStr != "" {
+		nncpConfig.NodeSelector = parseNodeSelector(selectorStr)
+	} else {
+		nncpConfig.NodeSelector = map[string]string{"node-role.kubernetes.io/worker": ""}
+	}
+
+	if apiKey == "" || region == "" || clusterID == "" || vpcID == "" {
 		logger.Error(nil, "Missing required environment variables",
-			"required", "IBMCLOUD_API_KEY, VPC_REGION, CLUSTER_ID")
+			"required", "IBMCLOUD_API_KEY, VPC_REGION, CLUSTER_ID, VPC_ID")
 		os.Exit(1)
 	}
 
@@ -122,10 +146,11 @@ func main() {
 	// ── Register existing controllers ──
 
 	if err := (&cudnctrl.Reconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		VPC:       vpcClient,
-		ClusterID: clusterID,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		VPC:        vpcClient,
+		ClusterID:  clusterID,
+		NNCPConfig: nncpConfig,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Unable to create CUDN controller")
 		os.Exit(1)
@@ -142,10 +167,11 @@ func main() {
 	}
 
 	if err := (&udnctrl.Reconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		VPC:       vpcClient,
-		ClusterID: clusterID,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		VPC:        vpcClient,
+		ClusterID:  clusterID,
+		NNCPConfig: nncpConfig,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Unable to create UDN controller")
 		os.Exit(1)
@@ -207,6 +233,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&gatewayctr.Reconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		VPC:       vpcClient,
+		ClusterID: clusterID,
+		VPCID:     vpcID,
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "Unable to create VPCGateway controller")
+		os.Exit(1)
+	}
+
+	if err := (&routerctr.Reconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "Unable to create VPCRouter controller")
+		os.Exit(1)
+	}
+
 	// ── Register webhook ──
 
 	mgr.GetWebhookServer().Register("/mutate-virtualmachine", &webhook.Admission{
@@ -242,11 +287,29 @@ func main() {
 
 	// ── Start manager ──
 
-	logger.Info("Starting manager", "clusterID", clusterID, "region", region)
+	logger.Info("Starting manager", "clusterID", clusterID, "region", region, "vpcID", vpcID)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		logger.Error(err, "Manager exited with error")
 		os.Exit(1)
 	}
+}
+
+// parseNodeSelector parses "key1=val1,key2=val2" into a map.
+func parseNodeSelector(s string) map[string]string {
+	result := map[string]string{}
+	for _, entry := range strings.Split(s, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) == 2 {
+			result[parts[0]] = parts[1]
+		} else {
+			result[parts[0]] = ""
+		}
+	}
+	return result
 }
 
 // Suppress unused import warnings during scaffolding

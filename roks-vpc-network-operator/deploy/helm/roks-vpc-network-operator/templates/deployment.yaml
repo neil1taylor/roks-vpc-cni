@@ -43,8 +43,18 @@ spec:
           value: {{ .Values.cluster.id | quote }}
         - name: RESOURCE_GROUP_ID
           value: {{ .Values.vpc.resourceGroupID | quote }}
+        - name: VPC_ID
+          value: {{ .Values.vpc.id | quote }}
         - name: CLUSTER_MODE
           value: "unmanaged"  # Always VPC API until ROKS platform API ships
+        - name: NNCP_ENABLED
+          value: {{ .Values.nncp.enabled | quote }}
+        - name: NNCP_BRIDGE_NAME
+          value: {{ .Values.nncp.bridgeName | quote }}
+        - name: NNCP_SECONDARY_NIC
+          value: {{ .Values.nncp.secondaryNIC | quote }}
+        - name: NNCP_NODE_SELECTOR
+          value: {{ .Values.nncp.nodeSelector | quote }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         livenessProbe:
