@@ -11,7 +11,12 @@ import (
 // GenerateNftablesConfig generates an nftables configuration string from the
 // gateway's NAT specification. The vniIP parameter is the reserved IP on the
 // uplink VNI, used as a fallback TranslatedAddress for SNAT rules that leave
-// the TranslatedAddress field empty.
+// the TranslatedAddress field empty. The optional parCIDR parameter, when
+// non-empty, provides the Public Address Range CIDR whose first IP is used
+// as the default SNAT translated address (taking precedence over vniIP).
+//
+// For DNAT rules, if ExternalAddress is set, a destination IP match is added
+// to the rule (e.g., "ip daddr 150.240.68.5 tcp dport 443 dnat to ...").
 //
 // The generated config follows this structure:
 //
@@ -31,7 +36,7 @@ import (
 // priority = appears first). NoNAT accept rules always appear before SNAT
 // rules in the postrouting chain to ensure traffic exemptions are evaluated
 // before source translation.
-func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string) string {
+func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string, parCIDR ...string) string {
 	if nat == nil {
 		return ""
 	}
@@ -41,6 +46,14 @@ func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string) string {
 
 	if !hasDNAT && !hasPostrouting {
 		return ""
+	}
+
+	// Determine the default SNAT address: PAR first IP takes precedence over vniIP
+	defaultSNATAddr := vniIP
+	if len(parCIDR) > 0 && parCIDR[0] != "" {
+		if firstIP := firstIPFromCIDR(parCIDR[0]); firstIP != "" {
+			defaultSNATAddr = firstIP
+		}
 	}
 
 	var sb strings.Builder
@@ -63,8 +76,13 @@ func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string) string {
 			if protocol == "" {
 				protocol = "tcp"
 			}
-			sb.WriteString(fmt.Sprintf("    %s dport %d dnat to %s:%d\n",
-				protocol, rule.ExternalPort, rule.InternalAddress, rule.InternalPort))
+			if rule.ExternalAddress != "" {
+				sb.WriteString(fmt.Sprintf("    ip daddr %s %s dport %d dnat to %s:%d\n",
+					rule.ExternalAddress, protocol, rule.ExternalPort, rule.InternalAddress, rule.InternalPort))
+			} else {
+				sb.WriteString(fmt.Sprintf("    %s dport %d dnat to %s:%d\n",
+					protocol, rule.ExternalPort, rule.InternalAddress, rule.InternalPort))
+			}
 		}
 
 		sb.WriteString("  }\n")
@@ -100,7 +118,7 @@ func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string) string {
 			for _, rule := range snatRules {
 				translatedAddr := rule.TranslatedAddress
 				if translatedAddr == "" {
-					translatedAddr = vniIP
+					translatedAddr = defaultSNATAddr
 				}
 				sb.WriteString(fmt.Sprintf("    ip saddr %s snat to %s\n",
 					rule.Source, translatedAddr))
@@ -112,4 +130,14 @@ func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string) string {
 
 	sb.WriteString("}\n")
 	return sb.String()
+}
+
+// firstIPFromCIDR extracts the first IP address from a CIDR block.
+// For example, "150.240.68.0/28" → "150.240.68.0".
+func firstIPFromCIDR(cidr string) string {
+	parts := strings.SplitN(cidr, "/", 2)
+	if len(parts) >= 1 && parts[0] != "" {
+		return parts[0]
+	}
+	return ""
 }

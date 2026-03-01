@@ -75,8 +75,16 @@ type MockClient struct {
 	ListZonesFn func(ctx context.Context, region string) ([]Zone, error)
 
 	// Routing Table operations
-	ListRoutingTablesFn func(ctx context.Context, vpcID string) ([]RoutingTable, error)
-	GetRoutingTableFn   func(ctx context.Context, vpcID, routingTableID string) (*RoutingTable, error)
+	ListRoutingTablesFn   func(ctx context.Context, vpcID string) ([]RoutingTable, error)
+	GetRoutingTableFn     func(ctx context.Context, vpcID, routingTableID string) (*RoutingTable, error)
+	CreateRoutingTableFn  func(ctx context.Context, vpcID string, opts CreateRoutingTableOptions) (*RoutingTable, error)
+	DeleteRoutingTableFn  func(ctx context.Context, vpcID, routingTableID string) error
+
+	// Public Address Range operations
+	CreatePublicAddressRangeFn func(ctx context.Context, opts CreatePublicAddressRangeOptions) (*PublicAddressRange, error)
+	GetPublicAddressRangeFn    func(ctx context.Context, parID string) (*PublicAddressRange, error)
+	ListPublicAddressRangesFn  func(ctx context.Context, vpcID string) ([]PublicAddressRange, error)
+	DeletePublicAddressRangeFn func(ctx context.Context, parID string) error
 
 	// Route operations
 	ListRoutesFn  func(ctx context.Context, vpcID, routingTableID string) ([]Route, error)
@@ -450,6 +458,55 @@ func (m *MockClient) GetRoutingTable(ctx context.Context, vpcID, routingTableID 
 		return m.GetRoutingTableFn(ctx, vpcID, routingTableID)
 	}
 	return nil, fmt.Errorf("GetRoutingTable not configured in mock")
+}
+
+func (m *MockClient) CreateRoutingTable(ctx context.Context, vpcID string, opts CreateRoutingTableOptions) (*RoutingTable, error) {
+	m.trackCall("CreateRoutingTable")
+	if m.CreateRoutingTableFn != nil {
+		return m.CreateRoutingTableFn(ctx, vpcID, opts)
+	}
+	return nil, fmt.Errorf("CreateRoutingTable not configured in mock")
+}
+
+func (m *MockClient) DeleteRoutingTable(ctx context.Context, vpcID, routingTableID string) error {
+	m.trackCall("DeleteRoutingTable")
+	if m.DeleteRoutingTableFn != nil {
+		return m.DeleteRoutingTableFn(ctx, vpcID, routingTableID)
+	}
+	return fmt.Errorf("DeleteRoutingTable not configured in mock")
+}
+
+// Public Address Range operations
+func (m *MockClient) CreatePublicAddressRange(ctx context.Context, opts CreatePublicAddressRangeOptions) (*PublicAddressRange, error) {
+	m.trackCall("CreatePublicAddressRange")
+	if m.CreatePublicAddressRangeFn != nil {
+		return m.CreatePublicAddressRangeFn(ctx, opts)
+	}
+	return nil, fmt.Errorf("CreatePublicAddressRange not configured in mock")
+}
+
+func (m *MockClient) GetPublicAddressRange(ctx context.Context, parID string) (*PublicAddressRange, error) {
+	m.trackCall("GetPublicAddressRange")
+	if m.GetPublicAddressRangeFn != nil {
+		return m.GetPublicAddressRangeFn(ctx, parID)
+	}
+	return nil, fmt.Errorf("GetPublicAddressRange not configured in mock")
+}
+
+func (m *MockClient) ListPublicAddressRanges(ctx context.Context, vpcID string) ([]PublicAddressRange, error) {
+	m.trackCall("ListPublicAddressRanges")
+	if m.ListPublicAddressRangesFn != nil {
+		return m.ListPublicAddressRangesFn(ctx, vpcID)
+	}
+	return nil, fmt.Errorf("ListPublicAddressRanges not configured in mock")
+}
+
+func (m *MockClient) DeletePublicAddressRange(ctx context.Context, parID string) error {
+	m.trackCall("DeletePublicAddressRange")
+	if m.DeletePublicAddressRangeFn != nil {
+		return m.DeletePublicAddressRangeFn(ctx, parID)
+	}
+	return fmt.Errorf("DeletePublicAddressRange not configured in mock")
 }
 
 // Route operations

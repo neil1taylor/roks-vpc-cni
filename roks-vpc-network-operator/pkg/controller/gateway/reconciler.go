@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -18,6 +20,7 @@ import (
 
 	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
 	"github.com/IBM/roks-vpc-network-operator/pkg/annotations"
+	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	"github.com/IBM/roks-vpc-network-operator/pkg/finalizers"
 	operatormetrics "github.com/IBM/roks-vpc-network-operator/pkg/metrics"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
@@ -78,7 +81,26 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, gw *v1alpha1.VPCGatewa
 		return ctrl.Result{}, err
 	}
 
-	// Step 2: Ensure uplink VNI exists
+	// Step 2: Ensure uplink VNI exists (with drift detection)
+	if gw.Status.VNIID != "" {
+		// Drift detection: verify VNI still exists in VPC
+		existingVNI, err := r.VPC.GetVNI(ctx, gw.Status.VNIID)
+		if err != nil && isVPCNotFound(err) {
+			logger.Info("VNI no longer exists in VPC, will recreate", "vniID", gw.Status.VNIID)
+			r.emitEvent(gw, "Warning", "VNIDrift", "Uplink VNI %s no longer exists, recreating", gw.Status.VNIID)
+			gw.Status.VNIID = ""
+			gw.Status.MACAddress = ""
+			gw.Status.ReservedIP = ""
+			gw.Status.VPCRouteIDs = nil
+		} else if err != nil {
+			logger.Error(err, "Failed to verify VNI exists", "vniID", gw.Status.VNIID)
+		} else if gw.Status.MACAddress == "" {
+			// Backfill MACAddress for gateways created before this field existed
+			gw.Status.MACAddress = existingVNI.MACAddress
+			logger.Info("Backfilled MACAddress from existing VNI", "mac", existingVNI.MACAddress)
+		}
+	}
+
 	if gw.Status.VNIID == "" {
 		vni, err := r.ensureVNI(ctx, gw)
 		if err != nil {
@@ -89,6 +111,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, gw *v1alpha1.VPCGatewa
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		gw.Status.VNIID = vni.ID
+		gw.Status.MACAddress = vni.MACAddress
 		gw.Status.ReservedIP = vni.PrimaryIP.Address
 		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "create_vni", "success").Inc()
 		r.emitEvent(gw, "Normal", "VNICreated", "Created uplink VNI %s (%s)", vni.ID, vni.PrimaryIP.Address)
@@ -117,6 +140,24 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, gw *v1alpha1.VPCGatewa
 		Message: fmt.Sprintf("Configured %d VPC route(s)", len(routeIDs)),
 	})
 
+	// Step 4: Ensure Public Address Range (if enabled)
+	if gw.Spec.PublicAddressRange != nil && gw.Spec.PublicAddressRange.Enabled {
+		if err := r.ensurePAR(ctx, gw); err != nil {
+			logger.Error(err, "Failed to ensure PAR")
+			operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "create_par", "error").Inc()
+			r.emitEvent(gw, "Warning", "PARConfigFailed", "Failed to configure PAR: %v", err)
+			r.setFailedStatus(ctx, gw, "PARConfigFailed", fmt.Sprintf("Failed to configure PAR: %v", err))
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "create_par", "success").Inc()
+		meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
+			Type:    "PARReady",
+			Status:  metav1.ConditionTrue,
+			Reason:  "Configured",
+			Message: fmt.Sprintf("PAR %s (%s) with ingress routing", gw.Status.PublicAddressRangeID, gw.Status.PublicAddressRangeCIDR),
+		})
+	}
+
 	// Update status to Ready
 	gw.Status.Phase = "Ready"
 	gw.Status.SyncStatus = "Synced"
@@ -136,14 +177,22 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, gw *v1alpha1.VPCGatewa
 	}
 
 	logger.Info("Successfully synced VPCGateway", "vniID", gw.Status.VNIID, "reservedIP", gw.Status.ReservedIP)
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
 // reconcileDelete handles VPCGateway deletion.
 func (r *Reconciler) reconcileDelete(ctx context.Context, gw *v1alpha1.VPCGateway) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Step 1: Delete VPC routes
+	// Step 1: Delete PAR ingress routes, ingress routing table, and PAR
+	if err := r.deletePAR(ctx, gw); err != nil {
+		logger.Error(err, "Failed to delete PAR resources")
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "delete_par", "error").Inc()
+		r.emitEvent(gw, "Warning", "DeletePARFailed", "Failed to delete PAR resources: %v", err)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// Step 2: Delete VPC routes
 	if len(gw.Status.VPCRouteIDs) > 0 {
 		rtID, err := r.getDefaultRoutingTableID(ctx)
 		if err != nil {
@@ -154,6 +203,10 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gw *v1alpha1.VPCGatewa
 		}
 		for _, routeID := range gw.Status.VPCRouteIDs {
 			if err := r.VPC.DeleteRoute(ctx, r.VPCID, rtID, routeID); err != nil {
+				if isVPCNotFound(err) {
+					logger.Info("VPC route already deleted", "routeID", routeID)
+					continue
+				}
 				logger.Error(err, "Failed to delete VPC route", "routeID", routeID)
 				operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "delete_routes", "error").Inc()
 				r.emitEvent(gw, "Warning", "DeleteRouteFailed", "Failed to delete route %s: %v", routeID, err)
@@ -165,20 +218,34 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gw *v1alpha1.VPCGatewa
 		r.emitEvent(gw, "Normal", "RoutesDeleted", "Deleted %d VPC route(s)", len(gw.Status.VPCRouteIDs))
 	}
 
-	// Step 2: Delete uplink VNI
-	if gw.Status.VNIID != "" {
-		if err := r.VPC.DeleteVNI(ctx, gw.Status.VNIID); err != nil {
-			logger.Error(err, "Failed to delete uplink VNI", "vniID", gw.Status.VNIID)
-			operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "delete_vni", "error").Inc()
-			r.emitEvent(gw, "Warning", "DeleteVNIFailed", "Failed to delete VNI %s: %v", gw.Status.VNIID, err)
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	// Step 3: Delete VLAN attachment (auto-deletes the inline VNI)
+	if gw.Status.AttachmentID != "" && gw.Status.BMServerID != "" {
+		if err := r.VPC.DeleteVLANAttachment(ctx, gw.Status.BMServerID, gw.Status.AttachmentID); err != nil {
+			if isVPCNotFound(err) {
+				logger.Info("VLAN attachment already deleted", "attachmentID", gw.Status.AttachmentID)
+			} else {
+				logger.Error(err, "Failed to delete gateway VLAN attachment", "attachmentID", gw.Status.AttachmentID)
+				operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "delete_vni", "error").Inc()
+				r.emitEvent(gw, "Warning", "DeleteAttachmentFailed", "Failed to delete attachment %s: %v", gw.Status.AttachmentID, err)
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+		} else {
+			logger.Info("Deleted gateway VLAN attachment", "attachmentID", gw.Status.AttachmentID, "vniID", gw.Status.VNIID)
 		}
-		logger.Info("Deleted uplink VNI", "vniID", gw.Status.VNIID)
 		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "delete_vni", "success").Inc()
-		r.emitEvent(gw, "Normal", "VNIDeleted", "Deleted uplink VNI %s", gw.Status.VNIID)
+		r.emitEvent(gw, "Normal", "AttachmentDeleted", "Deleted gateway VLAN attachment %s (VNI %s)", gw.Status.AttachmentID, gw.Status.VNIID)
+	} else if gw.Status.VNIID != "" {
+		// Fallback: old-style floating VNI without attachment
+		if err := r.VPC.DeleteVNI(ctx, gw.Status.VNIID); err != nil {
+			if !isVPCNotFound(err) {
+				logger.Error(err, "Failed to delete uplink VNI", "vniID", gw.Status.VNIID)
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+		}
+		logger.Info("Deleted legacy uplink VNI", "vniID", gw.Status.VNIID)
 	}
 
-	// Step 3: Remove finalizer
+	// Step 4: Remove finalizer
 	if err := finalizers.EnsureRemoved(ctx, r.Client, gw, finalizers.GatewayCleanup); err != nil {
 		logger.Error(err, "Failed to remove finalizer")
 		return ctrl.Result{}, err
@@ -187,52 +254,55 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gw *v1alpha1.VPCGatewa
 	return ctrl.Result{}, nil
 }
 
-// ensureVNI creates the uplink VNI for the gateway.
-// It looks up the subnet ID from the uplink CUDN's annotations.
-// After creation, it polls GetVNI until the primary IP is assigned.
+// ensureVNI creates the uplink VNI for the gateway via a VLAN attachment with
+// inline VNI on a bare metal server — the same approach the webhook uses for VMs.
+// This gives the VNI a physical path so VPC can deliver traffic (DHCP, ARP, etc.).
 func (r *Reconciler) ensureVNI(ctx context.Context, gw *v1alpha1.VPCGateway) (*vpc.VNI, error) {
 	logger := log.FromContext(ctx)
-	name := fmt.Sprintf("roks-%s-gw-%s", r.ClusterID, gw.Name)
 
-	// Look up the uplink CUDN to get the VPC subnet ID
-	subnetID, err := r.getUplinkSubnetID(ctx, gw.Spec.Uplink.Network)
+	// Look up the uplink CUDN to get the VPC subnet ID and VLAN ID
+	subnetID, vlanID, err := r.getUplinkNetworkInfo(ctx, gw.Spec.Uplink.Network)
 	if err != nil {
-		return nil, fmt.Errorf("getUplinkSubnetID(%s): %w", gw.Spec.Uplink.Network, err)
+		return nil, fmt.Errorf("getUplinkNetworkInfo(%s): %w", gw.Spec.Uplink.Network, err)
 	}
 
-	vni, err := r.VPC.CreateVNI(ctx, vpc.CreateVNIOptions{
-		Name:             name,
+	// Pick a BM server (same as webhook — allow_to_float handles migration)
+	bmServerID, err := network.PickBMServer(ctx, r.Client, r.VPC, r.VPCID)
+	if err != nil {
+		return nil, fmt.Errorf("pickBMServer: %w", err)
+	}
+
+	vniName := network.TruncateVPCName(fmt.Sprintf("roks-%s-gw-%s", r.ClusterID, gw.Name))
+	attName := network.TruncateVPCName(fmt.Sprintf("roks-%s-gw-%s-vlan%d", r.ClusterID, gw.Name, vlanID))
+
+	result, err := r.VPC.CreateVMAttachment(ctx, vpc.CreateVMAttachmentOptions{
+		BMServerID:       bmServerID,
+		Name:             attName,
+		VLANID:           vlanID,
 		SubnetID:         subnetID,
+		VNIName:          vniName,
 		SecurityGroupIDs: gw.Spec.Uplink.SecurityGroupIDs,
-		ClusterID:        r.ClusterID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("CreateVNI(%s): %w", name, err)
+		return nil, fmt.Errorf("CreateVMAttachment(%s): %w", attName, err)
 	}
 
-	// Poll until primary IP is assigned (VPC API may return 0.0.0.0 initially)
-	if vni.PrimaryIP.Address == "" || vni.PrimaryIP.Address == "0.0.0.0" {
-		for i := 0; i < 10; i++ {
-			time.Sleep(2 * time.Second)
-			vni, err = r.VPC.GetVNI(ctx, vni.ID)
-			if err != nil {
-				return nil, fmt.Errorf("GetVNI(%s) while waiting for IP: %w", vni.ID, err)
-			}
-			if vni.PrimaryIP.Address != "" && vni.PrimaryIP.Address != "0.0.0.0" {
-				logger.Info("VNI primary IP assigned", "vniID", vni.ID, "ip", vni.PrimaryIP.Address)
-				break
-			}
-		}
-		if vni.PrimaryIP.Address == "" || vni.PrimaryIP.Address == "0.0.0.0" {
-			return nil, fmt.Errorf("VNI %s primary IP not assigned after 20s", vni.ID)
-		}
-	}
+	logger.Info("Created gateway VLAN attachment with inline VNI",
+		"attachmentID", result.AttachmentID,
+		"bmServerID", result.BMServerID,
+		"vniID", result.VNI.ID,
+		"mac", result.VNI.MACAddress,
+		"ip", result.VNI.PrimaryIP.Address)
 
-	return vni, nil
+	// Store attachment info for cleanup
+	gw.Status.AttachmentID = result.AttachmentID
+	gw.Status.BMServerID = result.BMServerID
+
+	return &result.VNI, nil
 }
 
-// getUplinkSubnetID looks up the CUDN by name and reads its subnet-id annotation.
-func (r *Reconciler) getUplinkSubnetID(ctx context.Context, networkName string) (string, error) {
+// getUplinkNetworkInfo looks up the CUDN by name and reads its subnet-id and vlan-id annotations.
+func (r *Reconciler) getUplinkNetworkInfo(ctx context.Context, networkName string) (string, int64, error) {
 	cudn := &unstructured.Unstructured{}
 	cudn.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "k8s.ovn.org",
@@ -241,16 +311,25 @@ func (r *Reconciler) getUplinkSubnetID(ctx context.Context, networkName string) 
 	})
 
 	if err := r.Get(ctx, client.ObjectKey{Name: networkName}, cudn); err != nil {
-		return "", fmt.Errorf("get CUDN %s: %w", networkName, err)
+		return "", 0, fmt.Errorf("get CUDN %s: %w", networkName, err)
 	}
 
 	annots := cudn.GetAnnotations()
 	subnetID := annots[annotations.SubnetID]
 	if subnetID == "" {
-		return "", fmt.Errorf("CUDN %s has no %s annotation", networkName, annotations.SubnetID)
+		return "", 0, fmt.Errorf("CUDN %s has no %s annotation", networkName, annotations.SubnetID)
 	}
 
-	return subnetID, nil
+	vlanIDStr := annots[annotations.VLANID]
+	if vlanIDStr == "" {
+		return "", 0, fmt.Errorf("CUDN %s has no %s annotation", networkName, annotations.VLANID)
+	}
+	vlanID, err := strconv.ParseInt(vlanIDStr, 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("CUDN %s has invalid VLAN ID %q: %w", networkName, vlanIDStr, err)
+	}
+
+	return subnetID, vlanID, nil
 }
 
 // ensureVPCRoutes creates VPC routes for the gateway, using idempotent
@@ -301,6 +380,152 @@ func (r *Reconciler) ensureVPCRoutes(ctx context.Context, gw *v1alpha1.VPCGatewa
 	return routeIDs, nil
 }
 
+// ensurePAR creates/adopts the Public Address Range, ingress routing table,
+// and ingress route pointing the PAR CIDR to the gateway's VNI reserved IP.
+func (r *Reconciler) ensurePAR(ctx context.Context, gw *v1alpha1.VPCGateway) error {
+	logger := log.FromContext(ctx)
+	par := gw.Spec.PublicAddressRange
+
+	// Step A: Ensure PAR exists
+	if gw.Status.PublicAddressRangeID == "" {
+		if par.ID != "" {
+			// Adopt externally-managed PAR
+			existing, err := r.VPC.GetPublicAddressRange(ctx, par.ID)
+			if err != nil {
+				return fmt.Errorf("GetPublicAddressRange(%s): %w", par.ID, err)
+			}
+			gw.Status.PublicAddressRangeID = existing.ID
+			gw.Status.PublicAddressRangeCIDR = existing.CIDR
+			logger.Info("Adopted external PAR", "parID", existing.ID, "cidr", existing.CIDR)
+			r.emitEvent(gw, "Normal", "PARAdopted", "Adopted external PAR %s (%s)", existing.ID, existing.CIDR)
+		} else {
+			// Create new PAR
+			prefixLen := par.PrefixLength
+			if prefixLen == 0 {
+				prefixLen = 32
+			}
+			parName := network.TruncateVPCName(fmt.Sprintf("roks-%s-gw-%s-par", r.ClusterID, gw.Name))
+			created, err := r.VPC.CreatePublicAddressRange(ctx, vpc.CreatePublicAddressRangeOptions{
+				Name:         parName,
+				VPCID:        r.VPCID,
+				Zone:         gw.Spec.Zone,
+				PrefixLength: prefixLen,
+			})
+			if err != nil {
+				return fmt.Errorf("CreatePublicAddressRange: %w", err)
+			}
+			gw.Status.PublicAddressRangeID = created.ID
+			gw.Status.PublicAddressRangeCIDR = created.CIDR
+			logger.Info("Created PAR", "parID", created.ID, "cidr", created.CIDR)
+			r.emitEvent(gw, "Normal", "PARCreated", "Created PAR %s (%s)", created.ID, created.CIDR)
+		}
+	} else {
+		// Drift detection: verify PAR still exists
+		existing, err := r.VPC.GetPublicAddressRange(ctx, gw.Status.PublicAddressRangeID)
+		if err != nil && isVPCNotFound(err) {
+			logger.Info("PAR no longer exists, will recreate", "parID", gw.Status.PublicAddressRangeID)
+			r.emitEvent(gw, "Warning", "PARDrift", "PAR %s no longer exists", gw.Status.PublicAddressRangeID)
+			gw.Status.PublicAddressRangeID = ""
+			gw.Status.PublicAddressRangeCIDR = ""
+			gw.Status.IngressRoutingTableID = ""
+			gw.Status.IngressRouteIDs = nil
+			return r.ensurePAR(ctx, gw)
+		} else if err != nil {
+			return fmt.Errorf("GetPublicAddressRange(%s): %w", gw.Status.PublicAddressRangeID, err)
+		}
+		// Backfill CIDR if missing (upgrade path)
+		if gw.Status.PublicAddressRangeCIDR == "" {
+			gw.Status.PublicAddressRangeCIDR = existing.CIDR
+		}
+	}
+
+	// Step B: Ensure ingress routing table
+	if gw.Status.IngressRoutingTableID == "" {
+		rtName := network.TruncateVPCName(fmt.Sprintf("roks-%s-gw-%s-ingress", r.ClusterID, gw.Name))
+		rt, err := r.VPC.CreateRoutingTable(ctx, r.VPCID, vpc.CreateRoutingTableOptions{
+			Name:                 rtName,
+			RouteInternetIngress: true,
+		})
+		if err != nil {
+			return fmt.Errorf("CreateRoutingTable(ingress): %w", err)
+		}
+		gw.Status.IngressRoutingTableID = rt.ID
+		logger.Info("Created ingress routing table", "rtID", rt.ID)
+		r.emitEvent(gw, "Normal", "IngressRTCreated", "Created ingress routing table %s", rt.ID)
+	}
+
+	// Step C: Ensure ingress route (PAR CIDR → gateway VNI IP)
+	if len(gw.Status.IngressRouteIDs) == 0 && gw.Status.PublicAddressRangeCIDR != "" {
+		routeName := fmt.Sprintf("roks-%s-gw-%s-par-ingress", r.ClusterID, gw.Name)
+		route, err := r.VPC.CreateRoute(ctx, r.VPCID, gw.Status.IngressRoutingTableID, vpc.CreateRouteOptions{
+			Name:        network.TruncateVPCName(routeName),
+			Destination: gw.Status.PublicAddressRangeCIDR,
+			Action:      "deliver",
+			NextHopIP:   gw.Status.ReservedIP,
+			Zone:        gw.Spec.Zone,
+		})
+		if err != nil {
+			return fmt.Errorf("CreateRoute(ingress, %s): %w", gw.Status.PublicAddressRangeCIDR, err)
+		}
+		gw.Status.IngressRouteIDs = []string{route.ID}
+		logger.Info("Created ingress route", "routeID", route.ID, "dest", gw.Status.PublicAddressRangeCIDR, "nextHop", gw.Status.ReservedIP)
+		r.emitEvent(gw, "Normal", "IngressRouteCreated", "Created ingress route %s → %s", gw.Status.PublicAddressRangeCIDR, gw.Status.ReservedIP)
+	}
+
+	return nil
+}
+
+// deletePAR cleans up PAR resources in reverse order: ingress routes → routing table → PAR.
+func (r *Reconciler) deletePAR(ctx context.Context, gw *v1alpha1.VPCGateway) error {
+	logger := log.FromContext(ctx)
+
+	// Delete ingress routes
+	if len(gw.Status.IngressRouteIDs) > 0 && gw.Status.IngressRoutingTableID != "" {
+		for _, routeID := range gw.Status.IngressRouteIDs {
+			if err := r.VPC.DeleteRoute(ctx, r.VPCID, gw.Status.IngressRoutingTableID, routeID); err != nil {
+				if !isVPCNotFound(err) {
+					return fmt.Errorf("DeleteRoute(ingress, %s): %w", routeID, err)
+				}
+				logger.Info("Ingress route already deleted", "routeID", routeID)
+			}
+		}
+		logger.Info("Deleted ingress routes", "count", len(gw.Status.IngressRouteIDs))
+		r.emitEvent(gw, "Normal", "IngressRoutesDeleted", "Deleted %d ingress route(s)", len(gw.Status.IngressRouteIDs))
+	}
+
+	// Delete ingress routing table
+	if gw.Status.IngressRoutingTableID != "" {
+		if err := r.VPC.DeleteRoutingTable(ctx, r.VPCID, gw.Status.IngressRoutingTableID); err != nil {
+			if !isVPCNotFound(err) {
+				return fmt.Errorf("DeleteRoutingTable(ingress, %s): %w", gw.Status.IngressRoutingTableID, err)
+			}
+			logger.Info("Ingress routing table already deleted", "rtID", gw.Status.IngressRoutingTableID)
+		} else {
+			logger.Info("Deleted ingress routing table", "rtID", gw.Status.IngressRoutingTableID)
+		}
+		r.emitEvent(gw, "Normal", "IngressRTDeleted", "Deleted ingress routing table %s", gw.Status.IngressRoutingTableID)
+	}
+
+	// Delete PAR (only if we created it — skip if externally managed via spec.publicAddressRange.id)
+	isExternalPAR := gw.Spec.PublicAddressRange != nil && gw.Spec.PublicAddressRange.ID != ""
+	if gw.Status.PublicAddressRangeID != "" && !isExternalPAR {
+		if err := r.VPC.DeletePublicAddressRange(ctx, gw.Status.PublicAddressRangeID); err != nil {
+			if !isVPCNotFound(err) {
+				return fmt.Errorf("DeletePublicAddressRange(%s): %w", gw.Status.PublicAddressRangeID, err)
+			}
+			logger.Info("PAR already deleted", "parID", gw.Status.PublicAddressRangeID)
+		} else {
+			logger.Info("Deleted PAR", "parID", gw.Status.PublicAddressRangeID)
+		}
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "delete_par", "success").Inc()
+		r.emitEvent(gw, "Normal", "PARDeleted", "Deleted PAR %s", gw.Status.PublicAddressRangeID)
+	} else if isExternalPAR {
+		logger.Info("Skipping PAR deletion (externally managed)", "parID", gw.Status.PublicAddressRangeID)
+	}
+
+	return nil
+}
+
 // getDefaultRoutingTableID finds the default routing table for the VPC.
 func (r *Reconciler) getDefaultRoutingTableID(ctx context.Context) (string, error) {
 	tables, err := r.VPC.ListRoutingTables(ctx, r.VPCID)
@@ -338,6 +563,12 @@ func (r *Reconciler) emitEvent(obj runtime.Object, eventType, reason, messageFmt
 	if r.Recorder != nil {
 		r.Recorder.Eventf(obj, eventType, reason, messageFmt, args...)
 	}
+}
+
+// isVPCNotFound returns true if the error indicates the VPC resource is already gone.
+func isVPCNotFound(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "not_found") || strings.Contains(msg, "404")
 }
 
 // sanitizeDestination replaces characters in a CIDR that are invalid in VPC

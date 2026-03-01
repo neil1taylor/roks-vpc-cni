@@ -36,6 +36,10 @@ spec:
     - name: FIP
       type: string
       jsonPath: .status.floatingIP
+    - name: PAR CIDR
+      type: string
+      jsonPath: .status.publicAddressRangeCIDR
+      priority: 1
     - name: Sync
       type: string
       jsonPath: .status.syncStatus
@@ -75,6 +79,9 @@ spec:
                     description: Network is the name of the uplink network (LocalNet CUDN/UDN).
                     type: string
                     minLength: 1
+                  namespace:
+                    description: Namespace where the uplink network-attachment-definition exists.
+                    type: string
                   securityGroupIDs:
                     description: SecurityGroupIDs is a list of VPC security group IDs for the uplink VNI.
                     type: array
@@ -206,6 +213,36 @@ spec:
                   id:
                     description: ID is an existing floating IP ID to use instead of creating a new one.
                     type: string
+              publicAddressRange:
+                description: >-
+                  PublicAddressRange controls VPC Public Address Range provisioning.
+                  PAR provides a block of public IPs routed through the gateway via
+                  an ingress routing table, enabling centralized ingress inspection.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether a PAR is provisioned for this gateway.
+                    type: boolean
+                    default: false
+                  prefixLength:
+                    description: >-
+                      PrefixLength is the CIDR prefix for the PAR
+                      (/28=16, /29=8, /30=4, /31=2, /32=1 IPs).
+                    type: integer
+                    format: int32
+                    default: 32
+                    enum:
+                    - 28
+                    - 29
+                    - 30
+                    - 31
+                    - 32
+                  id:
+                    description: >-
+                      ID is an existing PAR ID to adopt instead of creating a new one.
+                      When set, the operator will not create or delete the PAR, only manage
+                      the ingress routing table and routes.
+                    type: string
               firewall:
                 description: Firewall defines firewall rules for the gateway.
                 type: object
@@ -294,12 +331,35 @@ spec:
               vniID:
                 description: VNIID is the VPC VNI ID allocated for the gateway's uplink interface.
                 type: string
+              attachmentID:
+                description: AttachmentID is the BM server VLAN attachment ID that hosts the inline VNI.
+                type: string
+              bmServerID:
+                description: BMServerID is the bare metal server ID where the attachment was created.
+                type: string
+              macAddress:
+                description: MACAddress is the MAC address of the uplink VNI.
+                type: string
               reservedIP:
                 description: ReservedIP is the reserved IP address on the uplink VNI.
                 type: string
               floatingIP:
                 description: FloatingIP is the public floating IP address assigned to the gateway.
                 type: string
+              publicAddressRangeID:
+                description: PublicAddressRangeID is the VPC PAR resource ID.
+                type: string
+              publicAddressRangeCIDR:
+                description: PublicAddressRangeCIDR is the allocated public CIDR block (e.g., "150.240.68.0/28").
+                type: string
+              ingressRoutingTableID:
+                description: IngressRoutingTableID is the ingress routing table ID for PAR traffic.
+                type: string
+              ingressRouteIDs:
+                description: IngressRouteIDs is the list of route IDs in the ingress routing table.
+                type: array
+                items:
+                  type: string
               transitNetwork:
                 description: TransitNetwork is the name of the transit network the gateway is connected to.
                 type: string

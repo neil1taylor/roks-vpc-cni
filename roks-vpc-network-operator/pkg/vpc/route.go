@@ -62,6 +62,50 @@ func (c *vpcClient) GetRoutingTable(ctx context.Context, vpcID, routingTableID s
 	return &rt, nil
 }
 
+// CreateRoutingTable creates a new routing table for a VPC.
+func (c *vpcClient) CreateRoutingTable(ctx context.Context, vpcID string, opts CreateRoutingTableOptions) (*RoutingTable, error) {
+	if err := c.limiter.Acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer c.limiter.Release()
+
+	createOpts := &vpcv1.CreateVPCRoutingTableOptions{
+		VPCID: &vpcID,
+	}
+	if opts.Name != "" {
+		createOpts.Name = &opts.Name
+	}
+	if opts.RouteInternetIngress {
+		createOpts.RouteInternetIngress = &opts.RouteInternetIngress
+	}
+
+	result, _, err := c.service.CreateVPCRoutingTableWithContext(ctx, createOpts)
+	if err != nil {
+		return nil, fmt.Errorf("VPC API CreateRoutingTable(%s): %w", vpcID, err)
+	}
+
+	rt := routingTableFromSDK(result)
+	return &rt, nil
+}
+
+// DeleteRoutingTable deletes a routing table from a VPC.
+func (c *vpcClient) DeleteRoutingTable(ctx context.Context, vpcID, routingTableID string) error {
+	if err := c.limiter.Acquire(ctx); err != nil {
+		return err
+	}
+	defer c.limiter.Release()
+
+	_, err := c.service.DeleteVPCRoutingTableWithContext(ctx, &vpcv1.DeleteVPCRoutingTableOptions{
+		VPCID: &vpcID,
+		ID:    &routingTableID,
+	})
+	if err != nil {
+		return fmt.Errorf("VPC API DeleteRoutingTable(%s/%s): %w", vpcID, routingTableID, err)
+	}
+
+	return nil
+}
+
 // ListRoutes lists all routes in a routing table.
 func (c *vpcClient) ListRoutes(ctx context.Context, vpcID, routingTableID string) ([]Route, error) {
 	if err := c.limiter.Acquire(ctx); err != nil {
@@ -164,6 +208,9 @@ func routingTableFromSDK(rt *vpcv1.RoutingTable) RoutingTable {
 	}
 	if rt.IsDefault != nil {
 		t.IsDefault = *rt.IsDefault
+	}
+	if rt.RouteInternetIngress != nil {
+		t.RouteInternetIngress = *rt.RouteInternetIngress
 	}
 	if rt.LifecycleState != nil {
 		t.LifecycleState = *rt.LifecycleState

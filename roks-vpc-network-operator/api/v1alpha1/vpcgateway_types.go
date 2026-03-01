@@ -77,6 +77,11 @@ type GatewayUplink struct {
 	// +kubebuilder:validation:MinLength=1
 	Network string `json:"network"`
 
+	// Namespace is the namespace where the uplink network-attachment-definition exists.
+	// Required when the router pod runs in a different namespace than the NAD.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
 	// SecurityGroupIDs is a list of VPC security group IDs for the uplink VNI.
 	// +optional
 	SecurityGroupIDs []string `json:"securityGroupIDs,omitempty"`
@@ -199,6 +204,27 @@ type GatewayFloatingIP struct {
 	ID string `json:"id,omitempty"`
 }
 
+// GatewayPublicAddressRange controls VPC Public Address Range provisioning.
+// A PAR provides a contiguous block of IBM-assigned public IPs bound to the
+// VPC zone, routed via an ingress routing table to the gateway's uplink VNI.
+type GatewayPublicAddressRange struct {
+	// Enabled controls whether a PAR is provisioned for this gateway.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// PrefixLength is the CIDR prefix for the PAR (/28=16, /29=8, /30=4, /31=2, /32=1 IPs).
+	// +kubebuilder:validation:Enum=28;29;30;31;32
+	// +kubebuilder:default=32
+	// +optional
+	PrefixLength int `json:"prefixLength,omitempty"`
+
+	// ID is an existing PAR ID to adopt instead of creating a new one.
+	// When set, the operator will not create or delete the PAR, only manage
+	// the ingress routing table and routes.
+	// +optional
+	ID string `json:"id,omitempty"`
+}
+
 // GatewayInterface describes a network interface on the gateway.
 type GatewayInterface struct {
 	// Role is the role of this interface.
@@ -239,6 +265,12 @@ type VPCGatewaySpec struct {
 	// +optional
 	FloatingIP *GatewayFloatingIP `json:"floatingIP,omitempty"`
 
+	// PublicAddressRange controls VPC Public Address Range provisioning.
+	// PAR provides a block of public IPs routed through the gateway via an
+	// ingress routing table, enabling centralized ingress inspection.
+	// +optional
+	PublicAddressRange *GatewayPublicAddressRange `json:"publicAddressRange,omitempty"`
+
 	// Firewall defines firewall rules for the gateway.
 	// +optional
 	Firewall *GatewayFirewall `json:"firewall,omitempty"`
@@ -257,11 +289,33 @@ type VPCGatewayStatus struct {
 	// VNIID is the VPC VNI ID allocated for the gateway's uplink interface.
 	VNIID string `json:"vniID,omitempty"`
 
+	// AttachmentID is the BM server VLAN attachment ID that hosts the inline VNI.
+	AttachmentID string `json:"attachmentID,omitempty"`
+
+	// BMServerID is the bare metal server ID where the attachment was created.
+	BMServerID string `json:"bmServerID,omitempty"`
+
+	// MACAddress is the MAC address of the uplink VNI.
+	MACAddress string `json:"macAddress,omitempty"`
+
 	// ReservedIP is the reserved IP address on the uplink VNI.
 	ReservedIP string `json:"reservedIP,omitempty"`
 
 	// FloatingIP is the public floating IP address assigned to the gateway.
 	FloatingIP string `json:"floatingIP,omitempty"`
+
+	// PublicAddressRangeID is the VPC PAR resource ID.
+	PublicAddressRangeID string `json:"publicAddressRangeID,omitempty"`
+
+	// PublicAddressRangeCIDR is the allocated public CIDR block (e.g., "150.240.68.0/28").
+	PublicAddressRangeCIDR string `json:"publicAddressRangeCIDR,omitempty"`
+
+	// IngressRoutingTableID is the ingress routing table ID for PAR traffic.
+	IngressRoutingTableID string `json:"ingressRoutingTableID,omitempty"`
+
+	// IngressRouteIDs is the list of route IDs in the ingress routing table.
+	// +optional
+	IngressRouteIDs []string `json:"ingressRouteIDs,omitempty"`
 
 	// TransitNetwork is the name of the transit network the gateway is connected to.
 	TransitNetwork string `json:"transitNetwork,omitempty"`
@@ -295,6 +349,7 @@ type VPCGatewayStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="VNI IP",type=string,JSONPath=`.status.reservedIP`
 // +kubebuilder:printcolumn:name="FIP",type=string,JSONPath=`.status.floatingIP`
+// +kubebuilder:printcolumn:name="PAR CIDR",type=string,JSONPath=`.status.publicAddressRangeCIDR`,priority=1
 // +kubebuilder:printcolumn:name="Sync",type=string,JSONPath=`.status.syncStatus`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

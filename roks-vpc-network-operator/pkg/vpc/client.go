@@ -20,6 +20,7 @@ type Client interface {
 	SubnetReservedIPService
 	RoutingTableService
 	RouteService
+	PublicAddressRangeService
 }
 
 // BareMetalServerService handles listing VPC bare metal servers.
@@ -139,6 +140,16 @@ type ZoneService interface {
 type RoutingTableService interface {
 	ListRoutingTables(ctx context.Context, vpcID string) ([]RoutingTable, error)
 	GetRoutingTable(ctx context.Context, vpcID, routingTableID string) (*RoutingTable, error)
+	CreateRoutingTable(ctx context.Context, vpcID string, opts CreateRoutingTableOptions) (*RoutingTable, error)
+	DeleteRoutingTable(ctx context.Context, vpcID, routingTableID string) error
+}
+
+// PublicAddressRangeService handles VPC public address range CRUD.
+type PublicAddressRangeService interface {
+	CreatePublicAddressRange(ctx context.Context, opts CreatePublicAddressRangeOptions) (*PublicAddressRange, error)
+	GetPublicAddressRange(ctx context.Context, parID string) (*PublicAddressRange, error)
+	ListPublicAddressRanges(ctx context.Context, vpcID string) ([]PublicAddressRange, error)
+	DeletePublicAddressRange(ctx context.Context, parID string) error
 }
 
 // RouteService handles VPC route CRUD.
@@ -182,12 +193,13 @@ type CreateSubnetOptions struct {
 }
 
 type CreateVNIOptions struct {
-	Name             string
-	SubnetID         string
-	SecurityGroupIDs []string
-	ClusterID        string // for tagging
-	Namespace        string // for tagging
-	VMName           string // for tagging
+	Name                    string
+	SubnetID                string
+	SecurityGroupIDs        []string
+	EnableInfrastructureNat *bool  // nil defaults to true for backward compat
+	ClusterID               string // for tagging
+	Namespace               string // for tagging
+	VMName                  string // for tagging
 }
 
 type CreateVLANAttachmentOptions struct {
@@ -447,15 +459,43 @@ type AddressPrefix struct {
 	IsDefault bool
 }
 
-// ── Routing Table and Route types ──
+// ── Public Address Range types ──
 
-type RoutingTable struct {
+// PublicAddressRange represents a VPC public address range.
+type PublicAddressRange struct {
 	ID             string
 	Name           string
-	IsDefault      bool
+	CIDR           string
+	Zone           string
+	VPCID          string
 	LifecycleState string
-	RouteCount     int
 	CreatedAt      string
+}
+
+// CreatePublicAddressRangeOptions holds parameters for creating a PAR.
+type CreatePublicAddressRangeOptions struct {
+	Name         string
+	VPCID        string
+	Zone         string
+	PrefixLength int // CIDR prefix: 28, 29, 30, 31, or 32
+}
+
+// ── Routing Table and Route types ──
+
+// CreateRoutingTableOptions holds parameters for creating a routing table.
+type CreateRoutingTableOptions struct {
+	Name                 string
+	RouteInternetIngress bool // true = ingress routing table for PAR traffic
+}
+
+type RoutingTable struct {
+	ID                   string
+	Name                 string
+	IsDefault            bool
+	RouteInternetIngress bool
+	LifecycleState       string
+	RouteCount           int
+	CreatedAt            string
 }
 
 type Route struct {

@@ -116,3 +116,104 @@ func TestGenerateNftablesConfig_Nil(t *testing.T) {
 		t.Errorf("expected empty string for nil NAT, got %q", result)
 	}
 }
+
+func TestGenerateNftablesConfig_PARSNATDefault(t *testing.T) {
+	// When a PAR CIDR is provided and SNAT TranslatedAddress is empty,
+	// the first PAR IP should be used instead of the VNI IP.
+	nat := &v1alpha1.GatewayNAT{
+		SNAT: []v1alpha1.SNATRule{
+			{
+				Source:   "10.100.0.0/24",
+				Priority: 100,
+			},
+		},
+	}
+
+	result := GenerateNftablesConfig(nat, "10.240.1.99", "150.240.68.0/28")
+
+	expected := "ip saddr 10.100.0.0/24 snat to 150.240.68.0"
+	if !strings.Contains(result, expected) {
+		t.Errorf("expected PAR-based SNAT rule %q, got:\n%s", expected, result)
+	}
+}
+
+func TestGenerateNftablesConfig_PARSNATExplicitOverride(t *testing.T) {
+	// When TranslatedAddress is explicitly set, it takes precedence over PAR.
+	nat := &v1alpha1.GatewayNAT{
+		SNAT: []v1alpha1.SNATRule{
+			{
+				Source:            "10.100.0.0/24",
+				TranslatedAddress: "150.240.68.5",
+				Priority:          100,
+			},
+		},
+	}
+
+	result := GenerateNftablesConfig(nat, "10.240.1.99", "150.240.68.0/28")
+
+	expected := "ip saddr 10.100.0.0/24 snat to 150.240.68.5"
+	if !strings.Contains(result, expected) {
+		t.Errorf("expected explicit SNAT address to override PAR, got:\n%s", result)
+	}
+}
+
+func TestGenerateNftablesConfig_PAREmptyFallsBackToVNI(t *testing.T) {
+	// When PAR CIDR is empty string, fall back to VNI IP.
+	nat := &v1alpha1.GatewayNAT{
+		SNAT: []v1alpha1.SNATRule{
+			{
+				Source:   "10.100.0.0/24",
+				Priority: 100,
+			},
+		},
+	}
+
+	result := GenerateNftablesConfig(nat, "10.240.1.99", "")
+
+	expected := "ip saddr 10.100.0.0/24 snat to 10.240.1.99"
+	if !strings.Contains(result, expected) {
+		t.Errorf("expected VNI IP fallback when PAR CIDR is empty, got:\n%s", result)
+	}
+}
+
+func TestGenerateNftablesConfig_DNATWithExternalAddress(t *testing.T) {
+	// DNAT rule with explicit ExternalAddress should include ip daddr match.
+	nat := &v1alpha1.GatewayNAT{
+		DNAT: []v1alpha1.DNATRule{
+			{
+				ExternalAddress: "150.240.68.5",
+				ExternalPort:    443,
+				InternalAddress: "10.100.0.10",
+				InternalPort:    8443,
+				Protocol:        "tcp",
+				Priority:        50,
+			},
+		},
+	}
+
+	result := GenerateNftablesConfig(nat, "10.240.1.5")
+
+	expected := "ip daddr 150.240.68.5 tcp dport 443 dnat to 10.100.0.10:8443"
+	if !strings.Contains(result, expected) {
+		t.Errorf("expected DNAT with external address match %q, got:\n%s", expected, result)
+	}
+}
+
+func TestFirstIPFromCIDR(t *testing.T) {
+	tests := []struct {
+		cidr     string
+		expected string
+	}{
+		{"150.240.68.0/28", "150.240.68.0"},
+		{"10.0.0.1/32", "10.0.0.1"},
+		{"192.168.1.0/24", "192.168.1.0"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		result := firstIPFromCIDR(tt.cidr)
+		if result != tt.expected {
+			t.Errorf("firstIPFromCIDR(%q) = %q, want %q", tt.cidr, result, tt.expected)
+		}
+	}
+}

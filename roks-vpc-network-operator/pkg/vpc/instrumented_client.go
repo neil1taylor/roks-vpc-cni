@@ -215,4 +215,46 @@ func (c *InstrumentedClient) DeleteRoute(ctx context.Context, vpcID, routingTabl
 	return err
 }
 
+func (c *InstrumentedClient) CreateRoutingTable(ctx context.Context, vpcID string, opts CreateRoutingTableOptions) (*RoutingTable, error) {
+	start := time.Now()
+	result, err := c.inner.CreateRoutingTable(ctx, vpcID, opts)
+	recordCall("CreateRoutingTable", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) DeleteRoutingTable(ctx context.Context, vpcID, routingTableID string) error {
+	start := time.Now()
+	err := c.inner.DeleteRoutingTable(ctx, vpcID, routingTableID)
+	recordCall("DeleteRoutingTable", start, err)
+	return err
+}
+
+func (c *InstrumentedClient) CreatePublicAddressRange(ctx context.Context, opts CreatePublicAddressRangeOptions) (*PublicAddressRange, error) {
+	start := time.Now()
+	result, err := c.inner.CreatePublicAddressRange(ctx, opts)
+	recordCall("CreatePublicAddressRange", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) GetPublicAddressRange(ctx context.Context, parID string) (*PublicAddressRange, error) {
+	start := time.Now()
+	result, err := c.inner.GetPublicAddressRange(ctx, parID)
+	recordCall("GetPublicAddressRange", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) ListPublicAddressRanges(ctx context.Context, vpcID string) ([]PublicAddressRange, error) {
+	start := time.Now()
+	result, err := c.inner.ListPublicAddressRanges(ctx, vpcID)
+	recordCall("ListPublicAddressRanges", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) DeletePublicAddressRange(ctx context.Context, parID string) error {
+	start := time.Now()
+	err := c.inner.DeletePublicAddressRange(ctx, parID)
+	recordCall("DeletePublicAddressRange", start, err)
+	return err
+}
+
 var _ Client = (*InstrumentedClient)(nil)
