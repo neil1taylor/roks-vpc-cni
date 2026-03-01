@@ -571,7 +571,7 @@ func setVPCAnnotations(obj *unstructured.Unstructured, req model.CreateNetworkRe
 		annots["vpc.roks.ibm.com/zone"] = req.Zone
 	}
 	if req.CIDR != "" {
-		annots["vpc.roks.ibm.com/cidr"] = req.CIDR
+		annots["vpc.roks.ibm.com/cidr"] = strings.TrimSpace(req.CIDR)
 	}
 	if req.VLANID != "" {
 		annots["vpc.roks.ibm.com/vlan-id"] = req.VLANID
@@ -581,6 +581,9 @@ func setVPCAnnotations(obj *unstructured.Unstructured, req model.CreateNetworkRe
 	}
 	if req.ACLID != "" {
 		annots["vpc.roks.ibm.com/acl-id"] = req.ACLID
+	}
+	if req.PublicGatewayID != "" {
+		annots["vpc.roks.ibm.com/public-gateway-id"] = req.PublicGatewayID
 	}
 	if len(annots) > 0 {
 		obj.SetAnnotations(annots)

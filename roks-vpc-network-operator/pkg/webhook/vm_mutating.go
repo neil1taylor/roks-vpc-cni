@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -100,25 +102,32 @@ func (w *VMMutatingWebhook) Handle(ctx context.Context, req admission.Request) a
 					fmt.Errorf("network %q does not have a subnet provisioned yet", mn.networkRef))
 			}
 
-			// Create or reuse VNI
-			vni, err := w.ensureVNI(ctx, req.Namespace, req.Name, netInfo.Name, isMultiNetwork, subnetID, netAnnots)
+			// Create per-VM VLAN attachment with inline VNI
+			vlanIDStr := netAnnots[annotations.VLANID]
+			vlanID, _ := strconv.ParseInt(vlanIDStr, 10, 64)
+			vpcID := netAnnots[annotations.VPCID]
+
+			attResult, err := w.ensureVNIAttachment(ctx, req.Namespace, req.Name, netInfo.Name, isMultiNetwork, subnetID, vlanID, vpcID, netAnnots)
 			if err != nil {
-				logger.Error(err, "Failed to ensure VNI", "network", netInfo.Name)
+				logger.Error(err, "Failed to ensure VNI attachment", "network", netInfo.Name)
 				return admission.Errored(http.StatusInternalServerError,
-					fmt.Errorf("failed to create VPC network interface for %q: %w", netInfo.Name, err))
+					fmt.Errorf("failed to create VPC network attachment for %q: %w", netInfo.Name, err))
 			}
 
-			entry.VNIID = vni.ID
-			entry.MACAddress = vni.MACAddress
-			entry.ReservedIP = vni.PrimaryIP.Address
-			entry.ReservedIPID = vni.PrimaryIP.ID
+			entry.VNIID = attResult.VNI.ID
+			entry.MACAddress = attResult.VNI.MACAddress
+			entry.ReservedIP = attResult.VNI.PrimaryIP.Address
+			entry.ReservedIPID = attResult.VNI.PrimaryIP.ID
+			entry.AttachmentID = attResult.AttachmentID
+			entry.BMServerID = attResult.BMServerID
 
 			// Set MAC on the interface spec
-			setNestedField(vmObj, vni.MACAddress, interfacePaths[i], "macAddress")
+			setNestedField(vmObj, attResult.VNI.MACAddress, interfacePaths[i], "macAddress")
 
 			// Track LocalNet IPs for cloud-init
 			localNetIPs = append(localNetIPs, localNetIPEntry{
-				ip:   vni.PrimaryIP.Address,
+				ip:   attResult.VNI.PrimaryIP.Address,
+				mac:  attResult.VNI.MACAddress,
 				name: mn.ifaceName,
 			})
 
@@ -138,7 +147,7 @@ func (w *VMMutatingWebhook) Handle(ctx context.Context, req admission.Request) a
 				fip, err := w.VPC.CreateFloatingIP(ctx, vpc.CreateFloatingIPOptions{
 					Name:  network.TruncateVPCName(fmt.Sprintf("roks-%s-%s-%s-fip", w.ClusterID, req.Namespace, req.Name)),
 					Zone:  zone,
-					VNIID: vni.ID,
+					VNIID: attResult.VNI.ID,
 				})
 				if err != nil {
 					logger.Error(err, "Failed to create floating IP")
@@ -169,6 +178,12 @@ func (w *VMMutatingWebhook) Handle(ctx context.Context, req admission.Request) a
 			vmAnnots[annotations.MACAddress] = entry.MACAddress
 			vmAnnots[annotations.ReservedIP] = entry.ReservedIP
 			vmAnnots[annotations.ReservedIPID] = entry.ReservedIPID
+			if entry.AttachmentID != "" {
+				vmAnnots[annotations.AttachmentID] = entry.AttachmentID
+			}
+			if entry.BMServerID != "" {
+				vmAnnots[annotations.BMServerID] = entry.BMServerID
+			}
 			if entry.FIPID != "" {
 				vmAnnots[annotations.FIPID] = entry.FIPID
 				vmAnnots[annotations.FIPAddress] = entry.FIPAddress
@@ -205,49 +220,105 @@ func (w *VMMutatingWebhook) InjectDecoder(d admission.Decoder) error {
 	return nil
 }
 
-// ensureVNI creates or reuses a VNI for a given VM + network combination.
-func (w *VMMutatingWebhook) ensureVNI(ctx context.Context, namespace, vmName, networkName string, isMultiNetwork bool, subnetID string, netAnnots map[string]string) (*vpc.VNI, error) {
+// ensureVNIAttachment creates a per-VM VLAN attachment with inline VNI on any
+// bare metal server. The VNI is created as part of the attachment (allow_to_float: true
+// handles VNI migration to the correct node). Returns the attachment result
+// including VNI details (MAC, IP).
+func (w *VMMutatingWebhook) ensureVNIAttachment(ctx context.Context, namespace, vmName, networkName string, isMultiNetwork bool, subnetID string, vlanID int64, vpcID string, netAnnots map[string]string) (*vpc.VMAttachmentResult, error) {
 	logger := log.FromContext(ctx)
 
-	// Check for existing VNI by tag
-	existingVNIs, err := w.VPC.ListVNIsByTag(ctx, w.ClusterID, namespace, vmName)
-	if err == nil && len(existingVNIs) > 0 {
-		// For multi-network, find one matching the network name in the VNI name
-		for _, vni := range existingVNIs {
-			if isMultiNetwork {
-				if strings.HasSuffix(vni.Name, "-"+networkName) {
-					logger.Info("Reusing existing VNI", "vniID", vni.ID, "network", networkName)
-					return &vni, nil
-				}
-			} else {
-				logger.Info("Reusing existing VNI", "vniID", vni.ID)
-				return &vni, nil
-			}
-		}
+	// Pick any bare metal server for the attachment
+	bmServerID, err := w.pickBMServer(ctx, vpcID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find bare metal server: %w", err)
 	}
 
 	sgIDs := splitTrimmed(netAnnots[annotations.SecurityGroupIDs], ",")
 
 	// VNI naming: single-network keeps legacy name, multi-network appends network name.
-	// Truncate to 63 chars (VPC API limit) to avoid random-word fallback names.
 	vniName := network.TruncateVPCName(fmt.Sprintf("roks-%s-%s-%s", w.ClusterID, namespace, vmName))
 	if isMultiNetwork {
 		vniName = network.TruncateVPCName(fmt.Sprintf("roks-%s-%s-%s-%s", w.ClusterID, namespace, vmName, networkName))
 	}
 
-	vni, err := w.VPC.CreateVNI(ctx, vpc.CreateVNIOptions{
-		Name:             vniName,
+	// Attachment name includes VM name and VLAN for uniqueness
+	attName := network.TruncateVPCName(fmt.Sprintf("roks-%s-%s-%s-vlan%d", w.ClusterID, namespace, vmName, vlanID))
+	if isMultiNetwork {
+		attName = network.TruncateVPCName(fmt.Sprintf("roks-%s-%s-%s-%s-vlan%d", w.ClusterID, namespace, vmName, networkName, vlanID))
+	}
+
+	result, err := w.VPC.CreateVMAttachment(ctx, vpc.CreateVMAttachmentOptions{
+		BMServerID:       bmServerID,
+		Name:             attName,
+		VLANID:           vlanID,
 		SubnetID:         subnetID,
+		VNIName:          vniName,
 		SecurityGroupIDs: sgIDs,
-		ClusterID:        w.ClusterID,
-		Namespace:        namespace,
-		VMName:           vmName,
 	})
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("Created VNI", "vniID", vni.ID, "network", networkName)
-	return vni, nil
+
+	logger.Info("Created VM attachment with inline VNI",
+		"attachmentID", result.AttachmentID,
+		"bmServerID", result.BMServerID,
+		"vniID", result.VNI.ID,
+		"mac", result.VNI.MACAddress,
+		"ip", result.VNI.PrimaryIP.Address,
+		"network", networkName)
+
+	return result, nil
+}
+
+// pickBMServer returns the BM server ID of any bare metal node in the cluster.
+// Since allow_to_float: true is set on the attachment, it doesn't matter which
+// BM server is chosen. Tries providerID first, then falls back to VPC API
+// hostname resolution for unmanaged clusters without providerID.
+func (w *VMMutatingWebhook) pickBMServer(ctx context.Context, vpcID string) (string, error) {
+	logger := log.FromContext(ctx)
+
+	nodeList := &corev1.NodeList{}
+	if err := w.K8s.List(ctx, nodeList); err != nil {
+		return "", fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	// Try providerID first (ROKS clusters)
+	for i := range nodeList.Items {
+		node := &nodeList.Items[i]
+		bmServerID := network.ExtractBMServerID(node.Spec.ProviderID)
+		if bmServerID != "" {
+			return bmServerID, nil
+		}
+	}
+
+	// Fallback: resolve via VPC API hostname lookup (unmanaged BM clusters)
+	if vpcID != "" {
+		servers, err := w.VPC.ListBareMetalServers(ctx, vpcID)
+		if err != nil {
+			logger.Error(err, "Failed to list BM servers from VPC API for hostname resolution")
+		} else {
+			bmMap := make(map[string]string, len(servers))
+			for _, s := range servers {
+				bmMap[s.Name] = s.ID
+			}
+			for i := range nodeList.Items {
+				node := &nodeList.Items[i]
+				// Try exact match then hostname prefix match
+				if id, ok := bmMap[node.Name]; ok {
+					return id, nil
+				}
+				hostname := node.Name
+				if idx := strings.IndexByte(node.Name, '.'); idx > 0 {
+					hostname = node.Name[:idx]
+				}
+				if id, ok := bmMap[hostname]; ok {
+					return id, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no bare metal server found among %d nodes (no providerID, VPC lookup failed)", len(nodeList.Items))
 }
 
 // resolveNetworkInfo looks up a network by name, trying CUDN first, then UDN.
@@ -259,29 +330,29 @@ func (w *VMMutatingWebhook) resolveNetworkInfo(ctx context.Context, networkRef, 
 	name := extractNetworkName(networkRef)
 
 	// Try CUDN first (cluster-scoped)
+	// OVN CUDNs store topology at spec.network.topology and role at spec.network.<topology>.role
 	cudn := &unstructured.Unstructured{}
 	cudn.SetGroupVersionKind(cudnGVK)
 	if err := w.K8s.Get(ctx, client.ObjectKey{Name: name}, cudn); err == nil {
-		topology, _, _ := unstructured.NestedString(cudn.Object, "spec", "topology")
-		role, _, _ := unstructured.NestedString(cudn.Object, "spec", "role")
+		topology, role := extractCUDNTopologyAndRole(cudn)
 		annots := cudn.GetAnnotations()
 		if annots == nil {
 			annots = map[string]string{}
 		}
 		return &network.NetworkInfo{
-			Name:      name,
-			Topology:  topology,
-			Role:      role,
-			Kind:      "ClusterUserDefinedNetwork",
+			Name:     name,
+			Topology: topology,
+			Role:     role,
+			Kind:     "ClusterUserDefinedNetwork",
 		}, annots, nil
 	}
 
 	// Try UDN (namespace-scoped, in VM's namespace)
+	// OVN UDNs store topology at spec.topology and role at spec.<topology>.role
 	udn := &unstructured.Unstructured{}
 	udn.SetGroupVersionKind(udnGVK)
 	if err := w.K8s.Get(ctx, client.ObjectKey{Namespace: vmNamespace, Name: name}, udn); err == nil {
-		topology, _, _ := unstructured.NestedString(udn.Object, "spec", "topology")
-		role, _, _ := unstructured.NestedString(udn.Object, "spec", "role")
+		topology, role := extractUDNTopologyAndRole(udn)
 		annots := udn.GetAnnotations()
 		if annots == nil {
 			annots = map[string]string{}
@@ -383,6 +454,7 @@ func parseFIPNetworks(annots map[string]string) map[string]bool {
 
 type localNetIPEntry struct {
 	ip   string
+	mac  string
 	name string
 }
 
@@ -392,10 +464,12 @@ func injectCloudInitNetworkConfig(vmObj map[string]interface{}, entries []localN
 		return
 	}
 
-	// Build cloud-init v2 network config for all LocalNet interfaces
+	// Build cloud-init v2 network config for all LocalNet interfaces.
+	// Use MAC-based matching so the config works regardless of guest interface
+	// naming (eth0 vs enp1s0 etc).
 	var ethernets strings.Builder
 	for i, entry := range entries {
-		if entry.ip == "" {
+		if entry.ip == "" || entry.mac == "" {
 			continue
 		}
 		ipParts := strings.Split(entry.ip, ".")
@@ -403,9 +477,15 @@ func injectCloudInitNetworkConfig(vmObj map[string]interface{}, entries []localN
 			continue
 		}
 		gatewayIP := fmt.Sprintf("%s.%s.%s.1", ipParts[0], ipParts[1], ipParts[2])
-		ifName := fmt.Sprintf("enp%ds0", i+1)
+		// Use network name as the config ID (or fallback to index-based name)
+		ifID := entry.name
+		if ifID == "" {
+			ifID = fmt.Sprintf("localnet%d", i)
+		}
 
-		ethernets.WriteString(fmt.Sprintf("  %s:\n", ifName))
+		ethernets.WriteString(fmt.Sprintf("  %s:\n", ifID))
+		ethernets.WriteString(fmt.Sprintf("    match:\n"))
+		ethernets.WriteString(fmt.Sprintf("      macaddress: \"%s\"\n", strings.ToLower(entry.mac)))
 		ethernets.WriteString(fmt.Sprintf("    addresses:\n"))
 		ethernets.WriteString(fmt.Sprintf("      - %s/24\n", entry.ip))
 		if i == 0 {
@@ -465,8 +545,28 @@ func getNestedSlice(obj map[string]interface{}, fields ...string) ([]interface{}
 }
 
 func setNestedField(obj map[string]interface{}, value interface{}, path []string, field string) {
-	fullPath := append(path, field)
-	_ = unstructured.SetNestedField(obj, value, fullPath...)
+	// Navigate to the parent element, handling both map keys and array indices.
+	// unstructured.SetNestedField only works with maps, so we must handle
+	// []interface{} elements (e.g. spec.template.spec.domain.devices.interfaces[0])
+	// manually.
+	var current interface{} = obj
+	for _, key := range path {
+		switch c := current.(type) {
+		case map[string]interface{}:
+			current = c[key]
+		case []interface{}:
+			idx, err := strconv.Atoi(key)
+			if err != nil || idx < 0 || idx >= len(c) {
+				return
+			}
+			current = c[idx]
+		default:
+			return
+		}
+	}
+	if m, ok := current.(map[string]interface{}); ok {
+		m[field] = value
+	}
 }
 
 func setNestedSlice(obj map[string]interface{}, val []interface{}, fields ...string) {
@@ -521,4 +621,58 @@ func containsString(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeTopology converts OVN topology values ("Localnet", "Layer2", "Layer3")
+// to the operator's canonical form ("LocalNet", "Layer2", "Layer3").
+func normalizeTopology(topology string) string {
+	switch strings.ToLower(topology) {
+	case "localnet":
+		return "LocalNet"
+	case "layer2":
+		return "Layer2"
+	case "layer3":
+		return "Layer3"
+	default:
+		return topology
+	}
+}
+
+// extractCUDNTopologyAndRole reads topology and role from a CUDN's spec.
+// OVN CUDNs: spec.network.topology, spec.network.localnet.role (or spec.network.layer2.role).
+func extractCUDNTopologyAndRole(cudn *unstructured.Unstructured) (string, string) {
+	topology, _, _ := unstructured.NestedString(cudn.Object, "spec", "network", "topology")
+	topology = normalizeTopology(topology)
+
+	// Role is nested under the topology-specific key
+	var role string
+	switch strings.ToLower(topology) {
+	case "localnet":
+		role, _, _ = unstructured.NestedString(cudn.Object, "spec", "network", "localnet", "role")
+	case "layer2":
+		role, _, _ = unstructured.NestedString(cudn.Object, "spec", "network", "layer2", "role")
+	}
+	if role == "" {
+		role = "Secondary"
+	}
+	return topology, role
+}
+
+// extractUDNTopologyAndRole reads topology and role from a UDN's spec.
+// OVN UDNs: spec.topology, spec.localnet.role (or spec.layer2.role).
+func extractUDNTopologyAndRole(udn *unstructured.Unstructured) (string, string) {
+	topology, _, _ := unstructured.NestedString(udn.Object, "spec", "topology")
+	topology = normalizeTopology(topology)
+
+	var role string
+	switch strings.ToLower(topology) {
+	case "localnet":
+		role, _, _ = unstructured.NestedString(udn.Object, "spec", "localnet", "role")
+	case "layer2":
+		role, _, _ = unstructured.NestedString(udn.Object, "spec", "layer2", "role")
+	}
+	if role == "" {
+		role = "Secondary"
+	}
+	return topology, role
 }

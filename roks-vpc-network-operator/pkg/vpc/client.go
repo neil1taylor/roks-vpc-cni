@@ -44,6 +44,7 @@ type ExtendedClient interface {
 	ZoneService
 	VNILister
 	FloatingIPLister
+	PublicGatewayService
 }
 
 // VNILister lists all VNIs in the account.
@@ -54,6 +55,11 @@ type VNILister interface {
 // FloatingIPLister lists all floating IPs in the account.
 type FloatingIPLister interface {
 	ListFloatingIPs(ctx context.Context) ([]FloatingIP, error)
+}
+
+// PublicGatewayService handles listing public gateways (read-only, BFF use).
+type PublicGatewayService interface {
+	ListPublicGateways(ctx context.Context, vpcID string) ([]PublicGateway, error)
 }
 
 // SubnetService handles VPC subnet CRUD.
@@ -169,6 +175,7 @@ type CreateSubnetOptions struct {
 	Zone            string
 	CIDR            string
 	ACLID           string
+	PublicGatewayID string // optional: attach pre-existing PGW for outbound internet
 	ResourceGroupID string
 	ClusterID       string // for tagging
 	CUDNName        string // for tagging
@@ -276,6 +283,21 @@ type FloatingIP struct {
 	TargetName string
 	Status     string
 	CreatedAt  string
+}
+
+// PublicGateway represents a VPC public gateway.
+type PublicGateway struct {
+	ID                string
+	Name              string
+	Status            string
+	Zone              string
+	VPCID             string
+	VPCName           string
+	FloatingIPID      string
+	FloatingIPAddress string
+	ResourceGroupID   string
+	ResourceGroupName string
+	CreatedAt         string
 }
 
 // ── Security Group types ──

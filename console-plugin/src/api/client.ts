@@ -25,6 +25,7 @@ import {
   ReservedIP,
   NamespaceInfo,
   CreateNamespaceRequest,
+  PublicGateway,
   Gateway,
   CreateGatewayRequest,
   Router,
@@ -246,6 +247,12 @@ class VPCNetworkClient {
 
   async deleteFloatingIP(floatingIpId: string): Promise<ApiResponse<void>> {
     return this.request<void>('DELETE', `/floating-ips/${floatingIpId}`);
+  }
+
+  // Public Gateway Operations
+  async listPublicGateways(vpcId?: string): Promise<ApiResponse<PublicGateway[]>> {
+    const endpoint = vpcId ? `/public-gateways?vpcId=${vpcId}` : '/public-gateways';
+    return this.request<PublicGateway[]>('GET', endpoint);
   }
 
   // Security Group Operations

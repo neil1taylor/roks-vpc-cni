@@ -153,6 +153,10 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 		}
 	})
 
+	// Public Gateway routes (read-only, for network creation dropdown)
+	pgwHandler := NewPublicGatewayHandler(vpcClient, clusterInfo.VPCID)
+	mux.HandleFunc("/api/v1/public-gateways", wrapHandler(authMiddleware(pgwHandler.ListPublicGateways)))
+
 	// Topology routes
 	mux.HandleFunc("/api/v1/topology", wrapHandler(authMiddleware(topologyHandler.GetTopology)))
 

@@ -104,6 +104,17 @@ rules:
   - patch
   - update
   - watch
+# NMState NNCPs for OVN bridge-mappings
+- apiGroups:
+  - nmstate.io
+  resources:
+  - nodenetworkconfigurationpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
 # Service accounts for webhooks
 - apiGroups:
   - ""

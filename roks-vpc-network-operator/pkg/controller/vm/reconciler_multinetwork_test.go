@@ -217,6 +217,155 @@ func TestReconcile_DriftCheck_MultiVNI(t *testing.T) {
 	}
 }
 
+func TestReconcileDelete_VLANAttachment(t *testing.T) {
+	scheme := newTestScheme()
+
+	interfaces := []network.VMNetworkInterface{
+		{
+			NetworkName:   "localnet1",
+			Topology:      "LocalNet",
+			InterfaceName: "net1",
+			VNIID:         "vni-111",
+			FIPID:         "fip-111",
+			AttachmentID:  "att-111",
+			BMServerID:    "bm-server-1",
+		},
+		{
+			NetworkName:   "localnet2",
+			Topology:      "LocalNet",
+			InterfaceName: "net2",
+			VNIID:         "vni-222",
+			AttachmentID:  "att-222",
+			BMServerID:    "bm-server-1",
+		},
+	}
+	data, _ := json.Marshal(interfaces)
+
+	vm := &unstructured.Unstructured{}
+	vm.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "kubevirt.io",
+		Version: "v1",
+		Kind:    "VirtualMachine",
+	})
+	vm.SetName("att-vm")
+	vm.SetNamespace("default")
+	vm.SetAnnotations(map[string]string{
+		annotations.NetworkInterfaces: string(data),
+	})
+	now := metav1.Now()
+	vm.SetDeletionTimestamp(&now)
+	vm.SetFinalizers([]string{"vpc.roks.ibm.com/vm-cleanup"})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vm).
+		Build()
+
+	deletedAttachments := map[string]string{} // attachmentID -> bmServerID
+	deletedFIPs := map[string]bool{}
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.DeleteVLANAttachmentFn = func(ctx context.Context, bmServerID, attachmentID string) error {
+		deletedAttachments[attachmentID] = bmServerID
+		return nil
+	}
+	mockVPC.DeleteFloatingIPFn = func(ctx context.Context, fipID string) error {
+		deletedFIPs[fipID] = true
+		return nil
+	}
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       mockVPC,
+		ClusterID: "cluster-abc",
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "att-vm", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	// Verify both VLAN attachments were deleted
+	if bm, ok := deletedAttachments["att-111"]; !ok || bm != "bm-server-1" {
+		t.Error("expected VLAN attachment att-111 to be deleted on bm-server-1")
+	}
+	if bm, ok := deletedAttachments["att-222"]; !ok || bm != "bm-server-1" {
+		t.Error("expected VLAN attachment att-222 to be deleted on bm-server-1")
+	}
+
+	// Verify FIP was deleted
+	if !deletedFIPs["fip-111"] {
+		t.Error("expected FIP fip-111 to be deleted")
+	}
+
+	// Should NOT call DeleteVNI (VNI auto-deletes with attachment)
+	if mockVPC.CallCount("DeleteVNI") != 0 {
+		t.Errorf("expected 0 DeleteVNI calls (VNI auto-deletes), got %d", mockVPC.CallCount("DeleteVNI"))
+	}
+
+	if mockVPC.CallCount("DeleteVLANAttachment") != 2 {
+		t.Errorf("expected 2 DeleteVLANAttachment calls, got %d", mockVPC.CallCount("DeleteVLANAttachment"))
+	}
+}
+
+func TestReconcileDelete_LegacyVLANAttachment(t *testing.T) {
+	scheme := newTestScheme()
+
+	// VM with legacy annotations including attachment ID (single-network path)
+	vm := makeTestVM("legacy-att-vm", "default", map[string]string{
+		annotations.VNIID:        "vni-legacy",
+		annotations.AttachmentID: "att-legacy",
+		annotations.BMServerID:   "bm-server-1",
+		annotations.FIPID:        "fip-legacy",
+	}, true)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vm).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.DeleteVLANAttachmentFn = func(ctx context.Context, bmServerID, attachmentID string) error {
+		if bmServerID != "bm-server-1" {
+			t.Errorf("expected bm-server-1, got %q", bmServerID)
+		}
+		if attachmentID != "att-legacy" {
+			t.Errorf("expected att-legacy, got %q", attachmentID)
+		}
+		return nil
+	}
+	mockVPC.DeleteFloatingIPFn = func(ctx context.Context, fipID string) error {
+		return nil
+	}
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       mockVPC,
+		ClusterID: "cluster-abc",
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "legacy-att-vm", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	if mockVPC.CallCount("DeleteVLANAttachment") != 1 {
+		t.Errorf("expected 1 DeleteVLANAttachment call, got %d", mockVPC.CallCount("DeleteVLANAttachment"))
+	}
+	// Should NOT call DeleteVNI when attachment ID is present
+	if mockVPC.CallCount("DeleteVNI") != 0 {
+		t.Errorf("expected 0 DeleteVNI calls, got %d", mockVPC.CallCount("DeleteVNI"))
+	}
+}
+
 func TestReconcile_BackwardsCompatibility_LegacyAnnotations(t *testing.T) {
 	scheme := newTestScheme()
 

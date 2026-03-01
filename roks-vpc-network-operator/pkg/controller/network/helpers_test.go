@@ -956,3 +956,86 @@ func TestResolveNodeBMServerID_NodeNotFound(t *testing.T) {
 		t.Errorf("resolveNodeBMServerID() = %q, want empty for missing node", got)
 	}
 }
+
+// ─── EnsureVPCSubnet Public Gateway passthrough tests ───
+
+func TestEnsureVPCSubnet_PassesThroughPublicGatewayID(t *testing.T) {
+	scheme := newTestScheme()
+	annots := map[string]string{
+		annotations.VPCID:           "vpc-123",
+		annotations.Zone:            "us-south-1",
+		annotations.CIDR:            "10.240.64.0/24",
+		annotations.ACLID:           "acl-1",
+		annotations.PublicGatewayID: "pgw-abc123",
+	}
+	obj := makeTestObj("pgw-cudn", annots)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(obj).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	var capturedOpts vpc.CreateSubnetOptions
+	mockVPC.CreateSubnetFn = func(ctx context.Context, opts vpc.CreateSubnetOptions) (*vpc.Subnet, error) {
+		capturedOpts = opts
+		return &vpc.Subnet{
+			ID:     "subnet-pgw-1",
+			Name:   opts.Name,
+			CIDR:   opts.CIDR,
+			Status: "available",
+		}, nil
+	}
+
+	created, err := EnsureVPCSubnet(context.Background(), fakeClient, mockVPC, obj, "cluster-abc", "test")
+	if err != nil {
+		t.Fatalf("EnsureVPCSubnet() error = %v", err)
+	}
+	if !created {
+		t.Error("expected created=true for new subnet")
+	}
+
+	if capturedOpts.PublicGatewayID != "pgw-abc123" {
+		t.Errorf("expected PublicGatewayID='pgw-abc123', got %q", capturedOpts.PublicGatewayID)
+	}
+}
+
+func TestEnsureVPCSubnet_OmitsPublicGatewayWhenNotSet(t *testing.T) {
+	scheme := newTestScheme()
+	annots := map[string]string{
+		annotations.VPCID: "vpc-123",
+		annotations.Zone:  "us-south-1",
+		annotations.CIDR:  "10.240.64.0/24",
+		annotations.ACLID: "acl-1",
+	}
+	obj := makeTestObj("no-pgw-cudn", annots)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(obj).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	var capturedOpts vpc.CreateSubnetOptions
+	mockVPC.CreateSubnetFn = func(ctx context.Context, opts vpc.CreateSubnetOptions) (*vpc.Subnet, error) {
+		capturedOpts = opts
+		return &vpc.Subnet{
+			ID:     "subnet-no-pgw-1",
+			Name:   opts.Name,
+			CIDR:   opts.CIDR,
+			Status: "available",
+		}, nil
+	}
+
+	created, err := EnsureVPCSubnet(context.Background(), fakeClient, mockVPC, obj, "cluster-abc", "test")
+	if err != nil {
+		t.Fatalf("EnsureVPCSubnet() error = %v", err)
+	}
+	if !created {
+		t.Error("expected created=true for new subnet")
+	}
+
+	if capturedOpts.PublicGatewayID != "" {
+		t.Errorf("expected PublicGatewayID='', got %q", capturedOpts.PublicGatewayID)
+	}
+}

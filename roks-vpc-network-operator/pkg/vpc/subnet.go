@@ -28,6 +28,11 @@ func (c *vpcClient) CreateSubnet(ctx context.Context, opts CreateSubnetOptions) 
 	if opts.ResourceGroupID != "" {
 		prototype.ResourceGroup = &vpcv1.ResourceGroupIdentityByID{ID: &opts.ResourceGroupID}
 	}
+	if opts.PublicGatewayID != "" {
+		prototype.PublicGateway = &vpcv1.PublicGatewayIdentityPublicGatewayIdentityByID{
+			ID: &opts.PublicGatewayID,
+		}
+	}
 
 	result, _, err := c.service.CreateSubnetWithContext(ctx, &vpcv1.CreateSubnetOptions{
 		SubnetPrototype: prototype,

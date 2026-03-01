@@ -24,6 +24,9 @@ const (
 	// ACLID is the pre-existing network ACL ID for the VPC subnet
 	ACLID = Prefix + "acl-id"
 
+	// PublicGatewayID is the pre-existing public gateway ID for outbound internet (optional)
+	PublicGatewayID = Prefix + "public-gateway-id"
+
 	// ── CUDN Annotations (operator-managed status) ──
 
 	// SubnetID is the VPC subnet ID created by the operator
@@ -66,6 +69,12 @@ const (
 	// FIPAddress is the public floating IP address (if requested)
 	FIPAddress = Prefix + "fip-address"
 
+	// AttachmentID is the per-VM VLAN attachment ID on the bare metal server
+	AttachmentID = Prefix + "attachment-id"
+
+	// BMServerID is the bare metal server ID hosting the per-VM VLAN attachment
+	BMServerID = Prefix + "bm-server-id"
+
 	// ── Multi-network VM Annotations ──
 
 	// NetworkInterfaces is a JSON array of VMNetworkInterface entries for multi-network VMs
@@ -73,6 +82,9 @@ const (
 
 	// FIPNetworks is a comma-separated list of interface names requesting floating IPs
 	FIPNetworks = Prefix + "fip-networks"
+
+	// NNCPName is the name of the NNCP created for OVN bridge-mappings
+	NNCPName = Prefix + "nncp-name"
 )
 
 // RequiredLocalNetAnnotations lists all annotations that must be present on a

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -19,6 +20,11 @@ import (
 	operatormetrics "github.com/IBM/roks-vpc-network-operator/pkg/metrics"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
 )
+
+// isNotFoundError checks if a VPC API error indicates the resource was not found.
+func isNotFoundError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not found")
+}
 
 var vmGVK = schema.GroupVersionKind{
 	Group:   "kubevirt.io",
@@ -66,6 +72,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 // reconcileDelete handles VM deletion — cleans up VPC resources.
+// Deletes the per-VM VLAN attachment which auto-deletes the inline VNI.
 func (r *Reconciler) reconcileDelete(ctx context.Context, vm client.Object) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	annots := vm.GetAnnotations()
@@ -81,9 +88,9 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, vm client.Object) (ctr
 					continue
 				}
 
-				// Delete FIP first
+				// Delete FIP first (tolerate already-deleted)
 				if iface.FIPID != "" {
-					if err := r.VPC.DeleteFloatingIP(ctx, iface.FIPID); err != nil {
+					if err := r.VPC.DeleteFloatingIP(ctx, iface.FIPID); err != nil && !isNotFoundError(err) {
 						logger.Error(err, "Failed to delete floating IP", "fipID", iface.FIPID, "network", iface.NetworkName)
 						operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_fip", "error").Inc()
 					} else {
@@ -92,17 +99,33 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, vm client.Object) (ctr
 					}
 				}
 
-				// Delete VNI
-				if err := r.VPC.DeleteVNI(ctx, iface.VNIID); err != nil {
-					logger.Error(err, "Failed to delete VNI", "vniID", iface.VNIID, "network", iface.NetworkName)
-					operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "error").Inc()
-					return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+				// Delete VLAN attachment (auto-deletes inline VNI)
+				if iface.AttachmentID != "" && iface.BMServerID != "" {
+					if err := r.VPC.DeleteVLANAttachment(ctx, iface.BMServerID, iface.AttachmentID); err != nil && !isNotFoundError(err) {
+						logger.Error(err, "Failed to delete VLAN attachment", "attachmentID", iface.AttachmentID, "network", iface.NetworkName)
+						operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vlan_attachment", "error").Inc()
+						return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+					}
+					operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vlan_attachment", "success").Inc()
+					logger.Info("Deleted VLAN attachment (VNI auto-deleted)", "attachmentID", iface.AttachmentID, "vniID", iface.VNIID, "network", iface.NetworkName)
+				} else {
+					// Legacy fallback: delete standalone VNI directly
+					if err := r.VPC.DeleteVNI(ctx, iface.VNIID); err != nil {
+						if isNotFoundError(err) {
+							logger.Info("VNI already deleted", "vniID", iface.VNIID, "network", iface.NetworkName)
+						} else {
+							logger.Error(err, "Failed to delete VNI", "vniID", iface.VNIID, "network", iface.NetworkName)
+							operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "error").Inc()
+							return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+						}
+					} else {
+						operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "success").Inc()
+						logger.Info("Deleted VNI", "vniID", iface.VNIID, "network", iface.NetworkName)
+					}
 				}
-				operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "success").Inc()
-				logger.Info("Deleted VNI", "vniID", iface.VNIID, "network", iface.NetworkName)
 			}
 
-			// Remove finalizer after all VNIs deleted
+			// Remove finalizer after all resources deleted
 			if err := finalizers.EnsureRemoved(ctx, r.Client, vm, finalizers.VMCleanup); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -121,14 +144,31 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, vm client.Object) (ctr
 		}
 	}
 
-	if vniID := annots[annotations.VNIID]; vniID != "" {
-		if err := r.VPC.DeleteVNI(ctx, vniID); err != nil {
-			logger.Error(err, "Failed to delete VNI", "vniID", vniID)
-			operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "error").Inc()
+	// Try VLAN attachment deletion first (new path), fall back to standalone VNI
+	attachmentID := annots[annotations.AttachmentID]
+	bmServerID := annots[annotations.BMServerID]
+	if attachmentID != "" && bmServerID != "" {
+		if err := r.VPC.DeleteVLANAttachment(ctx, bmServerID, attachmentID); err != nil && !isNotFoundError(err) {
+			logger.Error(err, "Failed to delete VLAN attachment", "attachmentID", attachmentID)
+			operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vlan_attachment", "error").Inc()
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
-		operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "success").Inc()
-		logger.Info("Deleted VNI", "vniID", vniID)
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vlan_attachment", "success").Inc()
+		logger.Info("Deleted VLAN attachment (VNI auto-deleted)", "attachmentID", attachmentID, "vniID", annots[annotations.VNIID])
+	} else if vniID := annots[annotations.VNIID]; vniID != "" {
+		// Legacy: delete standalone VNI
+		if err := r.VPC.DeleteVNI(ctx, vniID); err != nil {
+			if isNotFoundError(err) {
+				logger.Info("VNI already deleted", "vniID", vniID)
+			} else {
+				logger.Error(err, "Failed to delete VNI", "vniID", vniID)
+				operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "error").Inc()
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+		} else {
+			operatormetrics.ReconcileOpsTotal.WithLabelValues("vm", "delete_vni", "success").Inc()
+			logger.Info("Deleted VNI", "vniID", vniID)
+		}
 	}
 
 	if err := finalizers.EnsureRemoved(ctx, r.Client, vm, finalizers.VMCleanup); err != nil {

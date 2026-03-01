@@ -120,6 +120,52 @@ func (h *FloatingIPHandler) CreateFloatingIP(w http.ResponseWriter, r *http.Requ
 	WriteJSON(w, http.StatusCreated, fipToResponse(*fip))
 }
 
+// UpdateFloatingIP handles PATCH /api/v1/floating-ips/{id}
+func (h *FloatingIPHandler) UpdateFloatingIP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+
+	userInfo := auth.GetUserFromContext(r.Context())
+	if userInfo == nil || userInfo.Name == "" {
+		WriteError(w, http.StatusUnauthorized, "unauthorized", "UNAUTHORIZED")
+		return
+	}
+
+	allowed, err := h.rbac.CheckAccess(r.Context(), userInfo.Name, userInfo.Groups, "update", "floatingips", "default")
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "authorization check failed", "AUTHZ_CHECK_FAILED")
+		return
+	}
+	if !allowed {
+		WriteError(w, http.StatusForbidden, "forbidden", "FORBIDDEN")
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/floating-ips/")
+	id = strings.Split(id, "/")[0]
+
+	var req model.FloatingIPUpdateRequest
+	if err := ReadJSON(r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid request body", "INVALID_REQUEST")
+		return
+	}
+
+	slog.DebugContext(r.Context(), "updating floating IP", "id", id, "target_id", req.TargetID)
+
+	fip, err := h.vpcClient.UpdateFloatingIP(r.Context(), id, vpc.UpdateFloatingIPOptions{
+		TargetID: req.TargetID,
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to update floating IP", "id", id, "error", err)
+		WriteError(w, http.StatusInternalServerError, "failed to update floating IP", "UPDATE_FLOATING_IP_FAILED")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, fipToResponse(*fip))
+}
+
 // filterFIPsByVPC keeps only floating IPs that target a VNI on a subnet in the
 // cluster's VPC. Unbound FIPs (no target) are always included since they are
 // account-level resources the user may want to bind.

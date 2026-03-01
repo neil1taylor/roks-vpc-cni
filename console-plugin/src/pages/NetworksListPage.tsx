@@ -38,11 +38,11 @@ const ipModeLabels: Record<string, string> = {
 };
 
 const NetworksListPage: React.FC = () => {
-  const { networks: fetchedNetworks, loading, error, refetch } = useNetworkDefinitions();
-  const { isROKS } = useClusterInfo();
-
   const [removedKeys, setRemovedKeys] = useState<Set<string>>(new Set());
   const [isWizardOpen, setIsWizardOpen] = useState(false);
+
+  const { networks: fetchedNetworks, loading, error, refetch } = useNetworkDefinitions(isWizardOpen);
+  const { isROKS } = useClusterInfo();
   const [nsFilter, setNsFilter] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<NetworkDefinition | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);

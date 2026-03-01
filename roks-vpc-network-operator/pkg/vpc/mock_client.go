@@ -28,12 +28,14 @@ type MockClient struct {
 
 	// VLAN Attachment operations
 	CreateVLANAttachmentFn func(ctx context.Context, opts CreateVLANAttachmentOptions) (*VLANAttachment, error)
+	CreateVMAttachmentFn   func(ctx context.Context, opts CreateVMAttachmentOptions) (*VMAttachmentResult, error)
 	DeleteVLANAttachmentFn func(ctx context.Context, bmServerID, attachmentID string) error
 	ListVLANAttachmentsFn  func(ctx context.Context, bmServerID string) ([]VLANAttachment, error)
 
 	// Floating IP operations
 	CreateFloatingIPFn func(ctx context.Context, opts CreateFloatingIPOptions) (*FloatingIP, error)
 	GetFloatingIPFn    func(ctx context.Context, fipID string) (*FloatingIP, error)
+	UpdateFloatingIPFn func(ctx context.Context, fipID string, opts UpdateFloatingIPOptions) (*FloatingIP, error)
 	DeleteFloatingIPFn func(ctx context.Context, fipID string) error
 
 	// Security Group operations
@@ -93,6 +95,9 @@ type MockClient struct {
 
 	// Bare Metal Server operations
 	ListBareMetalServersFn func(ctx context.Context, vpcID string) ([]BareMetalServerInfo, error)
+
+	// Public Gateway operations
+	ListPublicGatewaysFn func(ctx context.Context, vpcID string) ([]PublicGateway, error)
 }
 
 // NewMockClient creates a new MockClient with default error implementations.
@@ -190,6 +195,14 @@ func (m *MockClient) CreateVLANAttachment(ctx context.Context, opts CreateVLANAt
 	return nil, fmt.Errorf("CreateVLANAttachment not configured in mock")
 }
 
+func (m *MockClient) CreateVMAttachment(ctx context.Context, opts CreateVMAttachmentOptions) (*VMAttachmentResult, error) {
+	m.trackCall("CreateVMAttachment")
+	if m.CreateVMAttachmentFn != nil {
+		return m.CreateVMAttachmentFn(ctx, opts)
+	}
+	return nil, fmt.Errorf("CreateVMAttachment not configured in mock")
+}
+
 func (m *MockClient) DeleteVLANAttachment(ctx context.Context, bmServerID, attachmentID string) error {
 	m.trackCall("DeleteVLANAttachment")
 	if m.DeleteVLANAttachmentFn != nil {
@@ -221,6 +234,14 @@ func (m *MockClient) GetFloatingIP(ctx context.Context, fipID string) (*Floating
 		return m.GetFloatingIPFn(ctx, fipID)
 	}
 	return nil, fmt.Errorf("GetFloatingIP not configured in mock")
+}
+
+func (m *MockClient) UpdateFloatingIP(ctx context.Context, fipID string, opts UpdateFloatingIPOptions) (*FloatingIP, error) {
+	m.trackCall("UpdateFloatingIP")
+	if m.UpdateFloatingIPFn != nil {
+		return m.UpdateFloatingIPFn(ctx, fipID, opts)
+	}
+	return nil, fmt.Errorf("UpdateFloatingIP not configured in mock")
 }
 
 func (m *MockClient) DeleteFloatingIP(ctx context.Context, fipID string) error {
@@ -498,6 +519,15 @@ func (m *MockClient) ListBareMetalServers(ctx context.Context, vpcID string) ([]
 		return m.ListBareMetalServersFn(ctx, vpcID)
 	}
 	return nil, fmt.Errorf("ListBareMetalServers not configured in mock")
+}
+
+// Public Gateway operations
+func (m *MockClient) ListPublicGateways(ctx context.Context, vpcID string) ([]PublicGateway, error) {
+	m.trackCall("ListPublicGateways")
+	if m.ListPublicGatewaysFn != nil {
+		return m.ListPublicGatewaysFn(ctx, vpcID)
+	}
+	return nil, fmt.Errorf("ListPublicGateways not configured in mock")
 }
 
 // Compile-time interface checks

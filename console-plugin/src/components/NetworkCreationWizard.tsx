@@ -34,9 +34,9 @@ import {
   TextInputGroupMain,
   Button,
 } from '@patternfly/react-core';
-import { useNetworkTypes, useVPCs, useZones, useSecurityGroups, useNetworkACLs, useClusterInfo, useAddressPrefixes, useNetworkDefinitions } from '../api/hooks';
+import { useNetworkTypes, useVPCs, useZones, useSecurityGroups, useNetworkACLs, usePublicGateways, useClusterInfo, useAddressPrefixes } from '../api/hooks';
 import { apiClient } from '../api/client';
-import { NetworkCombination, NetworkTier, CreateNetworkRequest, NamespaceInfo } from '../api/types';
+import { NetworkCombination, NetworkTier, CreateNetworkRequest, NamespaceInfo, NetworkDefinition } from '../api/types';
 import TierBadge from './TierBadge';
 import IPModeInfoAlert from './IPModeInfoAlert';
 
@@ -92,7 +92,18 @@ const NetworkCreationWizard: React.FC<NetworkCreationWizardProps> = ({ isOpen, o
   const { zones } = useZones();
   const { securityGroups } = useSecurityGroups();
   const { networkAcls } = useNetworkACLs();
-  const { networks } = useNetworkDefinitions();
+
+  // One-time snapshot of existing networks for VLAN conflict detection (no polling)
+  const [networks, setNetworks] = useState<NetworkDefinition[] | null>(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    Promise.all([apiClient.listCUDNs(), apiClient.listUDNs()]).then(([cudnResp, udnResp]) => {
+      const all: NetworkDefinition[] = [];
+      if (cudnResp.data) all.push(...cudnResp.data);
+      if (udnResp.data) all.push(...udnResp.data);
+      setNetworks(all);
+    }).catch(() => {});
+  }, [isOpen]);
 
   // Compute VLAN IDs already in use by existing networks
   const usedVlanIds = useMemo(() => {
@@ -148,10 +159,12 @@ const NetworkCreationWizard: React.FC<NetworkCreationWizardProps> = ({ isOpen, o
   const [vlanId, setVlanId] = useState('');
   const [securityGroupIds, setSecurityGroupIds] = useState<string[]>([]);
   const [aclId, setAclId] = useState('');
+  const [publicGatewayId, setPublicGatewayId] = useState('');
   const [createPrefix, setCreatePrefix] = useState(false);
 
   // Fetch address prefixes for the selected VPC
   const { addressPrefixes, loading: prefixesLoading } = useAddressPrefixes(vpcId || undefined);
+  const { publicGateways } = usePublicGateways(vpcId || undefined);
 
   // Submit state
   const [isCreating, setIsCreating] = useState(false);
@@ -336,6 +349,9 @@ const NetworkCreationWizard: React.FC<NetworkCreationWizardProps> = ({ isOpen, o
         }
         if (aclId) {
           req.acl_id = aclId;
+        }
+        if (publicGatewayId) {
+          req.public_gateway_id = publicGatewayId;
         }
       } else if (cidr) {
         // Non-VPC network with a CIDR (e.g. Layer2 Primary needs subnets in CRD)
@@ -1097,6 +1113,24 @@ const NetworkCreationWizard: React.FC<NetworkCreationWizardProps> = ({ isOpen, o
                     ))}
                   </FormSelect>
                 </FormGroup>
+
+                <FormGroup label="Public Gateway" fieldId="pgw-select">
+                  <FormSelect
+                    id="pgw-select"
+                    value={publicGatewayId}
+                    onChange={(_e, val) => setPublicGatewayId(val)}
+                  >
+                    <FormSelectOption value="" label="None (private only)" isPlaceholder />
+                    {(publicGateways || []).map((pgw) => (
+                      <FormSelectOption key={pgw.id} value={pgw.id} label={`${pgw.name} (${pgw.zone?.name || pgw.zone})`} />
+                    ))}
+                  </FormSelect>
+                  <FormHelperText>
+                    <HelperText>
+                      <HelperTextItem>Optional: provides outbound internet for VMs without per-VM floating IPs</HelperTextItem>
+                    </HelperText>
+                  </FormHelperText>
+                </FormGroup>
               </Form>
             </div>
           </WizardStep>
@@ -1215,6 +1249,14 @@ const NetworkCreationWizard: React.FC<NetworkCreationWizardProps> = ({ isOpen, o
                             <DescriptionListTerm>Network ACL</DescriptionListTerm>
                             <DescriptionListDescription>
                               {networkAcls?.find((a) => a.id === aclId)?.name || aclId}
+                            </DescriptionListDescription>
+                          </DescriptionListGroup>
+                        )}
+                        {publicGatewayId && (
+                          <DescriptionListGroup>
+                            <DescriptionListTerm>Public Gateway</DescriptionListTerm>
+                            <DescriptionListDescription>
+                              {publicGateways?.find((p) => p.id === publicGatewayId)?.name || publicGatewayId}
                             </DescriptionListDescription>
                           </DescriptionListGroup>
                         )}

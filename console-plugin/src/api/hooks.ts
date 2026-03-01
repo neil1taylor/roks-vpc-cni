@@ -21,6 +21,7 @@ import {
   RoutingTable,
   Route,
   ReservedIP,
+  PublicGateway,
   ApiResponse,
   ApiError,
 } from './types';
@@ -227,6 +228,19 @@ export function useFloatingIP(floatingIpId: string): {
     [floatingIpId],
   );
   return { floatingIp, loading, error };
+}
+
+// Public Gateway Hooks
+export function usePublicGateways(vpcId?: string): {
+  publicGateways: PublicGateway[] | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const { data: publicGateways, loading, error } = useBFFData(
+    () => apiClient.listPublicGateways(vpcId),
+    [vpcId],
+  );
+  return { publicGateways, loading, error };
 }
 
 // Security Group Hooks

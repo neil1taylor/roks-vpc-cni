@@ -12,7 +12,7 @@ import (
 // CRITICAL settings:
 //   - auto_delete: false
 //   - allow_ip_spoofing: true
-//   - enable_infrastructure_nat: false
+//   - enable_infrastructure_nat: true (VPC handles NAT/routing for the VNI)
 func (c *vpcClient) CreateVNI(ctx context.Context, opts CreateVNIOptions) (*VNI, error) {
 	if err := c.limiter.Acquire(ctx); err != nil {
 		return nil, err
@@ -23,7 +23,7 @@ func (c *vpcClient) CreateVNI(ctx context.Context, opts CreateVNIOptions) (*VNI,
 		Name:                    &opts.Name,
 		Subnet:                  &vpcv1.SubnetIdentityByID{ID: &opts.SubnetID},
 		AllowIPSpoofing:         core.BoolPtr(true),
-		EnableInfrastructureNat: core.BoolPtr(false),
+		EnableInfrastructureNat: core.BoolPtr(true),
 		AutoDelete:              core.BoolPtr(false),
 		PrimaryIP: &vpcv1.VirtualNetworkInterfacePrimaryIPPrototype{
 			AutoDelete: core.BoolPtr(true),

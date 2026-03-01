@@ -30,9 +30,10 @@ var udnGVK = schema.GroupVersionKind{
 // LocalNet UDNs get VPC subnet + VLAN attachments; Layer2 UDNs are tracked with no VPC resources.
 type Reconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	VPC       vpc.Client
-	ClusterID string
+	Scheme     *runtime.Scheme
+	VPC        vpc.Client
+	ClusterID  string
+	NNCPConfig network.NNCPConfig
 }
 
 // Reconcile handles UDN create/update/delete events.
@@ -104,6 +105,13 @@ func (r *Reconciler) reconcileLocalNet(ctx context.Context, udn client.Object) (
 		return ctrl.Result{}, err
 	}
 
+	// Create NNCP for OVN bridge-mapping
+	physicalNetworkName := network.ExtractPhysicalNetworkName(udn.(*unstructured.Unstructured))
+	if err := network.EnsureNNCP(ctx, r.Client, udn, physicalNetworkName, r.NNCPConfig); err != nil {
+		logger.Error(err, "Failed to create NNCP for bridge-mapping")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -120,11 +128,13 @@ func (r *Reconciler) reconcileLayer2(ctx context.Context, udn client.Object) (ct
 }
 
 // reconcileDeleteLocalNet handles LocalNet UDN deletion.
+// If VNIs still exist on the subnet, the VPC subnet is left in place and the user must clean it up manually.
 func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, udn client.Object) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	annots := udn.GetAnnotations()
 
-	// Block deletion if VMs still have VNIs on this subnet
+	// Check if VNIs still exist on this subnet
+	skipVPCCleanup := false
 	if subnetID := annots[annotations.SubnetID]; subnetID != "" {
 		hasVNIs, count, err := network.SubnetHasActiveVNIs(ctx, r.VPC, subnetID)
 		if err != nil {
@@ -132,20 +142,27 @@ func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, udn client.Obj
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		if hasVNIs {
-			msg := fmt.Sprintf("Cannot delete: %d VM(s) still have VNIs on subnet %s — delete VMs first", count, subnetID)
-			logger.Error(nil, msg, "udn", udn.GetName())
+			logger.Error(nil, "VPC subnet has active VNIs — skipping VPC resource cleanup. "+
+				"Delete the VNIs and subnet manually in the IBM Cloud console.",
+				"udn", udn.GetName(), "subnetID", subnetID, "activeVNIs", count)
+			skipVPCCleanup = true
+		}
+	}
+
+	if !skipVPCCleanup {
+		if err := network.DeleteVLANAttachments(ctx, r.Client, r.VPC, udn); err != nil {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+
+		if err := network.DeleteVPCSubnet(ctx, r.VPC, udn); err != nil {
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}
 
-	if err := network.DeleteVLANAttachments(ctx, r.Client, r.VPC, udn); err != nil {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
+	// Delete NNCP (non-fatal)
+	network.DeleteNNCP(ctx, r.Client, udn)
 
-	if err := network.DeleteVPCSubnet(ctx, r.VPC, udn); err != nil {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
-
+	// Remove finalizer — let the K8s object be deleted regardless
 	if err := finalizers.EnsureRemoved(ctx, r.Client, udn, finalizers.UDNCleanup); err != nil {
 		return ctrl.Result{}, err
 	}

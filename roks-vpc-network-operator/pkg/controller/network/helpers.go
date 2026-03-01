@@ -53,7 +53,7 @@ func EnsureVPCSubnet(ctx context.Context, k8sClient client.Client, vpcClient vpc
 
 	// Validate CIDR against VPC address prefixes before calling CreateSubnet
 	vpcID := annots[annotations.VPCID]
-	cidr := annots[annotations.CIDR]
+	cidr := strings.TrimSpace(annots[annotations.CIDR])
 	if vpcID != "" && cidr != "" {
 		prefixes, err := vpcClient.ListVPCAddressPrefixes(ctx, vpcID)
 		if err != nil {
@@ -102,13 +102,14 @@ func EnsureVPCSubnet(ctx context.Context, k8sClient client.Client, vpcClient vpc
 	}
 
 	subnet, err := vpcClient.CreateSubnet(ctx, vpc.CreateSubnetOptions{
-		Name:      subnetName,
-		VPCID:     annots[annotations.VPCID],
-		Zone:      annots[annotations.Zone],
-		CIDR:      annots[annotations.CIDR],
-		ACLID:     annots[annotations.ACLID],
-		ClusterID: clusterID,
-		CUDNName:  obj.GetName(),
+		Name:            subnetName,
+		VPCID:           annots[annotations.VPCID],
+		Zone:            annots[annotations.Zone],
+		CIDR:            cidr,
+		ACLID:           annots[annotations.ACLID],
+		PublicGatewayID: annots[annotations.PublicGatewayID],
+		ClusterID:       clusterID,
+		CUDNName:        obj.GetName(),
 	})
 	if err != nil {
 		logger.Error(err, "Failed to create VPC subnet")

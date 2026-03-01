@@ -59,6 +59,42 @@ func (c *vpcClient) GetFloatingIP(ctx context.Context, fipID string) (*FloatingI
 	return fipFromSDK(result), nil
 }
 
+// UpdateFloatingIP binds or unbinds a floating IP. If opts.TargetID is non-empty
+// the FIP is attached to that VNI; if empty the FIP is detached from any target.
+func (c *vpcClient) UpdateFloatingIP(ctx context.Context, fipID string, opts UpdateFloatingIPOptions) (*FloatingIP, error) {
+	if err := c.limiter.Acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer c.limiter.Release()
+
+	patch := &vpcv1.FloatingIPPatch{}
+	if opts.TargetID != "" {
+		patch.Target = &vpcv1.FloatingIPTargetPatchVirtualNetworkInterfaceIdentityVirtualNetworkInterfaceIdentityByID{
+			ID: &opts.TargetID,
+		}
+	}
+	// When TargetID is empty, patch.Target remains nil which tells the API to unbind
+
+	patchMap, err := patch.AsPatch()
+	if err != nil {
+		return nil, fmt.Errorf("VPC API UpdateFloatingIP(%s) patch: %w", fipID, err)
+	}
+	// AsPatch omits nil fields; explicitly set target to nil for unbind
+	if opts.TargetID == "" {
+		patchMap["target"] = nil
+	}
+
+	result, _, err := c.service.UpdateFloatingIPWithContext(ctx, &vpcv1.UpdateFloatingIPOptions{
+		ID:              &fipID,
+		FloatingIPPatch: patchMap,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("VPC API UpdateFloatingIP(%s): %w", fipID, err)
+	}
+
+	return fipFromSDK(result), nil
+}
+
 // DeleteFloatingIP releases and deletes a floating IP.
 func (c *vpcClient) DeleteFloatingIP(ctx context.Context, fipID string) error {
 	if err := c.limiter.Acquire(ctx); err != nil {

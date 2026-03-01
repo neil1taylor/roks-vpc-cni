@@ -56,6 +56,13 @@ gc:
   interval: 10m
   gracePeriod: 15m
 
+# NNCP (NodeNetworkConfigurationPolicy) for OVN bridge-mappings
+nncp:
+  enabled: true
+  bridgeName: "br-localnet"
+  secondaryNIC: "bond1"
+  nodeSelector: "node-role.kubernetes.io/worker="
+
 # BFF service
 bff:
   enabled: true

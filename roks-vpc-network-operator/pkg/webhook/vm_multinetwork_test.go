@@ -159,8 +159,8 @@ func TestInjectCloudInitNetworkConfig_MultipleIPs(t *testing.T) {
 	}
 
 	entries := []localNetIPEntry{
-		{ip: "10.240.64.12", name: "net1"},
-		{ip: "10.240.65.20", name: "net2"},
+		{ip: "10.240.64.12", mac: "02:00:01:AA:BB:CC", name: "net1"},
+		{ip: "10.240.65.20", mac: "02:00:02:DD:EE:FF", name: "net2"},
 	}
 
 	injectCloudInitNetworkConfig(vmObj, entries)
@@ -187,12 +187,19 @@ func TestInjectCloudInitNetworkConfig_MultipleIPs(t *testing.T) {
 	if !containsString2(networkData, "10.240.64.1") {
 		t.Errorf("network data should contain first gateway, got: %s", networkData)
 	}
-	// Second interface should have its address but no default route
-	if !containsString2(networkData, "enp1s0") {
-		t.Errorf("expected first interface name enp1s0, got: %s", networkData)
+	// Verify MAC-based matching
+	if !containsString2(networkData, "02:00:01:aa:bb:cc") {
+		t.Errorf("expected first MAC in match block, got: %s", networkData)
 	}
-	if !containsString2(networkData, "enp2s0") {
-		t.Errorf("expected second interface name enp2s0, got: %s", networkData)
+	if !containsString2(networkData, "02:00:02:dd:ee:ff") {
+		t.Errorf("expected second MAC in match block, got: %s", networkData)
+	}
+	// Verify network names used as IDs
+	if !containsString2(networkData, "net1:") {
+		t.Errorf("expected net1 interface ID, got: %s", networkData)
+	}
+	if !containsString2(networkData, "net2:") {
+		t.Errorf("expected net2 interface ID, got: %s", networkData)
 	}
 }
 

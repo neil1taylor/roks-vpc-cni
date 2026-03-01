@@ -319,6 +319,7 @@ type CreateNetworkRequest struct {
 	VLANID           string   `json:"vlan_id,omitempty"`
 	SecurityGroupIDs string   `json:"security_group_ids,omitempty"`
 	ACLID            string   `json:"acl_id,omitempty"`
+	PublicGatewayID  string   `json:"public_gateway_id,omitempty"`
 	TargetNamespaces []string `json:"target_namespaces,omitempty"`
 }
 
@@ -358,6 +359,16 @@ type AddressPrefixResponse struct {
 	CIDR      string `json:"cidr"`
 	Zone      string `json:"zone"`
 	IsDefault bool   `json:"isDefault"`
+}
+
+// PublicGatewayResponse represents a VPC public gateway.
+type PublicGatewayResponse struct {
+	ID         string      `json:"id"`
+	Name       string      `json:"name"`
+	Status     string      `json:"status"`
+	Zone       RefResponse `json:"zone"`
+	FloatingIP *IPResponse `json:"floatingIp,omitempty"`
+	CreatedAt  string      `json:"createdAt,omitempty"`
 }
 
 // RoutingTableResponse represents a VPC routing table.

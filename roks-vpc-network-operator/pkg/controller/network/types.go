@@ -45,4 +45,8 @@ type VMNetworkInterface struct {
 	ReservedIPID string `json:"reservedIpId,omitempty"`
 	FIPID        string `json:"fipId,omitempty"`
 	FIPAddress   string `json:"fipAddress,omitempty"`
+
+	// Per-VM VLAN attachment fields
+	AttachmentID string `json:"attachmentId,omitempty"`
+	BMServerID   string `json:"bmServerId,omitempty"`
 }

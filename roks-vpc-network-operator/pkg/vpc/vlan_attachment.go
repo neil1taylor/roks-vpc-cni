@@ -3,6 +3,8 @@ package vpc
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
@@ -43,6 +45,102 @@ func (c *vpcClient) CreateVLANAttachment(ctx context.Context, opts CreateVLANAtt
 	return vlanAttachmentFromSDKIntf(result, opts.BMServerID), nil
 }
 
+// CreateVMAttachment creates a per-VM VLAN attachment with an inline VNI on a
+// bare metal server. The VNI is created as part of the attachment (one API call),
+// then GetVNI fetches MAC + primary IP with polling until ready.
+// The inline VNI has auto_delete: true so deleting the attachment cleans up the VNI.
+func (c *vpcClient) CreateVMAttachment(ctx context.Context, opts CreateVMAttachmentOptions) (*VMAttachmentResult, error) {
+	attachmentID, vniID, err := c.createVMAttachmentAPI(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Poll GetVNI until MAC and primary IP are populated (up to 30s).
+	// GetVNI handles its own rate limiting.
+	for i := 0; i < 30; i++ {
+		vni, err := c.GetVNI(ctx, vniID)
+		if err == nil && vni.MACAddress != "" && vni.PrimaryIP.Address != "" && vni.PrimaryIP.Address != "0.0.0.0" {
+			return &VMAttachmentResult{
+				AttachmentID: attachmentID,
+				BMServerID:   opts.BMServerID,
+				VNI:          *vni,
+			}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+	}
+	return nil, fmt.Errorf("VNI %s did not become ready within 30s after VM attachment creation", vniID)
+}
+
+// createVMAttachmentAPI performs the VPC API call to create the VLAN attachment
+// with inline VNI and returns the attachment ID and VNI ID.
+func (c *vpcClient) createVMAttachmentAPI(ctx context.Context, opts CreateVMAttachmentOptions) (string, string, error) {
+	if err := c.limiter.Acquire(ctx); err != nil {
+		return "", "", err
+	}
+	defer c.limiter.Release()
+
+	vlanID := opts.VLANID
+	allowToFloat := true
+	allowIPSpoofing := true
+	enableInfraNat := true
+	autoDelete := true
+
+	// Build security group identities
+	sgIdentities := make([]vpcv1.SecurityGroupIdentityIntf, 0, len(opts.SecurityGroupIDs))
+	for _, sgID := range opts.SecurityGroupIDs {
+		id := sgID
+		sgIdentities = append(sgIdentities, &vpcv1.SecurityGroupIdentityByID{ID: &id})
+	}
+
+	vniProto := &vpcv1.BareMetalServerNetworkAttachmentPrototypeVirtualNetworkInterface{
+		Name:                    &opts.VNIName,
+		Subnet:                  &vpcv1.SubnetIdentityByID{ID: &opts.SubnetID},
+		AllowIPSpoofing:         &allowIPSpoofing,
+		EnableInfrastructureNat: &enableInfraNat,
+		AutoDelete:              &autoDelete,
+	}
+	if len(sgIdentities) > 0 {
+		vniProto.SecurityGroups = sgIdentities
+	}
+
+	createOpts := &vpcv1.CreateBareMetalServerNetworkAttachmentOptions{
+		BareMetalServerID: &opts.BMServerID,
+		BareMetalServerNetworkAttachmentPrototype: &vpcv1.BareMetalServerNetworkAttachmentPrototypeBareMetalServerNetworkAttachmentByVlanPrototype{
+			Name:                    &opts.Name,
+			InterfaceType:           core.StringPtr("vlan"),
+			Vlan:                    &vlanID,
+			AllowToFloat:            &allowToFloat,
+			VirtualNetworkInterface: vniProto,
+		},
+	}
+
+	result, _, err := c.service.CreateBareMetalServerNetworkAttachmentWithContext(ctx, createOpts)
+	if err != nil {
+		return "", "", fmt.Errorf("VPC API CreateVMAttachment: %w", err)
+	}
+
+	att, ok := result.(*vpcv1.BareMetalServerNetworkAttachment)
+	if !ok || att == nil {
+		return "", "", fmt.Errorf("VPC API CreateVMAttachment: unexpected response type")
+	}
+
+	attachmentID := derefString(att.ID)
+
+	vniID := ""
+	if att.VirtualNetworkInterface != nil {
+		vniID = derefString(att.VirtualNetworkInterface.ID)
+	}
+	if vniID == "" {
+		return "", "", fmt.Errorf("VPC API CreateVMAttachment: no VNI ID in response")
+	}
+
+	return attachmentID, vniID, nil
+}
+
 // DeleteVLANAttachment removes a VLAN interface from a bare metal server.
 func (c *vpcClient) DeleteVLANAttachment(ctx context.Context, bmServerID, attachmentID string) error {
 	if err := c.limiter.Acquire(ctx); err != nil {
@@ -50,11 +148,21 @@ func (c *vpcClient) DeleteVLANAttachment(ctx context.Context, bmServerID, attach
 	}
 	defer c.limiter.Release()
 
-	_, err := c.service.DeleteBareMetalServerNetworkAttachmentWithContext(ctx, &vpcv1.DeleteBareMetalServerNetworkAttachmentOptions{
+	resp, err := c.service.DeleteBareMetalServerNetworkAttachmentWithContext(ctx, &vpcv1.DeleteBareMetalServerNetworkAttachmentOptions{
 		BareMetalServerID: &bmServerID,
 		ID:                &attachmentID,
 	})
 	if err != nil {
+		// Treat 404 as success — the attachment was already deleted out-of-band.
+		if resp != nil && resp.StatusCode == 404 {
+			return nil
+		}
+		// Also match common "not found" error text patterns from the VPC API.
+		errMsg := strings.ToLower(err.Error())
+		if strings.Contains(errMsg, "not_found") || strings.Contains(errMsg, "not found") ||
+			strings.Contains(errMsg, "failed to get the network interface") {
+			return nil
+		}
 		return fmt.Errorf("VPC API DeleteVLANAttachment(%s/%s): %w", bmServerID, attachmentID, err)
 	}
 

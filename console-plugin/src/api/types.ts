@@ -105,6 +105,16 @@ export interface FloatingIP extends ResourceMetadata {
   vpc?: VPC;
 }
 
+// Public Gateway Types
+export interface PublicGateway {
+  id: string;
+  name: string;
+  status: string;
+  zone: Zone;
+  floatingIp?: { address: string };
+  createdAt?: string;
+}
+
 // Security Group Types
 export interface SecurityGroup extends ResourceMetadata {
   displayName?: string;
@@ -306,6 +316,7 @@ export interface CreateNetworkRequest {
   vlan_id?: string;
   security_group_ids?: string;
   acl_id?: string;
+  public_gateway_id?: string;
   target_namespaces?: string[];
 }
 

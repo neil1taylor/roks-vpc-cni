@@ -30,9 +30,10 @@ var cudnGVK = schema.GroupVersionKind{
 // LocalNet CUDNs get VPC subnet + VLAN attachments; Layer2 CUDNs are tracked with no VPC resources.
 type Reconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	VPC       vpc.Client
-	ClusterID string
+	Scheme     *runtime.Scheme
+	VPC        vpc.Client
+	ClusterID  string
+	NNCPConfig network.NNCPConfig
 }
 
 // Reconcile handles CUDN create/update/delete events.
@@ -110,6 +111,13 @@ func (r *Reconciler) reconcileLocalNet(ctx context.Context, cudn client.Object) 
 		return ctrl.Result{}, err
 	}
 
+	// Create NNCP for OVN bridge-mapping
+	physicalNetworkName := network.ExtractPhysicalNetworkName(cudn.(*unstructured.Unstructured))
+	if err := network.EnsureNNCP(ctx, r.Client, cudn, physicalNetworkName, r.NNCPConfig); err != nil {
+		logger.Error(err, "Failed to create NNCP for bridge-mapping")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -126,11 +134,14 @@ func (r *Reconciler) reconcileLayer2(ctx context.Context, cudn client.Object) (c
 }
 
 // reconcileDeleteLocalNet handles LocalNet CUDN deletion: delete VLAN attachments, delete VPC subnet, remove finalizer.
+// If VNIs still exist on the subnet (orphaned or from active VMs), the VPC subnet is left in place
+// and the user must clean it up manually. The CUDN K8s object is still deleted.
 func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, cudn client.Object) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	annots := cudn.GetAnnotations()
 
-	// Block deletion if VMs still have VNIs on this subnet
+	// Check if VNIs still exist on this subnet
+	skipVPCCleanup := false
 	if subnetID := annots[annotations.SubnetID]; subnetID != "" {
 		hasVNIs, count, err := network.SubnetHasActiveVNIs(ctx, r.VPC, subnetID)
 		if err != nil {
@@ -138,23 +149,29 @@ func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, cudn client.Ob
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		if hasVNIs {
-			msg := fmt.Sprintf("Cannot delete: %d VM(s) still have VNIs on subnet %s — delete VMs first", count, subnetID)
-			logger.Error(nil, msg, "cudn", cudn.GetName())
+			logger.Error(nil, "VPC subnet has active VNIs — skipping VPC resource cleanup. "+
+				"Delete the VNIs and subnet manually in the IBM Cloud console.",
+				"cudn", cudn.GetName(), "subnetID", subnetID, "activeVNIs", count)
+			skipVPCCleanup = true
+		}
+	}
+
+	if !skipVPCCleanup {
+		// Delete VLAN attachments
+		if err := network.DeleteVLANAttachments(ctx, r.Client, r.VPC, cudn); err != nil {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+
+		// Delete VPC subnet
+		if err := network.DeleteVPCSubnet(ctx, r.VPC, cudn); err != nil {
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}
 
-	// Delete VLAN attachments
-	if err := network.DeleteVLANAttachments(ctx, r.Client, r.VPC, cudn); err != nil {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
+	// Delete NNCP (non-fatal)
+	network.DeleteNNCP(ctx, r.Client, cudn)
 
-	// Delete VPC subnet
-	if err := network.DeleteVPCSubnet(ctx, r.VPC, cudn); err != nil {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
-
-	// Remove finalizer
+	// Remove finalizer — let the K8s object be deleted regardless
 	if err := finalizers.EnsureRemoved(ctx, r.Client, cudn, finalizers.CUDNCleanup); err != nil {
 		return ctrl.Result{}, err
 	}
