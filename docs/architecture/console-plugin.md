@@ -38,39 +38,57 @@ oc patch consoles.operator.openshift.io cluster \
 
 ## Navigation Structure
 
-The plugin adds 8 navigation entries under the **Networking** section:
+The plugin adds a single sidebar entry — **IBM VPC Networking** — which opens a tabbed interface with 13 tabs:
 
-| Navigation Entry | Path | Component | Icon |
-|-----------------|------|-----------|------|
-| VPC Dashboard | `/vpc-networking` | `VPCDashboard` | CloudIcon |
-| VPC Subnets | `/vpc-networking/subnets` | `SubnetsList` | NetworkIcon |
-| Virtual Network Interfaces | `/vpc-networking/vnis` | `VNIsList` | NetworkIcon |
-| VLAN Attachments | `/vpc-networking/vlan-attachments` | `VLANAttachments` | NetworkIcon |
-| Floating IPs | `/vpc-networking/floating-ips` | `FloatingIPs` | IpIcon |
-| Security Groups | `/vpc-networking/security-groups` | `SecurityGroupsList` | ShieldIcon |
-| Network ACLs | `/vpc-networking/network-acls` | `NetworkACLsList` | ShieldIcon |
-| Network Topology | `/vpc-networking/topology` | `Topology` | TopologyIcon |
+| Tab | Path | Component |
+|-----|------|-----------|
+| Dashboard | `/vpc-networking` | `VPCDashboard` |
+| Networks | `/vpc-networking/networks` | `NetworksListPage` |
+| Subnets | `/vpc-networking/subnets` | `SubnetsListPage` |
+| VNIs | `/vpc-networking/vnis` | `VNIsListPage` |
+| VLAN Attachments | `/vpc-networking/vlan-attachments` | `VLANAttachmentsListPage` |
+| Floating IPs | `/vpc-networking/floating-ips` | `FloatingIPsListPage` |
+| PARs | `/vpc-networking/pars` | `PARsListPage` |
+| Security Groups | `/vpc-networking/security-groups` | `SecurityGroupsListPage` |
+| Network ACLs | `/vpc-networking/network-acls` | `NetworkACLsListPage` |
+| Routes | `/vpc-networking/routes` | `RoutesListPage` |
+| Gateways | `/vpc-networking/gateways` | `GatewaysListPage` |
+| Routers | `/vpc-networking/routers` | `RoutersListPage` |
+| Topology | `/vpc-networking/topology` | `TopologyPage` |
 
 ---
 
 ## Page Routes
 
-The plugin registers 12 page routes, including detail pages for resources that support drill-down:
+The plugin registers 26 page routes, including list, detail, and create pages:
 
 | Route | Component | Description |
 |-------|-----------|-------------|
 | `/vpc-networking` | `VPCDashboard` | Overview dashboard |
-| `/vpc-networking/subnets` | `SubnetsList` | Subnet list |
-| `/vpc-networking/subnets/:name` | `SubnetDetail` | Subnet detail |
-| `/vpc-networking/vnis` | `VNIsList` | VNI list |
-| `/vpc-networking/vnis/:name` | `VNIDetail` | VNI detail |
-| `/vpc-networking/vlan-attachments` | `VLANAttachments` | VLAN attachment list |
-| `/vpc-networking/floating-ips` | `FloatingIPs` | Floating IP list |
-| `/vpc-networking/security-groups` | `SecurityGroupsList` | Security group list |
-| `/vpc-networking/security-groups/:name` | `SecurityGroupDetail` | SG detail with rules |
-| `/vpc-networking/network-acls` | `NetworkACLsList` | ACL list |
-| `/vpc-networking/network-acls/:name` | `NetworkACLDetail` | ACL detail with rules |
-| `/vpc-networking/topology` | `Topology` | Network topology graph |
+| `/vpc-networking/networks` | `NetworksListPage` | Network definitions list |
+| `/vpc-networking/networks/:name` | `NetworkDetailPage` | Network detail |
+| `/vpc-networking/subnets` | `SubnetsListPage` | Subnet list |
+| `/vpc-networking/subnets/:id` | `SubnetDetailPage` | Subnet detail |
+| `/vpc-networking/subnets/:id/reserved-ips` | `ReservedIPsPage` | Reserved IPs for a subnet |
+| `/vpc-networking/vnis` | `VNIsListPage` | VNI list |
+| `/vpc-networking/vnis/:id` | `VNIDetailPage` | VNI detail |
+| `/vpc-networking/vlan-attachments` | `VLANAttachmentsListPage` | VLAN attachment list |
+| `/vpc-networking/floating-ips` | `FloatingIPsListPage` | Floating IP list |
+| `/vpc-networking/floating-ips/:id` | `FloatingIPDetailPage` | Floating IP detail |
+| `/vpc-networking/pars` | `PARsListPage` | Public Address Range list |
+| `/vpc-networking/pars/:id` | `PARDetailPage` | PAR detail |
+| `/vpc-networking/security-groups` | `SecurityGroupsListPage` | Security group list |
+| `/vpc-networking/security-groups/:id` | `SecurityGroupDetailPage` | SG detail with rules |
+| `/vpc-networking/network-acls` | `NetworkACLsListPage` | ACL list |
+| `/vpc-networking/network-acls/:id` | `NetworkACLDetailPage` | ACL detail with rules |
+| `/vpc-networking/routes` | `RoutesListPage` | Routing tables and routes |
+| `/vpc-networking/topology` | `TopologyPage` | Network topology graph |
+| `/vpc-networking/gateways` | `GatewaysListPage` | Gateway list with search |
+| `/vpc-networking/gateways/create` | `GatewayCreatePage` | Gateway creation form |
+| `/vpc-networking/gateways/:name` | `GatewayDetailPage` | Gateway detail (4 sections) |
+| `/vpc-networking/routers` | `RoutersListPage` | Router list with search |
+| `/vpc-networking/routers/create` | `RouterCreatePage` | Router creation form |
+| `/vpc-networking/routers/:name` | `RouterDetailPage` | Router detail + networks |
 
 ---
 

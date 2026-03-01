@@ -1,6 +1,34 @@
 # Managing Resources
 
-This page describes the console plugin pages for viewing and managing VPC networking resources: Subnets, Virtual Network Interfaces, VLAN Attachments, and Floating IPs.
+This page describes the console plugin pages for viewing and managing VPC networking resources: Networks, Subnets, Virtual Network Interfaces, VLAN Attachments, Floating IPs, Public Address Ranges, and Routes.
+
+For Gateways and Routers, see [Gateways & Routers](gateways-routers.md).
+
+---
+
+## Networks
+
+**Path:** `/vpc-networking/networks`
+
+The Networks page displays all overlay network definitions — both ClusterUserDefinedNetworks (CUDNs) and UserDefinedNetworks (UDNs).
+
+### List View
+
+| Column | Description |
+|--------|-------------|
+| Name | Network definition name |
+| Kind | CUDN or UDN |
+| Topology | LocalNet or Layer2 |
+| Zone | VPC availability zone (LocalNet only) |
+| CIDR | Assigned CIDR block |
+| VLAN ID | VLAN tag (LocalNet only) |
+| Subnet Status | VPC subnet sync state |
+
+### Detail View
+
+**Path:** `/vpc-networking/networks/:name`
+
+Shows the network definition details including topology, role, CIDR, VLAN ID, subnet mapping, and associated VLAN attachments.
 
 ---
 
@@ -30,6 +58,7 @@ Shows the full subnet details:
 - **Spec** — VPC ID, zone, CIDR, ACL ID, security group IDs, VLAN ID
 - **Status** — Subnet ID, VPC status, available IPv4 count, last sync time, conditions
 - **Associated Resources** — VNIs on this subnet, VLAN attachments using this subnet
+- **Reserved IPs** — Table of reserved IPs in the subnet (`/vpc-networking/subnets/:id/reserved-ips`)
 - **Events** — Kubernetes events related to this subnet
 
 ---
@@ -104,10 +133,64 @@ Shows:
 | Sync Status | Synced, Pending, or Failed |
 | Age | Time since creation |
 
+### Detail View
+
+**Path:** `/vpc-networking/floating-ips/:id`
+
+Shows floating IP details including the public address, target VNI, zone, and sync conditions.
+
 ### Actions
 
 - **Create** — Create a new floating IP (specify zone and target VNI)
 - **Delete** — Release the floating IP
+
+---
+
+## Public Address Ranges
+
+**Path:** `/vpc-networking/pars`
+
+Public Address Ranges (PARs) provide blocks of contiguous public IPs that can be routed through a VPCGateway.
+
+### List View
+
+| Column | Description |
+|--------|-------------|
+| Name | PAR name |
+| CIDR | Public IP block |
+| Zone | Availability zone |
+| Gateway | Attached VPCGateway (if any) |
+| Status | Provisioned, Pending |
+
+### Detail View
+
+**Path:** `/vpc-networking/pars/:id`
+
+Shows the PAR details including CIDR, zone, prefix length, and attached gateway.
+
+### Actions
+
+- **Create** — Provision a new PAR (specify zone and prefix length)
+- **Adopt** — Import an existing VPC PAR into operator management
+- **Delete** — Release the PAR
+
+---
+
+## Routes
+
+**Path:** `/vpc-networking/routes`
+
+Displays VPC routing tables and their routes, grouped by routing table.
+
+### List View
+
+| Column | Description |
+|--------|-------------|
+| Routing Table | Name of the VPC routing table |
+| Destination | Route destination CIDR |
+| Next Hop | Next hop IP or action |
+| Zone | Availability zone |
+| Priority | Route priority |
 
 ---
 
@@ -132,6 +215,7 @@ Resource lists auto-refresh periodically. Click the refresh button for immediate
 
 ## Next Steps
 
+- [Gateways & Routers](gateways-routers.md) — VPCGateway and VPCRouter management
 - [Security](security.md) — Managing security groups and ACLs
 - [Topology](topology.md) — Visual resource map
 - [Dashboard](dashboard.md) — Overview dashboard

@@ -18,6 +18,10 @@ The dashboard displays summary cards for each resource type:
 | **Floating IPs** | Total floating IPs with allocated addresses |
 | **Security Groups** | Total security groups in the VPC |
 | **Network ACLs** | Total network ACLs in the VPC |
+| **CUDNs** | Total ClusterUserDefinedNetworks (LocalNet and Layer2) |
+| **UDNs** | Total UserDefinedNetworks |
+| **Gateways** | Total VPCGateway resources with sync status |
+| **Routers** | Total VPCRouter resources with sync status |
 
 ### Status Indicators
 
@@ -54,5 +58,6 @@ The dashboard is primarily a monitoring tool. Use it to:
 ## Next Steps
 
 - [Managing Resources](managing-resources.md) — Detailed resource pages
+- [Gateways & Routers](gateways-routers.md) — Gateway and router management
 - [Security](security.md) — Security group and ACL management
 - [Topology](topology.md) — Visual network map

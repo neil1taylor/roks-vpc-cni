@@ -1,6 +1,6 @@
 # Console Plugin Overview
 
-The VPC Network Operator includes an OpenShift Console dynamic plugin that adds VPC networking pages to the OpenShift web console. These pages provide visibility into VPC resources associated with your cluster and allow administrators to manage security groups and network ACLs.
+The VPC Network Operator includes an OpenShift Console dynamic plugin that adds VPC networking pages to the OpenShift web console. These pages provide visibility into VPC resources associated with your cluster, manage overlay network definitions, configure gateways and routers for external connectivity, and control security groups and network ACLs.
 
 ---
 
@@ -26,18 +26,23 @@ oc get pods -n roks-vpc-network-operator -l app=vpc-network-console-plugin
 
 ## Navigation
 
-The plugin adds the following pages under **Networking**:
+The plugin adds a single sidebar entry — **IBM VPC Networking** — which opens a tabbed interface with 13 pages:
 
-| Page | Path | Description |
-|------|------|-------------|
-| [VPC Dashboard](dashboard.md) | `/vpc-networking` | At-a-glance overview of all VPC resources |
-| [VPC Subnets](managing-resources.md#subnets) | `/vpc-networking/subnets` | List and detail view of VPC subnets |
-| [Virtual Network Interfaces](managing-resources.md#virtual-network-interfaces) | `/vpc-networking/vnis` | List and detail view of VNIs |
+| Tab | Path | Description |
+|-----|------|-------------|
+| [Dashboard](dashboard.md) | `/vpc-networking` | At-a-glance overview of all VPC resources |
+| [Networks](managing-resources.md#networks) | `/vpc-networking/networks` | LocalNet and Layer2 network definitions (CUDNs and UDNs) |
+| [Subnets](managing-resources.md#subnets) | `/vpc-networking/subnets` | VPC subnets managed by the operator |
+| [VNIs](managing-resources.md#virtual-network-interfaces) | `/vpc-networking/vnis` | Virtual Network Interfaces attached to VMs |
 | [VLAN Attachments](managing-resources.md#vlan-attachments) | `/vpc-networking/vlan-attachments` | VLAN attachments on bare metal nodes |
 | [Floating IPs](managing-resources.md#floating-ips) | `/vpc-networking/floating-ips` | Public floating IP addresses |
+| [PARs](managing-resources.md#public-address-ranges) | `/vpc-networking/pars` | Public Address Ranges for contiguous IP blocks |
 | [Security Groups](security.md#security-groups) | `/vpc-networking/security-groups` | Security group management with rule editing |
 | [Network ACLs](security.md#network-acls) | `/vpc-networking/network-acls` | Network ACL management with rule editing |
-| [Network Topology](topology.md) | `/vpc-networking/topology` | Visual graph of VPC resource relationships |
+| [Routes](managing-resources.md#routes) | `/vpc-networking/routes` | VPC routing tables and routes |
+| [Gateways](gateways-routers.md#gateways) | `/vpc-networking/gateways` | VPCGateway resources for VPC uplink |
+| [Routers](gateways-routers.md#routers) | `/vpc-networking/routers` | VPCRouter resources for network-to-gateway routing |
+| [Topology](topology.md) | `/vpc-networking/topology` | Visual graph of VPC resource relationships |
 
 ---
 
@@ -65,6 +70,7 @@ See [RBAC](../admin-guide/rbac.md) for configuring access control.
 ## Next Steps
 
 - [Dashboard](dashboard.md) — VPC Dashboard overview
-- [Managing Resources](managing-resources.md) — Subnets, VNIs, VLAN Attachments, Floating IPs
+- [Managing Resources](managing-resources.md) — Subnets, VNIs, VLAN Attachments, Floating IPs, PARs, Routes, Networks
+- [Gateways & Routers](gateways-routers.md) — VPCGateway and VPCRouter management
 - [Security](security.md) — Security Groups and Network ACLs
 - [Topology](topology.md) — Network topology viewer
