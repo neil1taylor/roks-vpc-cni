@@ -20,6 +20,14 @@ const (
 	// UDNCleanup is added to UserDefinedNetworks to ensure VPC subnet and
 	// VLAN attachments are deleted before the UDN object is removed.
 	UDNCleanup = "vpc.roks.ibm.com/udn-cleanup"
+
+	// GatewayCleanup is added to VPCGateways to ensure VNI, VPC routes,
+	// floating IP, transit CUDN, and router pod are cleaned up on deletion.
+	GatewayCleanup = "vpc.roks.ibm.com/gateway-cleanup"
+
+	// RouterCleanup is added to VPCRouters to ensure router pod and
+	// ConfigMaps are cleaned up on deletion.
+	RouterCleanup = "vpc.roks.ibm.com/router-cleanup"
 )
 
 // Add adds the given finalizer to the object if not already present.
