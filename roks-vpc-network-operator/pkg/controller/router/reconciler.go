@@ -183,6 +183,29 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		LastTransitionTime: now,
 	})
 
+	// IDS/IPS status
+	if router.Spec.IDS != nil && router.Spec.IDS.Enabled {
+		router.Status.IDSMode = router.Spec.IDS.Mode
+		idsCondStatus := metav1.ConditionTrue
+		idsCondReason := "SuricataConfigured"
+		idsCondMessage := fmt.Sprintf("Suricata %s sidecar is configured", strings.ToUpper(router.Spec.IDS.Mode))
+		if !podReady {
+			idsCondStatus = metav1.ConditionFalse
+			idsCondReason = "PodNotReady"
+			idsCondMessage = fmt.Sprintf("Suricata %s sidecar waiting for pod", strings.ToUpper(router.Spec.IDS.Mode))
+		}
+		meta.SetStatusCondition(&router.Status.Conditions, metav1.Condition{
+			Type:               "IDSReady",
+			Status:             idsCondStatus,
+			Reason:             idsCondReason,
+			Message:            idsCondMessage,
+			LastTransitionTime: now,
+		})
+	} else {
+		router.Status.IDSMode = ""
+		meta.RemoveStatusCondition(&router.Status.Conditions, "IDSReady")
+	}
+
 	if err := r.Status().Update(ctx, router); err != nil {
 		logger.Error(err, "Failed to update VPCRouter status")
 		return ctrl.Result{}, err
@@ -247,8 +270,9 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 	return false, nil // not running yet — just created
 }
 
-// podNeedsRecreation checks if the existing pod's Multus annotations differ
-// from what would be generated for the current router/gateway spec.
+// podNeedsRecreation checks if the existing pod's spec differs from what
+// would be generated for the current router/gateway spec. Compares Multus
+// annotations, container count, images, and env vars for all containers.
 func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) bool {
 	desired := buildRouterPod(router, gw)
 
@@ -259,20 +283,23 @@ func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.V
 		return true
 	}
 
-	// Compare image
-	if len(existing.Spec.Containers) > 0 && len(desired.Spec.Containers) > 0 {
-		if existing.Spec.Containers[0].Image != desired.Spec.Containers[0].Image {
-			return true
-		}
+	// Compare container count (sidecar added/removed)
+	if len(existing.Spec.Containers) != len(desired.Spec.Containers) {
+		return true
 	}
 
-	// Compare env vars (NAT config, DHCP, firewall may have changed)
-	existingEnv := envToMap(existing.Spec.Containers[0].Env)
-	desiredEnv := envToMap(desired.Spec.Containers[0].Env)
-	existingJSON, _ := json.Marshal(existingEnv)
-	desiredJSON, _ := json.Marshal(desiredEnv)
-	if string(existingJSON) != string(desiredJSON) {
-		return true
+	// Compare each container's image and env vars
+	for i := range desired.Spec.Containers {
+		if existing.Spec.Containers[i].Image != desired.Spec.Containers[i].Image {
+			return true
+		}
+		existingEnv := envToMap(existing.Spec.Containers[i].Env)
+		desiredEnv := envToMap(desired.Spec.Containers[i].Env)
+		existingJSON, _ := json.Marshal(existingEnv)
+		desiredJSON, _ := json.Marshal(desiredEnv)
+		if string(existingJSON) != string(desiredJSON) {
+			return true
+		}
 	}
 
 	return false

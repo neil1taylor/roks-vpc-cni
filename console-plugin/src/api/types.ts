@@ -509,6 +509,7 @@ export interface Router {
   networks: RouterNetwork[];
   advertisedRoutes?: string[];
   functions?: string[];
+  idsMode?: string;
   syncStatus: string;
   createdAt?: string;
 }

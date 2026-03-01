@@ -130,6 +130,18 @@ const RouterDetailPage: React.FC = () => {
                     </DescriptionListDescription>
                   </DescriptionListGroup>
                   <DescriptionListGroup>
+                    <DescriptionListTerm>IDS/IPS</DescriptionListTerm>
+                    <DescriptionListDescription>
+                      {router.idsMode ? (
+                        <Label isCompact color={router.idsMode === 'ips' ? 'orange' : 'blue'}>
+                          {router.idsMode.toUpperCase()}
+                        </Label>
+                      ) : (
+                        '-'
+                      )}
+                    </DescriptionListDescription>
+                  </DescriptionListGroup>
+                  <DescriptionListGroup>
                     <DescriptionListTerm>Functions</DescriptionListTerm>
                     <DescriptionListDescription>
                       {router.functions && router.functions.length > 0

@@ -123,7 +123,73 @@ func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) *corev1
 		},
 	}
 
+	// Append Suricata sidecar container and volumes when IDS/IPS is enabled
+	if router.Spec.IDS != nil && router.Spec.IDS.Enabled {
+		pod.Spec.Containers = append(pod.Spec.Containers, buildSuricataContainer(router))
+		pod.Spec.Volumes = append(pod.Spec.Volumes,
+			corev1.Volume{
+				Name:         "suricata-config",
+				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+			},
+			corev1.Volume{
+				Name:         "suricata-rules",
+				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+			},
+			corev1.Volume{
+				Name:         "suricata-log",
+				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+			},
+		)
+	}
+
 	return pod
+}
+
+// buildSuricataContainer constructs the Suricata sidecar container spec.
+func buildSuricataContainer(router *v1alpha1.VPCRouter) corev1.Container {
+	ids := router.Spec.IDS
+	image := resolveSuricataImage(router)
+	startScript := generateSuricataStartScript(ids)
+	suricataYAML := generateSuricataConfig(ids, router.Spec.Networks)
+
+	envVars := []corev1.EnvVar{
+		{Name: "SURICATA_MODE", Value: ids.Mode},
+		{Name: "SURICATA_YAML", Value: suricataYAML},
+	}
+	if ids.CustomRules != "" {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "CUSTOM_RULES",
+			Value: ids.CustomRules,
+		})
+	}
+
+	isTrue := true
+	return corev1.Container{
+		Name:    "suricata",
+		Image:   image,
+		Command: []string{"/bin/sh", "-c", startScript},
+		Env:     envVars,
+		SecurityContext: &corev1.SecurityContext{
+			Privileged: &isTrue,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN", "NET_RAW", "SYS_NICE"},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "suricata-config", MountPath: "/etc/suricata"},
+			{Name: "suricata-rules", MountPath: "/var/lib/suricata/rules"},
+			{Name: "suricata-log", MountPath: "/var/log/suricata"},
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				Exec: &corev1.ExecAction{
+					Command: []string{"test", "-f", "/var/run/suricata.pid"},
+				},
+			},
+			InitialDelaySeconds: 60,
+			PeriodSeconds:       30,
+		},
+	}
 }
 
 // buildMultusAttachments creates the Multus network-attachment list.
@@ -212,6 +278,12 @@ func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) string
 	sb.WriteString("  echo \"$FIREWALL_CONFIG\" | nft -f -\n")
 	sb.WriteString("fi\n\n")
 
+	// Apply IPS NFQUEUE rules if configured (Suricata inline mode)
+	sb.WriteString("# Apply IPS NFQUEUE rules (Suricata inline inspection)\n")
+	sb.WriteString("if [ -n \"$IPS_NFQUEUE_CONFIG\" ]; then\n")
+	sb.WriteString("  echo \"$IPS_NFQUEUE_CONFIG\" | nft -f -\n")
+	sb.WriteString("fi\n\n")
+
 	// Optional DHCP server
 	sb.WriteString("# Optional: start dnsmasq for DHCP\n")
 	sb.WriteString("if [ \"$DHCP_ENABLED\" = \"true\" ]; then\n")
@@ -262,6 +334,15 @@ func buildEnvVars(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) []corev1.
 		Name:  "DHCP_ENABLED",
 		Value: dhcpEnabled,
 	})
+
+	// IPS NFQUEUE nftables rules — applied by the router init container
+	nfqConfig := generateNFQueueRules(router.Spec.IDS, router.Spec.Networks)
+	if nfqConfig != "" {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "IPS_NFQUEUE_CONFIG",
+			Value: nfqConfig,
+		})
+	}
 
 	return envVars
 }

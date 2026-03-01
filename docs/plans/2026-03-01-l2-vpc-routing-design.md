@@ -558,6 +558,46 @@ DELETE /api/v1/routers/:name         — delete VPCRouter
 - Status conditions and events on both CRDs
 - Prometheus metrics for gateway/router health
 
+## Suricata IDS/IPS Sidecar
+
+The VPCRouter supports inline intrusion detection (IDS) and prevention (IPS) via a Suricata sidecar container. This is configured through `spec.ids` on the VPCRouter CRD.
+
+### Architecture
+
+- **Sidecar container**: Suricata runs as a second container (`suricata`) in the router pod, sharing the network namespace.
+- **IDS mode** (`mode: ids`): Passive monitoring using AF_PACKET. Suricata captures copies of packets without affecting traffic flow.
+- **IPS mode** (`mode: ips`): Inline blocking using NFQUEUE. The router init script installs nftables rules (`table ip suricata`, priority -10) that redirect forwarded traffic through Suricata's verdict queue before the stateful firewall chain.
+- **Fail-open**: The NFQUEUE `bypass` flag ensures traffic continues flowing if Suricata crashes.
+- **ET Open rules**: Updated at startup via `suricata-update`. Custom rules can be provided via `spec.ids.customRules`.
+- **EVE JSON logging**: Alert and flow logs are written to `/var/log/suricata/eve.json` and streamed to stdout via `tail -F`. On ROKS clusters, this flows to IBM Cloud Logging automatically via the existing logging agent.
+- **Optional syslog**: `spec.ids.syslogTarget` enables a second EVE output via syslog.
+
+### NFQUEUE Chain Design (IPS mode)
+
+```
+Packet flow through nftables:
+  1. table ip suricata, chain forward_ips (priority -10) → NFQUEUE → Suricata verdict
+  2. table ip filter, chain forward (priority 0) → stateful firewall
+  3. table ip nat, chain postrouting (priority 100) → SNAT
+```
+
+### CRD Fields
+
+```yaml
+spec:
+  ids:
+    enabled: true
+    mode: ids|ips          # default: ids
+    interfaces: all|uplink|workload  # default: all
+    customRules: |         # optional Suricata rules
+      alert tcp any any -> any 80 (msg:"test"; sid:1000001; rev:1;)
+    syslogTarget: "syslog.example.com:514"  # optional
+    image: "docker.io/jasonish/suricata:7.0"  # optional override
+    nfqueueNum: 0          # NFQUEUE number for IPS mode
+```
+
+`status.idsMode` reports the active mode ("ids", "ips", or empty).
+
 ## Out of Scope (Future Phases)
 
 - WireGuard tunnelling sidecar (cross-cluster connectivity)
@@ -568,5 +608,4 @@ DELETE /api/v1/routers/:name         — delete VPCRouter
 - VRF-lite multi-tenancy (isolated routing tables per tenant)
 - OVN DHCP gateway advertisement (alternative to dnsmasq)
 - Router auto-scaling based on throughput
-- IDS/IPS on gateways
 - L7 load balancing on routers

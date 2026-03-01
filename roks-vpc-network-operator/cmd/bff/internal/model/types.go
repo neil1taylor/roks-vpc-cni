@@ -457,6 +457,7 @@ type RouterResponse struct {
 	Networks         []RouterNetworkResp `json:"networks"`
 	AdvertisedRoutes []string            `json:"advertisedRoutes,omitempty"`
 	PodIP            string              `json:"podIP,omitempty"`
+	IDSMode          string              `json:"idsMode,omitempty"`
 	SyncStatus       string              `json:"syncStatus"`
 	CreatedAt        string              `json:"createdAt,omitempty"`
 }

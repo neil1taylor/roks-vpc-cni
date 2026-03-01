@@ -36,6 +36,10 @@ spec:
     - name: Age
       type: date
       jsonPath: .metadata.creationTimestamp
+    - name: IDS
+      type: string
+      jsonPath: .status.idsMode
+      priority: 1
     schema:
       openAPIV3Schema:
         description: VPCRouter is the Schema for the vpcrouters API.
@@ -175,6 +179,43 @@ spec:
                           type: integer
                           format: int32
                           default: 100
+              ids:
+                description: IDS configures the Suricata IDS/IPS sidecar container.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether the Suricata IDS/IPS sidecar is deployed.
+                    type: boolean
+                    default: false
+                  mode:
+                    description: "Mode selects the inspection mode: ids (passive) or ips (inline)."
+                    type: string
+                    enum:
+                    - ids
+                    - ips
+                    default: ids
+                  interfaces:
+                    description: Interfaces selects which interfaces Suricata monitors.
+                    type: string
+                    enum:
+                    - all
+                    - uplink
+                    - workload
+                    default: all
+                  customRules:
+                    description: CustomRules contains additional Suricata rules (one rule per line).
+                    type: string
+                  syslogTarget:
+                    description: SyslogTarget is an optional syslog destination (host:port) for EVE JSON alerts.
+                    type: string
+                  image:
+                    description: Image overrides the default Suricata container image.
+                    type: string
+                  nfqueueNum:
+                    description: NFQueueNum is the NFQUEUE number used in IPS mode.
+                    type: integer
+                    format: int32
+                    default: 0
               pod:
                 description: Pod defines pod-level overrides for the router pod.
                 type: object
@@ -196,6 +237,9 @@ spec:
                 - Error
               podIP:
                 description: PodIP is the cluster IP address of the router pod.
+                type: string
+              idsMode:
+                description: "IDSMode reports the active IDS/IPS mode (ids, ips, or empty if disabled)."
                 type: string
               transitIP:
                 description: TransitIP is the router's IP address on the transit network.

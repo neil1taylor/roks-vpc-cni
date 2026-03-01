@@ -68,6 +68,42 @@ type RouterNetworkStatus struct {
 	Connected bool `json:"connected"`
 }
 
+// RouterIDS defines IDS/IPS configuration using a Suricata sidecar container.
+type RouterIDS struct {
+	// Enabled controls whether the Suricata IDS/IPS sidecar is deployed.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Mode selects the inspection mode: "ids" for passive monitoring (AF_PACKET),
+	// "ips" for inline blocking (NFQUEUE).
+	// +kubebuilder:validation:Enum=ids;ips
+	// +kubebuilder:default=ids
+	Mode string `json:"mode"`
+
+	// Interfaces selects which interfaces Suricata monitors.
+	// +kubebuilder:validation:Enum=all;uplink;workload
+	// +kubebuilder:default=all
+	// +optional
+	Interfaces string `json:"interfaces,omitempty"`
+
+	// CustomRules contains additional Suricata rules (one rule per line).
+	// +optional
+	CustomRules string `json:"customRules,omitempty"`
+
+	// SyslogTarget is an optional syslog destination (host:port) for EVE JSON alerts.
+	// +optional
+	SyslogTarget string `json:"syslogTarget,omitempty"`
+
+	// Image overrides the default Suricata container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// NFQueueNum is the NFQUEUE number used in IPS mode.
+	// +kubebuilder:default=0
+	// +optional
+	NFQueueNum *int32 `json:"nfqueueNum,omitempty"`
+}
+
 // VPCRouterSpec defines the desired state of a VPCRouter.
 type VPCRouterSpec struct {
 	// Gateway is the name of the VPCGateway this router is associated with.
@@ -96,6 +132,10 @@ type VPCRouterSpec struct {
 	// +optional
 	Firewall *GatewayFirewall `json:"firewall,omitempty"`
 
+	// IDS configures the Suricata IDS/IPS sidecar container.
+	// +optional
+	IDS *RouterIDS `json:"ids,omitempty"`
+
 	// Pod defines pod-level overrides for the router pod.
 	// +optional
 	Pod *RouterPodSpec `json:"pod,omitempty"`
@@ -112,6 +152,9 @@ type VPCRouterStatus struct {
 
 	// TransitIP is the router's IP address on the transit network.
 	TransitIP string `json:"transitIP,omitempty"`
+
+	// IDSMode reports the active IDS/IPS mode ("ids", "ips", or "" if disabled).
+	IDSMode string `json:"idsMode,omitempty"`
 
 	// Networks reports the status of each attached network.
 	// +optional
@@ -142,6 +185,7 @@ type VPCRouterStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Sync",type=string,JSONPath=`.status.syncStatus`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:printcolumn:name="IDS",type=string,JSONPath=`.status.idsMode`,priority=1
 
 // VPCRouter is the Schema for the vpcrouters API.
 // It represents a workload router that connects multiple L2 network segments via a transit network.

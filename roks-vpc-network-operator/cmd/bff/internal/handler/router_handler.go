@@ -216,6 +216,7 @@ func unstructuredToRouter(obj *unstructured.Unstructured) model.RouterResponse {
 	rt.Phase, _, _ = unstructured.NestedString(obj.Object, "status", "phase")
 	rt.TransitIP, _, _ = unstructured.NestedString(obj.Object, "status", "transitIP")
 	rt.SyncStatus, _, _ = unstructured.NestedString(obj.Object, "status", "syncStatus")
+	rt.IDSMode, _, _ = unstructured.NestedString(obj.Object, "status", "idsMode")
 
 	// Networks from status
 	networkSlice, found, _ := unstructured.NestedSlice(obj.Object, "status", "networks")

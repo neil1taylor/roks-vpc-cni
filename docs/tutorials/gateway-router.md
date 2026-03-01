@@ -1,6 +1,6 @@
 # Tutorial: VPC Network Operator
 
-This tutorial walks through every feature of the ROKS VPC Network Operator. Each section builds on the previous one. By the end, you will have deployed VMs on both LocalNet and Layer2 networks, configured gateways with floating IPs and public address ranges, set up routers with DHCP and firewall rules, and verified end-to-end internet connectivity.
+This tutorial walks through every feature of the ROKS VPC Network Operator. Each section builds on the previous one. By the end, you will have deployed VMs on both LocalNet and Layer2 networks, configured gateways with floating IPs and public address ranges, set up routers with DHCP and firewall rules, enabled IDS/IPS with Suricata, and verified end-to-end internet connectivity.
 
 ## Table of contents
 
@@ -13,7 +13,8 @@ This tutorial walks through every feature of the ROKS VPC Network Operator. Each
 - [Part 7: Public Address Range (PAR)](#part-7-public-address-range-par)
 - [Part 8: Firewall rules](#part-8-firewall-rules)
 - [Part 9: Multi-network routing](#part-9-multi-network-routing)
-- [Part 10: Cleanup](#part-10-cleanup)
+- [Part 10: IDS/IPS with Suricata](#part-10-idsips-with-suricata)
+- [Part 11: Cleanup](#part-11-cleanup)
 - [Reference](#reference)
 
 ---
@@ -1419,7 +1420,249 @@ spec:
 
 ---
 
-## Part 10: Cleanup
+## Part 10: IDS/IPS with Suricata
+
+The VPCRouter supports an optional Suricata sidecar container for intrusion detection (IDS) and inline intrusion prevention (IPS). IDS/IPS config lives on the VPCRouter — this is consistent with the firewall pattern where per-router security policies are configured on the router, not the gateway.
+
+### How it works
+
+```
+                          Router Pod
+  ┌────────────────────────────────────────────────┐
+  │                                                │
+  │   ┌──────────┐         ┌──────────────────┐    │
+  │   │  router   │ ──────▶│    suricata       │    │
+  │   │ container │         │    sidecar        │    │
+  │   └──────────┘         └──────────────────┘    │
+  │        │                     │                 │
+  │   IDS: AF_PACKET (passive mirror)              │
+  │   IPS: NFQUEUE (inline, fail-open)             │
+  │                                                │
+  └────────────────────────────────────────────────┘
+```
+
+- **IDS mode** (`mode: ids`): Suricata runs in AF_PACKET mode, passively mirroring traffic for analysis. No packets are dropped — alerts only.
+- **IPS mode** (`mode: ips`): Suricata runs with NFQUEUE, inspecting forwarded packets inline. Matching `drop` rules block traffic. Uses `fail-open` so traffic flows if Suricata is unavailable.
+
+### 10.1 Enable IDS (passive monitoring)
+
+Add `ids` configuration to your router. This example builds on the router from Part 4.
+
+```yaml
+# demo-router-ids.yaml
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCRouter
+metadata:
+  name: demo-router-ids
+  namespace: roks-vpc-network-operator
+spec:
+  gateway: demo-gw-routes
+  networks:
+  - name: demo-l2
+    namespace: vm-demo
+    address: "10.100.0.1/24"
+  dhcp:
+    enabled: true
+  ids:
+    enabled: true
+    mode: ids
+```
+
+Apply and wait for the router to be Ready:
+
+```bash
+oc apply -f demo-router-ids.yaml
+oc wait --for=jsonpath='{.status.phase}'=Ready vpcrouter/demo-router-ids -n roks-vpc-network-operator --timeout=120s
+```
+
+Verify the IDS column shows `ids` (use `-o wide` since IDS is a priority-1 column):
+
+```bash
+oc get vrt -n roks-vpc-network-operator -o wide
+```
+
+Expected output:
+
+```
+NAME              GATEWAY          PHASE   SYNC     AGE   IDS
+demo-router-ids   demo-gw-routes   Ready   Synced   30s   ids
+```
+
+Verify the pod has 2 containers (router + suricata):
+
+```bash
+oc get pod demo-router-ids-pod -n roks-vpc-network-operator
+```
+
+Expected output:
+
+```
+NAME                    READY   STATUS    RESTARTS   AGE
+demo-router-ids-pod     2/2     Running   0          30s
+```
+
+Check Suricata is running and streaming EVE JSON logs:
+
+```bash
+oc logs demo-router-ids-pod -n roks-vpc-network-operator -c suricata --tail=10
+```
+
+You should see JSON lines with `event_type` fields like `stats`, `flow`, etc.
+
+**Trigger an ET Open alert** — from a VM behind this router:
+
+```bash
+# From the VM (via virtctl ssh)
+curl http://testmynids.org/uid/index.html
+```
+
+Then check Suricata logs for the alert:
+
+```bash
+oc logs demo-router-ids-pod -n roks-vpc-network-operator -c suricata | grep '"alert"'
+```
+
+You should see an alert with `signature: "ET POLICY curl User-Agent Outbound"` or similar.
+
+### 10.2 Switch to IPS (inline blocking)
+
+Patch the router to switch from passive IDS to inline IPS:
+
+```bash
+# Record current pod UID
+OLD_UID=$(oc get pod demo-router-ids-pod -n roks-vpc-network-operator -o jsonpath='{.metadata.uid}')
+
+# Switch to IPS mode
+oc patch vpcrouter demo-router-ids -n roks-vpc-network-operator --type=merge \
+  -p '{"spec":{"ids":{"mode":"ips"}}}'
+```
+
+The router reconciler detects the mode change and recreates the pod:
+
+```bash
+sleep 10
+oc wait --for=condition=Ready pod/demo-router-ids-pod -n roks-vpc-network-operator --timeout=120s
+
+# Verify pod was recreated
+NEW_UID=$(oc get pod demo-router-ids-pod -n roks-vpc-network-operator -o jsonpath='{.metadata.uid}')
+if [ "$OLD_UID" != "$NEW_UID" ]; then echo "PASS: Pod recreated for IPS"; else echo "FAIL: Pod not recreated"; fi
+```
+
+Verify `status.idsMode` is updated:
+
+```bash
+oc get vpcrouter demo-router-ids -n roks-vpc-network-operator -o jsonpath='{.status.idsMode}'
+# Output: ips
+```
+
+Verify NFQUEUE nftables rules are configured on the router container:
+
+```bash
+oc exec demo-router-ids-pod -n roks-vpc-network-operator -c router -- nft list table ip suricata
+```
+
+Expected output:
+
+```
+table ip suricata {
+  chain forward_ips {
+    type filter hook forward priority -10; policy accept;
+    ct state established,related accept
+    queue num 0 bypass
+  }
+}
+```
+
+The `bypass` flag ensures fail-open behavior — if Suricata is unavailable, packets are accepted rather than dropped.
+
+### 10.3 Custom rules
+
+Add custom Suricata rules to block specific traffic. This example drops connections to port 4444 (a common reverse shell port) and alerts on the Nikto scanner user agent:
+
+```bash
+oc patch vpcrouter demo-router-ids -n roks-vpc-network-operator --type=merge -p '
+{
+  "spec": {
+    "ids": {
+      "customRules": "drop tcp any any -> any 4444 (msg:\"Block reverse shell port\"; sid:1000001; rev:1;)\nalert http any any -> any any (msg:\"Suspicious user agent\"; content:\"nikto\"; http_user_agent; sid:1000002; rev:1;)"
+    }
+  }
+}'
+```
+
+Wait for the pod to recreate (custom rules change triggers recreation):
+
+```bash
+sleep 10
+oc wait --for=condition=Ready pod/demo-router-ids-pod -n roks-vpc-network-operator --timeout=120s
+```
+
+Verify the custom rules were written to the container:
+
+```bash
+oc exec demo-router-ids-pod -n roks-vpc-network-operator -c suricata -- cat /var/lib/suricata/rules/custom.rules
+```
+
+### 10.4 Interface selection
+
+By default, Suricata monitors all interfaces (`all`). You can restrict monitoring to specific interfaces:
+
+| Value | Interfaces monitored |
+|-------|---------------------|
+| `all` (default) | Uplink + all workload networks |
+| `uplink` | Only the transit/uplink interface |
+| `workload` | Only the workload network interfaces (net0, net1, ...) |
+
+Example — monitor only workload traffic:
+
+```bash
+oc patch vpcrouter demo-router-ids -n roks-vpc-network-operator --type=merge \
+  -p '{"spec":{"ids":{"interfaces":"workload"}}}'
+```
+
+### 10.5 Syslog output
+
+Forward Suricata alerts to an external syslog server for centralized security monitoring:
+
+```bash
+oc patch vpcrouter demo-router-ids -n roks-vpc-network-operator --type=merge \
+  -p '{"spec":{"ids":{"syslogTarget":"syslog.example.com:514"}}}'
+```
+
+This adds a second EVE output that sends alerts via syslog in addition to the default file-based logging streamed to stdout.
+
+### Full IPS example
+
+This is a complete VPCRouter spec with IPS mode, custom rules, and syslog — suitable for production use:
+
+```yaml
+# demo-router-ips.yaml
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCRouter
+metadata:
+  name: demo-router-ips
+  namespace: roks-vpc-network-operator
+spec:
+  gateway: demo-gw-routes
+  networks:
+  - name: demo-l2
+    namespace: vm-demo
+    address: "10.100.0.1/24"
+  dhcp:
+    enabled: true
+  ids:
+    enabled: true
+    mode: ips
+    interfaces: all
+    syslogTarget: "syslog.example.com:514"
+    customRules: |
+      drop tcp any any -> any 4444 (msg:"Block reverse shell port"; sid:1000001; rev:1;)
+      alert http any any -> any any (msg:"Suspicious user agent"; content:"nikto"; http_user_agent; sid:1000002; rev:1;)
+```
+
+---
+
+## Part 11: Cleanup
 
 Delete resources in reverse order: VMs first, then routers, gateways, and finally networks.
 
@@ -1538,6 +1781,13 @@ oc delete namespace vm-demo
 | `routeAdvertisement.connectedSegments` | bool | No | `true` | Advertise connected CIDRs |
 | `routeAdvertisement.staticRoutes` | bool | No | `false` | Advertise static routes |
 | `routeAdvertisement.natIPs` | bool | No | `false` | Advertise NAT IPs |
+| `ids.enabled` | bool | No | `false` | Deploy Suricata sidecar |
+| `ids.mode` | string | No | `ids` | `ids` (passive) or `ips` (inline) |
+| `ids.interfaces` | string | No | `all` | `all`, `uplink`, or `workload` |
+| `ids.customRules` | string | No | - | Additional Suricata rules (one per line) |
+| `ids.syslogTarget` | string | No | - | Syslog destination (`host:port`) |
+| `ids.image` | string | No | - | Override Suricata image |
+| `ids.nfqueueNum` | int | No | `0` | NFQUEUE number (IPS mode) |
 | `pod.image` | string | No | - | Container image |
 
 ### Finalizers
@@ -1606,6 +1856,7 @@ oc delete namespace vm-demo
 |------|-------------|
 | `podIP` | IP address of the router pod (used as VPC route next-hop) |
 | `advertisedRoutes` | CIDRs advertised to the gateway (auto-collected for VPC routes) |
+| `idsMode` | Active IDS/IPS mode (`ids`, `ips`, or empty if disabled) |
 
 #### VPCRouter conditions
 
@@ -1614,6 +1865,7 @@ oc delete namespace vm-demo
 | `TransitConnected` | Connected to gateway |
 | `RoutesConfigured` | Advertising routes |
 | `PodReady` | Router pod is Running |
+| `IDSReady` | Suricata sidecar is running (only present when IDS is enabled) |
 
 ### Troubleshooting
 
@@ -1638,6 +1890,21 @@ oc exec <router>-pod -n roks-vpc-network-operator -- ip addr
 
 # Check DHCP leases
 oc exec <router>-pod -n roks-vpc-network-operator -- cat /var/lib/misc/dnsmasq.leases
+
+# Suricata IDS/IPS logs (EVE JSON alerts)
+oc logs <router>-pod -n roks-vpc-network-operator -c suricata --tail=50
+
+# Suricata alert summary
+oc logs <router>-pod -n roks-vpc-network-operator -c suricata | grep '"event_type":"alert"'
+
+# Suricata config inside the container
+oc exec <router>-pod -n roks-vpc-network-operator -c suricata -- cat /etc/suricata/suricata.yaml
+
+# Custom rules loaded by Suricata
+oc exec <router>-pod -n roks-vpc-network-operator -c suricata -- cat /var/lib/suricata/rules/custom.rules
+
+# NFQUEUE nftables rules (IPS mode only)
+oc exec <router>-pod -n roks-vpc-network-operator -c router -- nft list table ip suricata
 
 # Verify VPC resources via IBM Cloud CLI
 ibmcloud is subnets --output json | jq '.[] | select(.name | startswith("roks-")) | {name, id, status}'

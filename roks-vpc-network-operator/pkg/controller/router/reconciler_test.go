@@ -657,6 +657,279 @@ func TestComputeDHCPRange(t *testing.T) {
 	}
 }
 
+// TestBuildRouterPod_WithIDS tests that the Suricata sidecar container
+// is added when IDS is enabled.
+func TestBuildRouterPod_WithIDS(t *testing.T) {
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-ids", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+			IDS: &v1alpha1.RouterIDS{
+				Enabled:    true,
+				Mode:       "ids",
+				Interfaces: "all",
+			},
+		},
+	}
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	pod := buildRouterPod(router, gw)
+
+	// Should have 2 containers: router + suricata
+	if len(pod.Spec.Containers) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(pod.Spec.Containers))
+	}
+
+	suricata := pod.Spec.Containers[1]
+	if suricata.Name != "suricata" {
+		t.Errorf("expected second container name = 'suricata', got %q", suricata.Name)
+	}
+
+	// Verify Suricata image
+	if suricata.Image != "docker.io/jasonish/suricata:7.0" {
+		t.Errorf("expected default suricata image, got %q", suricata.Image)
+	}
+
+	// Verify privileged security context
+	if suricata.SecurityContext == nil || !*suricata.SecurityContext.Privileged {
+		t.Error("expected suricata container to be privileged")
+	}
+
+	// Verify volume mounts
+	if len(suricata.VolumeMounts) != 3 {
+		t.Fatalf("expected 3 volume mounts, got %d", len(suricata.VolumeMounts))
+	}
+
+	// Verify volumes were added to pod
+	if len(pod.Spec.Volumes) != 3 {
+		t.Fatalf("expected 3 volumes, got %d", len(pod.Spec.Volumes))
+	}
+	volNames := make(map[string]bool)
+	for _, v := range pod.Spec.Volumes {
+		volNames[v.Name] = true
+	}
+	for _, expected := range []string{"suricata-config", "suricata-rules", "suricata-log"} {
+		if !volNames[expected] {
+			t.Errorf("expected volume %q to be present", expected)
+		}
+	}
+
+	// Verify liveness probe
+	if suricata.LivenessProbe == nil {
+		t.Fatal("expected suricata liveness probe")
+	}
+	if suricata.LivenessProbe.InitialDelaySeconds != 60 {
+		t.Errorf("expected suricata liveness InitialDelaySeconds = 60, got %d", suricata.LivenessProbe.InitialDelaySeconds)
+	}
+
+	// Verify SURICATA_MODE env var
+	modeFound := false
+	for _, env := range suricata.Env {
+		if env.Name == "SURICATA_MODE" && env.Value == "ids" {
+			modeFound = true
+		}
+	}
+	if !modeFound {
+		t.Error("expected SURICATA_MODE=ids env var on suricata container")
+	}
+
+	// Router container should NOT have IPS_NFQUEUE_CONFIG in IDS mode
+	for _, env := range pod.Spec.Containers[0].Env {
+		if env.Name == "IPS_NFQUEUE_CONFIG" {
+			t.Error("expected no IPS_NFQUEUE_CONFIG in IDS mode")
+		}
+	}
+}
+
+// TestBuildRouterPod_WithIPS tests that IPS mode adds NFQUEUE env var and
+// configures Suricata for NFQUEUE.
+func TestBuildRouterPod_WithIPS(t *testing.T) {
+	queueNum := int32(0)
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-ips", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+			IDS: &v1alpha1.RouterIDS{
+				Enabled:    true,
+				Mode:       "ips",
+				NFQueueNum: &queueNum,
+			},
+		},
+	}
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	pod := buildRouterPod(router, gw)
+
+	// Router container should have IPS_NFQUEUE_CONFIG
+	nfqFound := false
+	for _, env := range pod.Spec.Containers[0].Env {
+		if env.Name == "IPS_NFQUEUE_CONFIG" {
+			nfqFound = true
+			if !containsString(env.Value, "table ip suricata") {
+				t.Error("expected IPS_NFQUEUE_CONFIG to contain nftables suricata table")
+			}
+		}
+	}
+	if !nfqFound {
+		t.Error("expected IPS_NFQUEUE_CONFIG env var in IPS mode")
+	}
+
+	// Suricata container should have SURICATA_MODE=ips
+	suricata := pod.Spec.Containers[1]
+	for _, env := range suricata.Env {
+		if env.Name == "SURICATA_MODE" && env.Value != "ips" {
+			t.Errorf("expected SURICATA_MODE=ips, got %q", env.Value)
+		}
+	}
+}
+
+// TestBuildRouterPod_WithoutIDS tests that no sidecar is added when IDS is not configured.
+func TestBuildRouterPod_WithoutIDS(t *testing.T) {
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-noids", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+		},
+	}
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	pod := buildRouterPod(router, gw)
+
+	if len(pod.Spec.Containers) != 1 {
+		t.Errorf("expected 1 container without IDS, got %d", len(pod.Spec.Containers))
+	}
+	if len(pod.Spec.Volumes) != 0 {
+		t.Errorf("expected 0 volumes without IDS, got %d", len(pod.Spec.Volumes))
+	}
+}
+
+// TestPodNeedsRecreation_IDSAdded tests that adding IDS to a router triggers
+// pod recreation (container count mismatch).
+func TestPodNeedsRecreation_IDSAdded(t *testing.T) {
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	// Old router without IDS
+	oldRouter := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-test", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			Networks: []v1alpha1.RouterNetwork{{Name: "l2-app", Address: "10.100.0.1/24"}},
+		},
+	}
+	existingPod := buildRouterPod(oldRouter, gw)
+
+	// New router with IDS enabled
+	newRouter := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-test", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			Networks: []v1alpha1.RouterNetwork{{Name: "l2-app", Address: "10.100.0.1/24"}},
+			IDS:      &v1alpha1.RouterIDS{Enabled: true, Mode: "ids"},
+		},
+	}
+
+	r := &Reconciler{}
+	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+		t.Error("expected pod recreation when IDS is added (container count change)")
+	}
+}
+
+// TestPodNeedsRecreation_IDSModeChanged tests that changing from IDS to IPS
+// triggers pod recreation (env var and suricata config change).
+func TestPodNeedsRecreation_IDSModeChanged(t *testing.T) {
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	// Old router with IDS mode
+	oldRouter := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-test", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			Networks: []v1alpha1.RouterNetwork{{Name: "l2-app", Address: "10.100.0.1/24"}},
+			IDS:      &v1alpha1.RouterIDS{Enabled: true, Mode: "ids"},
+		},
+	}
+	existingPod := buildRouterPod(oldRouter, gw)
+
+	// New router with IPS mode
+	newRouter := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-test", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			Networks: []v1alpha1.RouterNetwork{{Name: "l2-app", Address: "10.100.0.1/24"}},
+			IDS:      &v1alpha1.RouterIDS{Enabled: true, Mode: "ips"},
+		},
+	}
+
+	r := &Reconciler{}
+	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+		t.Error("expected pod recreation when IDS mode changes from ids to ips")
+	}
+}
+
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
 }
