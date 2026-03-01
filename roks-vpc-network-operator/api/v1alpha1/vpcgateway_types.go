@@ -299,7 +299,7 @@ type VPCGatewayStatus struct {
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // VPCGateway is the Schema for the vpcgateways API.
-// It represents a T0 per-zone gateway that bridges a LocalNet CUDN to a transit L2 network.
+// It represents a per-zone gateway that routes traffic between a LocalNet CUDN and a transit L2 network.
 type VPCGateway struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

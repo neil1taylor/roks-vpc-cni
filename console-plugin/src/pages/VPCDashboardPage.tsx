@@ -143,13 +143,13 @@ const VPCDashboardPage: React.FC = () => {
           </GridItem>
           <GridItem span={3}>
             <Card isCompact>
-              <CardTitle>Gateways (T0)</CardTitle>
+              <CardTitle>Gateways</CardTitle>
               <CardBody>{renderCount(gateways?.length, gwLoading)}</CardBody>
             </Card>
           </GridItem>
           <GridItem span={3}>
             <Card isCompact>
-              <CardTitle>Routers (T1)</CardTitle>
+              <CardTitle>Routers</CardTitle>
               <CardBody>{renderCount(routers?.length, rtLoading)}</CardBody>
             </Card>
           </GridItem>

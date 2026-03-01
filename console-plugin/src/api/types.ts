@@ -459,7 +459,7 @@ export interface UserPermissions {
   resources?: string[];
 }
 
-// ── VPCGateway (T0) ──
+// ── VPCGateway ──
 
 export interface Gateway {
   name: string;
@@ -484,7 +484,7 @@ export interface CreateGatewayRequest {
   transit?: string;
 }
 
-// ── VPCRouter (T1) ──
+// ── VPCRouter ──
 
 export interface Router {
   name: string;

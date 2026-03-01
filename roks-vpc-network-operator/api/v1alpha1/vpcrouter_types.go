@@ -151,7 +151,7 @@ type VPCRouterStatus struct {
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // VPCRouter is the Schema for the vpcrouters API.
-// It represents a T1 workload router that connects multiple L2 network segments via a transit network.
+// It represents a workload router that connects multiple L2 network segments via a transit network.
 type VPCRouter struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

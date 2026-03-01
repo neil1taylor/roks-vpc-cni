@@ -405,7 +405,7 @@ type CreateRouteRequest struct {
 	Priority    *int64 `json:"priority,omitempty"`
 }
 
-// ── Gateway (T0) ──
+// ── Gateway ──
 
 // GatewayResponse represents a VPCGateway resource.
 type GatewayResponse struct {
@@ -432,7 +432,7 @@ type GatewayRequest struct {
 	Transit string `json:"transit,omitempty"`
 }
 
-// ── Router (T1) ──
+// ── Router ──
 
 // RouterResponse represents a VPCRouter resource.
 type RouterResponse struct {
