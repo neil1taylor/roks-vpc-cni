@@ -1,0 +1,280 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vpcrouters.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VPCRouter
+    listKind: VPCRouterList
+    plural: vpcrouters
+    singular: vpcrouter
+    shortNames:
+    - vrt
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Gateway
+      type: string
+      jsonPath: .spec.gateway
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: VPCRouter is the Schema for the vpcrouters API.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPCRouterSpec defines the desired state of a VPCRouter.
+            type: object
+            required:
+            - gateway
+            - networks
+            properties:
+              gateway:
+                description: Gateway is the name of the VPCGateway this router is associated with.
+                type: string
+                minLength: 1
+              transit:
+                description: Transit defines the transit network configuration for the router.
+                type: object
+                required:
+                - address
+                properties:
+                  network:
+                    description: Network is the name of the transit L2 network.
+                    type: string
+                  address:
+                    description: Address is the IP address on the transit network.
+                    type: string
+                    minLength: 1
+              networks:
+                description: Networks is the list of workload networks attached to the router.
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required:
+                  - name
+                  - address
+                  properties:
+                    name:
+                      description: Name is the name of the network (CUDN or UDN).
+                      type: string
+                      minLength: 1
+                    address:
+                      description: Address is the IP address on this network.
+                      type: string
+                      minLength: 1
+              routeAdvertisement:
+                description: RouteAdvertisement controls which routes the router advertises.
+                type: object
+                properties:
+                  connectedSegments:
+                    description: ConnectedSegments advertises routes for directly connected network segments.
+                    type: boolean
+                    default: true
+                  staticRoutes:
+                    description: StaticRoutes advertises configured static routes.
+                    type: boolean
+                    default: false
+                  natIPs:
+                    description: NATIPs advertises NAT-translated IP addresses.
+                    type: boolean
+                    default: false
+              functions:
+                description: Functions defines optional functions enabled on the router.
+                type: array
+                items:
+                  type: object
+                  required:
+                  - type
+                  properties:
+                    type:
+                      description: Type is the function type.
+                      type: string
+                      enum:
+                      - routing
+                      - firewall
+                      - wireguard
+                    config:
+                      description: Config is a key-value map of function-specific configuration.
+                      type: object
+                      additionalProperties:
+                        type: string
+              dhcp:
+                description: DHCP controls DHCP server functionality on the router.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether the router acts as a DHCP server.
+                    type: boolean
+                    default: false
+              firewall:
+                description: Firewall defines firewall rules for the router.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether the firewall is active.
+                    type: boolean
+                    default: false
+                  rules:
+                    description: Rules is the ordered list of firewall rules.
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - name
+                      - action
+                      - direction
+                      - protocol
+                      properties:
+                        name:
+                          description: Name is the human-readable name of this rule.
+                          type: string
+                          minLength: 1
+                        action:
+                          description: Action is the action to take when the rule matches.
+                          type: string
+                          enum:
+                          - allow
+                          - deny
+                        direction:
+                          description: Direction is the traffic direction this rule applies to.
+                          type: string
+                          enum:
+                          - ingress
+                          - egress
+                        source:
+                          description: Source is the source CIDR or address to match.
+                          type: string
+                        destination:
+                          description: Destination is the destination CIDR or address to match.
+                          type: string
+                        protocol:
+                          description: Protocol is the IP protocol to match.
+                          type: string
+                          enum:
+                          - tcp
+                          - udp
+                          - icmp
+                          - any
+                          default: any
+                        port:
+                          description: Port is the port number to match (for TCP/UDP).
+                          type: integer
+                          format: int32
+                        priority:
+                          description: Priority controls the evaluation order (lower = higher priority).
+                          type: integer
+                          format: int32
+                          default: 100
+              pod:
+                description: Pod defines pod-level overrides for the router pod.
+                type: object
+                properties:
+                  image:
+                    description: Image is the container image to use for the gateway/router pod.
+                    type: string
+                  replicas:
+                    description: Replicas is the number of gateway/router pod replicas.
+                    type: integer
+                    format: int32
+                    default: 1
+                    minimum: 1
+                    maximum: 3
+          status:
+            description: VPCRouterStatus defines the observed state of a VPCRouter.
+            type: object
+            properties:
+              phase:
+                description: Phase is the current lifecycle phase of the router.
+                type: string
+                enum:
+                - Pending
+                - Provisioning
+                - Ready
+                - Error
+              transitIP:
+                description: TransitIP is the router's IP address on the transit network.
+                type: string
+              networks:
+                description: Networks reports the status of each attached network.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      description: Name is the network name.
+                      type: string
+                    address:
+                      description: Address is the router's IP address on this network.
+                      type: string
+                    connected:
+                      description: Connected indicates whether the router has connectivity to this network.
+                      type: boolean
+              advertisedRoutes:
+                description: AdvertisedRoutes is the list of routes the router is currently advertising.
+                type: array
+                items:
+                  type: string
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync with the VPC API.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message

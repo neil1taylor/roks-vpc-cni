@@ -1,0 +1,365 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vpcgateways.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VPCGateway
+    listKind: VPCGatewayList
+    plural: vpcgateways
+    singular: vpcgateway
+    shortNames:
+    - vgw
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Zone
+      type: string
+      jsonPath: .spec.zone
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: VNI IP
+      type: string
+      jsonPath: .status.reservedIP
+    - name: FIP
+      type: string
+      jsonPath: .status.floatingIP
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: VPCGateway is the Schema for the vpcgateways API.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPCGatewaySpec defines the desired state of a VPCGateway.
+            type: object
+            required:
+            - zone
+            - uplink
+            - transit
+            properties:
+              zone:
+                description: Zone is the VPC availability zone for the gateway (e.g., "eu-de-1").
+                type: string
+                minLength: 1
+              uplink:
+                description: Uplink defines the uplink (external-facing) network configuration.
+                type: object
+                required:
+                - network
+                properties:
+                  network:
+                    description: Network is the name of the uplink network (LocalNet CUDN/UDN).
+                    type: string
+                    minLength: 1
+                  securityGroupIDs:
+                    description: SecurityGroupIDs is a list of VPC security group IDs for the uplink VNI.
+                    type: array
+                    items:
+                      type: string
+              transit:
+                description: Transit defines the transit (inter-router) network configuration.
+                type: object
+                required:
+                - address
+                properties:
+                  network:
+                    description: Network is the name of the transit L2 network.
+                    type: string
+                  address:
+                    description: Address is the IP address on the transit network.
+                    type: string
+                    minLength: 1
+                  cidr:
+                    description: CIDR is the transit network CIDR block.
+                    type: string
+              vpcRoutes:
+                description: VPCRoutes defines VPC routes to be created for the gateway.
+                type: array
+                items:
+                  type: object
+                  required:
+                  - destination
+                  properties:
+                    destination:
+                      description: Destination is the destination CIDR for the route.
+                      type: string
+                      minLength: 1
+              nat:
+                description: NAT defines NAT rules for the gateway.
+                type: object
+                properties:
+                  snat:
+                    description: SNAT defines source NAT rules.
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - source
+                      properties:
+                        source:
+                          description: Source is the source CIDR to match for SNAT.
+                          type: string
+                          minLength: 1
+                        translatedAddress:
+                          description: TranslatedAddress is the address to translate the source to. If empty, the gateway's floating IP is used.
+                          type: string
+                        priority:
+                          description: Priority controls the evaluation order (lower = higher priority).
+                          type: integer
+                          format: int32
+                          default: 100
+                  dnat:
+                    description: DNAT defines destination NAT rules.
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - externalPort
+                      - internalAddress
+                      - internalPort
+                      properties:
+                        externalAddress:
+                          description: ExternalAddress is the external address to match. If empty, matches the gateway's floating IP.
+                          type: string
+                        externalPort:
+                          description: ExternalPort is the external port to match.
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          maximum: 65535
+                        internalAddress:
+                          description: InternalAddress is the internal address to forward to.
+                          type: string
+                          minLength: 1
+                        internalPort:
+                          description: InternalPort is the internal port to forward to.
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          maximum: 65535
+                        protocol:
+                          description: Protocol is the IP protocol for the DNAT rule.
+                          type: string
+                          enum:
+                          - tcp
+                          - udp
+                          default: tcp
+                        priority:
+                          description: Priority controls the evaluation order (lower = higher priority).
+                          type: integer
+                          format: int32
+                          default: 50
+                  noNAT:
+                    description: NoNAT defines exceptions to NAT processing.
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - source
+                      - destination
+                      properties:
+                        source:
+                          description: Source is the source CIDR to exempt from NAT.
+                          type: string
+                          minLength: 1
+                        destination:
+                          description: Destination is the destination CIDR to exempt from NAT.
+                          type: string
+                          minLength: 1
+                        priority:
+                          description: Priority controls the evaluation order (lower = higher priority).
+                          type: integer
+                          format: int32
+                          default: 10
+              floatingIP:
+                description: FloatingIP controls floating IP allocation for the gateway.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether a floating IP is allocated for the gateway.
+                    type: boolean
+                    default: false
+                  id:
+                    description: ID is an existing floating IP ID to use instead of creating a new one.
+                    type: string
+              firewall:
+                description: Firewall defines firewall rules for the gateway.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether the firewall is active.
+                    type: boolean
+                    default: false
+                  rules:
+                    description: Rules is the ordered list of firewall rules.
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - name
+                      - action
+                      - direction
+                      - protocol
+                      properties:
+                        name:
+                          description: Name is the human-readable name of this rule.
+                          type: string
+                          minLength: 1
+                        action:
+                          description: Action is the action to take when the rule matches.
+                          type: string
+                          enum:
+                          - allow
+                          - deny
+                        direction:
+                          description: Direction is the traffic direction this rule applies to.
+                          type: string
+                          enum:
+                          - ingress
+                          - egress
+                        source:
+                          description: Source is the source CIDR or address to match.
+                          type: string
+                        destination:
+                          description: Destination is the destination CIDR or address to match.
+                          type: string
+                        protocol:
+                          description: Protocol is the IP protocol to match.
+                          type: string
+                          enum:
+                          - tcp
+                          - udp
+                          - icmp
+                          - any
+                          default: any
+                        port:
+                          description: Port is the port number to match (for TCP/UDP).
+                          type: integer
+                          format: int32
+                        priority:
+                          description: Priority controls the evaluation order (lower = higher priority).
+                          type: integer
+                          format: int32
+                          default: 100
+              pod:
+                description: Pod defines pod-level overrides for the gateway pod.
+                type: object
+                properties:
+                  image:
+                    description: Image is the container image to use for the gateway/router pod.
+                    type: string
+                  replicas:
+                    description: Replicas is the number of gateway/router pod replicas.
+                    type: integer
+                    format: int32
+                    default: 1
+                    minimum: 1
+                    maximum: 3
+          status:
+            description: VPCGatewayStatus defines the observed state of a VPCGateway.
+            type: object
+            properties:
+              phase:
+                description: Phase is the current lifecycle phase of the gateway.
+                type: string
+                enum:
+                - Pending
+                - Provisioning
+                - Ready
+                - Error
+              vniID:
+                description: VNIID is the VPC VNI ID allocated for the gateway's uplink interface.
+                type: string
+              reservedIP:
+                description: ReservedIP is the reserved IP address on the uplink VNI.
+                type: string
+              floatingIP:
+                description: FloatingIP is the public floating IP address assigned to the gateway.
+                type: string
+              transitNetwork:
+                description: TransitNetwork is the name of the transit network the gateway is connected to.
+                type: string
+              vpcRouteIDs:
+                description: VPCRouteIDs is the list of VPC route IDs created for the gateway.
+                type: array
+                items:
+                  type: string
+              interfaces:
+                description: Interfaces describes the network interfaces provisioned on the gateway.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    role:
+                      description: Role is the role of this interface.
+                      type: string
+                      enum:
+                      - uplink
+                      - downlink
+                    network:
+                      description: Network is the network name this interface is attached to.
+                      type: string
+                    address:
+                      description: Address is the IP address assigned to this interface.
+                      type: string
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync with the VPC API.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message
