@@ -309,13 +309,6 @@ spec:
                   image:
                     description: Image is the container image to use for the gateway/router pod.
                     type: string
-                  replicas:
-                    description: Replicas is the number of gateway/router pod replicas.
-                    type: integer
-                    format: int32
-                    default: 1
-                    minimum: 1
-                    maximum: 3
           status:
             description: VPCGatewayStatus defines the observed state of a VPCGateway.
             type: object

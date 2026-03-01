@@ -152,5 +152,5 @@ If connectivity does not recover within a few seconds after migration, check:
 - [Annotations Reference](annotations-reference.md) -- annotations that persist across migrations
 - [Creating VMs with VPC Networking](creating-vms.md) -- initial VM setup
 - [Floating IPs](floating-ips.md) -- floating IPs and migration behavior
-- [Network Setup](network-setup.md) -- CUDN configuration and VLAN attachments
+- [Network Setup](../admin-guide/network-setup.md) -- CUDN configuration and VLAN attachments
 - [Glossary](../glossary.md) -- definitions of VPC networking terms

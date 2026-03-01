@@ -152,6 +152,13 @@ func (c *InstrumentedClient) DeleteFloatingIP(ctx context.Context, fipID string)
 	return err
 }
 
+func (c *InstrumentedClient) ListFloatingIPs(ctx context.Context) ([]FloatingIP, error) {
+	start := time.Now()
+	result, err := c.inner.ListFloatingIPs(ctx)
+	recordCall("ListFloatingIPs", start, err)
+	return result, err
+}
+
 func (c *InstrumentedClient) ListVPCAddressPrefixes(ctx context.Context, vpcID string) ([]AddressPrefix, error) {
 	start := time.Now()
 	result, err := c.inner.ListVPCAddressPrefixes(ctx, vpcID)

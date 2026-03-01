@@ -30,30 +30,29 @@ On deletion, finalizers clean up all VPC resources.
 
 ## Architecture
 
-Three reconciliation loops + one mutating webhook:
+Ten reconciliation loops + one mutating webhook + orphan GC:
 
-### 1. CUDN Reconciler (`pkg/controller/cudn/reconciler.go`)
-- Watches `ClusterUserDefinedNetwork` with `spec.topology == LocalNet`
-- On create: validate annotations → create VPC subnet → create VLAN attachments on all BM nodes → write status annotations
-- On delete: finalizer checks no VMs reference CUDN → delete VLAN attachments → delete subnet → remove finalizer
-- See DESIGN.md §6.1 for full flow
+### Network Reconcilers
+- **CUDN Reconciler** (`pkg/controller/cudn/reconciler.go`) — watches `ClusterUserDefinedNetwork` with LocalNet topology. Creates VPC subnet + VLAN attachments on all BM nodes.
+- **UDN Reconciler** (`pkg/controller/udn/reconciler.go`) — watches `UserDefinedNetwork` (namespace-scoped). Same logic as CUDN.
+- **Node Reconciler** (`pkg/controller/node/reconciler.go`) — watches bare metal `Node` objects. Ensures VLAN attachments on new nodes.
 
-### 2. Node Reconciler (`pkg/controller/node/reconciler.go`)
-- Watches `Node` objects (filter to bare metal workers)
-- On join: list all LocalNet CUDNs → create VLAN attachment on new node for each
-- On remove: delete VLAN attachments → update CUDN status
-- See DESIGN.md §6.2
+### VM Reconciler + Webhook
+- **VM Reconciler** (`pkg/controller/vm/reconciler.go`) — drift detection, multi-VNI cleanup on VM deletion.
+- **Mutating Webhook** (`pkg/webhook/vm_mutating.go`) — intercepts VM CREATE, creates VNI per LocalNet interface, injects MAC+IP.
 
-### 3. VM Reconciler (`pkg/controller/vm/reconciler.go`)
-- Watches `VirtualMachine` CRs with operator annotations
-- Drift detection: periodic verify VPC resources exist
-- On delete: finalizer → delete FIP → delete VNI → remove finalizer
-- See DESIGN.md §6.3
+### CRD Reconcilers
+- **VPCSubnet** (`pkg/controller/vpcsubnet/`) — full VPC subnet lifecycle
+- **VNI** (`pkg/controller/vni/`) — dual-mode: VPC API (unmanaged) or ROKS API (roks)
+- **VLANAttachment** (`pkg/controller/vlanattachment/`) — dual-mode like VNI
+- **FloatingIP** (`pkg/controller/floatingip/`) — full FIP lifecycle via VPC API
 
-### 4. Mutating Webhook (`pkg/webhook/vm_mutating.go`)
-- Intercepts `VirtualMachine` CREATE
-- Creates VNI, reads MAC+IP, mutates VM spec
-- See DESIGN.md §7 for full flow
+### Gateway + Router Reconcilers
+- **VPCGateway** (`pkg/controller/gateway/reconciler.go`) — creates uplink VNI via VLAN attachment, manages FIP, PAR, VPC routes. See `api/v1alpha1/vpcgateway_types.go`.
+- **VPCRouter** (`pkg/controller/router/reconciler.go`) — creates privileged router pod with Multus attachments, IP forwarding, nftables NAT/firewall, optional dnsmasq DHCP. See `api/v1alpha1/vpcrouter_types.go`.
+
+### Orphan GC (`pkg/gc/orphan_collector.go`)
+- Periodic (every 10 min), lists VPC resources by cluster tag, cross-references with K8s objects, deletes orphans older than 15 min.
 
 ## Key Implementation Details
 
@@ -65,16 +64,22 @@ Wraps `github.com/IBM/vpc-go-sdk`. Each file handles one resource type:
 - `client.go` — constructor, auth (reads API key from K8s Secret), base config, rate limiter
 - `subnet.go` — `CreateSubnet`, `DeleteSubnet`, `GetSubnet`
 - `vni.go` — `CreateVNI`, `DeleteVNI`, `GetVNI`, `ListVNIsByTag`
-- `vlan_attachment.go` — `CreateVLANAttachment`, `DeleteVLANAttachment`, `ListAttachments`
-- `floating_ip.go` — `CreateFIP`, `DeleteFIP`, `AttachFIP`
-- `ratelimiter.go` — token bucket rate limiter (10 concurrent max for webhook)
+- `vlan_attachment.go` — `CreateVLANAttachment`, `DeleteVLANAttachment`, `ListAttachments`, `CreateVMAttachment`
+- `floating_ip.go` — `CreateFloatingIP`, `GetFloatingIP`, `UpdateFloatingIP`, `DeleteFloatingIP`
+- `routing.go` — `ListRoutingTables`, `CreateRoute`, `DeleteRoute`, `ListRoutes`
+- `par.go` — `CreatePublicAddressRange`, `GetPublicAddressRange`, `DeletePublicAddressRange`, `ListPublicAddressRanges`
+- `ratelimiter.go` — channel-based rate limiter (10 concurrent max)
+- `instrumented.go` — `InstrumentedClient` wrapper for Prometheus metrics
 
 **All VPC operations must be idempotent.** Use resource tags (cluster ID + namespace + name) to detect existing resources before creating duplicates.
 
 ### Finalizers (`pkg/finalizers/`)
-Two finalizer names:
+Five finalizer names:
 - `vpc.roks.ibm.com/cudn-cleanup` — on CUDNs
 - `vpc.roks.ibm.com/vm-cleanup` — on VMs
+- `vpc.roks.ibm.com/udn-cleanup` — on UDNs
+- `vpc.roks.ibm.com/gateway-cleanup` — on VPCGateways (cleans up FIP, PAR, VPC routes, VLAN attachment)
+- `vpc.roks.ibm.com/router-cleanup` — on VPCRouters (deletes router pod)
 
 ### Orphan GC (`pkg/gc/orphan_collector.go`)
 Periodic goroutine (every 10 min). Lists VPC resources by cluster tag, cross-references with K8s objects, deletes orphans older than 15 min.

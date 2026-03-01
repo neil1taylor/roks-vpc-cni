@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams } from 'react-router-dom-v5-compat';
+import { useParams, useSearchParams } from 'react-router-dom-v5-compat';
 import {
   PageSection,
   PageSectionVariants,
@@ -31,7 +31,9 @@ import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 const RouterDetailPage: React.FC = () => {
   const { name } = useParams<{ name: string }>();
-  const { router, loading } = useRouter(name || '');
+  const [searchParams] = useSearchParams();
+  const ns = searchParams.get('ns') || undefined;
+  const { router, loading } = useRouter(name || '', ns);
   const navigate = useNavigate();
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -42,7 +44,7 @@ const RouterDetailPage: React.FC = () => {
     if (!name) return;
     setActionLoading(true);
     setActionError(null);
-    const resp = await apiClient.deleteRouter(name);
+    const resp = await apiClient.deleteRouter(name, ns);
     if (resp.error) {
       setActionError(resp.error.message);
       setActionLoading(false);
@@ -95,7 +97,7 @@ const RouterDetailPage: React.FC = () => {
                   <DescriptionListGroup>
                     <DescriptionListTerm>Gateway</DescriptionListTerm>
                     <DescriptionListDescription>
-                      <Link to={`/vpc-networking/gateways/${router.gateway}`}>{router.gateway}</Link>
+                      <Link to={`/vpc-networking/gateways/${router.gateway}?ns=${encodeURIComponent(router.namespace)}`}>{router.gateway}</Link>
                     </DescriptionListDescription>
                   </DescriptionListGroup>
                   <DescriptionListGroup>

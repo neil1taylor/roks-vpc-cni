@@ -128,4 +128,4 @@ spec:
 
 - [Glossary](../glossary.md) -- definitions of VPC networking terms
 - [Creating VMs with VPC Networking](creating-vms.md) -- step-by-step VM creation guide
-- [Network Setup](network-setup.md) -- initial CUDN and VPC configuration
+- [Network Setup](../admin-guide/network-setup.md) -- initial CUDN and VPC configuration

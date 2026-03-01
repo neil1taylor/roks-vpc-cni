@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -98,6 +99,24 @@ func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) *corev1
 						Capabilities: &corev1.Capabilities{
 							Add: []corev1.Capability{"NET_ADMIN", "NET_RAW"},
 						},
+					},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							Exec: &corev1.ExecAction{
+								Command: []string{"sysctl", "-n", "net.ipv4.ip_forward"},
+							},
+						},
+						InitialDelaySeconds: 30,
+						PeriodSeconds:       30,
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							Exec: &corev1.ExecAction{
+								Command: []string{"sh", "-c", "ip route show default | grep -q uplink && ip link show uplink | grep -q UP"},
+							},
+						},
+						InitialDelaySeconds: 10,
+						PeriodSeconds:       10,
 					},
 				},
 			},
@@ -308,18 +327,35 @@ func computeSubnetGateway(ip string) string {
 }
 
 // computeDHCPRange derives a DHCP range from a network address with prefix.
-// For example, "10.100.0.1/24" → "10.100.0.10,10.100.0.254,255.255.255.0,12h"
+// Supports arbitrary prefix lengths, not just /24.
+// For example:
+//
+//	"10.100.0.1/24" → "10.100.0.10,10.100.0.254,255.255.255.0,12h"
+//	"10.200.0.1/20" → "10.200.0.10,10.200.15.254,255.255.240.0,12h"
 func computeDHCPRange(address string) string {
-	parts := strings.SplitN(address, "/", 2)
-	if len(parts) != 2 {
-		return ""
-	}
-	ipParts := strings.Split(parts[0], ".")
-	if len(ipParts) != 4 {
+	_, ipNet, err := net.ParseCIDR(address)
+	if err != nil {
 		return ""
 	}
 
-	// Simple /24 assumption for DHCP range
-	base := strings.Join(ipParts[:3], ".")
-	return fmt.Sprintf("%s.10,%s.254,255.255.255.0,12h", base, base)
+	// Start: network + 10
+	start := make(net.IP, len(ipNet.IP))
+	copy(start, ipNet.IP)
+	start[len(start)-1] += 10
+
+	// End: broadcast - 1
+	end := broadcastIP(ipNet)
+	end[len(end)-1]--
+
+	mask := net.IP(ipNet.Mask)
+	return fmt.Sprintf("%s,%s,%s,12h", start, end, mask)
+}
+
+// broadcastIP returns the broadcast address for the given network.
+func broadcastIP(ipNet *net.IPNet) net.IP {
+	ip := make(net.IP, len(ipNet.IP))
+	for i := range ip {
+		ip[i] = ipNet.IP[i] | ^ipNet.Mask[i]
+	}
+	return ip
 }

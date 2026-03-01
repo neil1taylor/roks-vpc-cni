@@ -51,21 +51,24 @@ npm run ts-check    # TypeScript type checking (tsc --noEmit)
 
 ### Operator (Go, controller-runtime)
 
-Four reconciliation loops + one mutating webhook + orphan GC:
+Ten reconciliation loops + one mutating webhook + orphan GC:
 
 | Component | Path | Watches | Purpose |
 |-----------|------|---------|---------|
 | CUDN Reconciler | `pkg/controller/cudn/` | `ClusterUserDefinedNetwork` | Creates VPC subnet + VLAN attachments per LocalNet CUDN |
+| UDN Reconciler | `pkg/controller/udn/` | `UserDefinedNetwork` | Namespace-scoped, same logic as CUDN |
 | Node Reconciler | `pkg/controller/node/` | `Node` (bare metal) | Ensures VLAN attachments exist on new BM nodes for all CUDNs |
 | VM Reconciler | `pkg/controller/vm/` | `VirtualMachine` | Drift detection, cleanup of VNI/FIP on VM deletion |
 | VPCSubnet Reconciler | `pkg/controller/vpcsubnet/` | `VPCSubnet` CRD | Full VPC subnet lifecycle |
 | VNI Reconciler | `pkg/controller/vni/` | `VirtualNetworkInterface` CRD | Dual-mode: VPC API (unmanaged) or ROKS API (roks) |
 | VLANAttachment Reconciler | `pkg/controller/vlanattachment/` | `VLANAttachment` CRD | Dual-mode like VNI |
 | FloatingIP Reconciler | `pkg/controller/floatingip/` | `FloatingIP` CRD | Full FIP lifecycle via VPC API |
+| VPCGateway Reconciler | `pkg/controller/gateway/` | `VPCGateway` CRD | VPC uplink VNI, FIP, PAR, VPC routes |
+| VPCRouter Reconciler | `pkg/controller/router/` | `VPCRouter` CRD | Router pod with IP forwarding, NAT, DHCP |
 | VM Webhook | `pkg/webhook/` | `VirtualMachine` CREATE | Creates VNI, injects MAC+IP into VM spec |
 | Orphan GC | `pkg/gc/` | Periodic (10 min) | Deletes orphaned VPC resources (15 min grace) |
 
-**CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip)
+**CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip), `VPCGateway` (vgw), `VPCRouter` (vrt)
 
 **Dual cluster mode** (`CLUSTER_MODE` env var): `"roks"` uses ROKS platform API for VNI/VLAN (stub until API exists); `"unmanaged"` (default) uses VPC API directly.
 
@@ -74,7 +77,7 @@ Four reconciliation loops + one mutating webhook + orphan GC:
 - **`pkg/vpc/`** — VPC API client. `Client` interface (composition of per-resource sub-interfaces) is the primary mock boundary for tests. Includes channel-based rate limiter (10 concurrent).
 - **`pkg/roks/`** — ROKS platform API client (stub, awaiting API availability).
 - **`pkg/annotations/`** — All `vpc.roks.ibm.com/*` annotation key constants.
-- **`pkg/finalizers/`** — Finalizer CRUD helpers. Finalizer names: `vpc.roks.ibm.com/cudn-cleanup`, `vpc.roks.ibm.com/vm-cleanup`.
+- **`pkg/finalizers/`** — Finalizer CRUD helpers. Finalizer names: `vpc.roks.ibm.com/cudn-cleanup`, `vpc.roks.ibm.com/vm-cleanup`, `vpc.roks.ibm.com/udn-cleanup`, `vpc.roks.ibm.com/gateway-cleanup`, `vpc.roks.ibm.com/router-cleanup`.
 - **`api/v1alpha1/`** — CRD type definitions with DeepCopy.
 
 ### BFF Service
@@ -83,7 +86,7 @@ Go HTTP server (`cmd/bff/`) that aggregates VPC API + K8s API data for the conso
 
 ### Console Plugin (TypeScript/React)
 
-OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-plugin-sdk-webpack`). PatternFly 5 components. 12 pages under `/vpc-networking/*` (Dashboard, Subnets, VNIs, VLAN Attachments, Floating IPs, Security Groups, Network ACLs, Topology). Plugin metadata in `console-extensions.json`, exposed modules in `package.json`.
+OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-plugin-sdk-webpack`). PatternFly 5 components. 22 pages under `/vpc-networking/*` (Dashboard, Subnets, VNIs, VLAN Attachments, Floating IPs, Security Groups, Network ACLs, Routes, Topology, Networks, Gateways, Routers — each with list, detail, and create pages). Plugin metadata in `console-extensions.json`, exposed modules in `package.json`.
 
 ## Implementation Conventions
 
@@ -96,4 +99,4 @@ OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-pl
 
 ## Implementation Status
 
-The codebase is scaffolded but largely unimplemented. Most VPC API methods are stubbed with TODO comments. No tests exist yet. The console plugin has source files but may not fully compile. Mock the `vpc.Client` interface for unit tests; use `envtest` for reconciler tests.
+All phases are implemented. The VPC client has 30+ methods, all reconcilers are functional with tests, and the console plugin compiles. Mock the `vpc.Client` interface for unit tests; use `envtest` for reconciler tests.

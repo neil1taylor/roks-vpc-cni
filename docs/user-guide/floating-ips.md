@@ -159,5 +159,5 @@ The security groups attached to a VNI are determined by the `vpc.roks.ibm.com/se
 - [Annotations Reference](annotations-reference.md) -- full list of annotations including floating IP annotations
 - [Creating VMs with VPC Networking](creating-vms.md) -- end-to-end VM creation workflow
 - [Live Migration](live-migration.md) -- floating IPs are preserved during migration
-- [Network Setup](network-setup.md) -- configuring CUDNs, security groups, and ACLs
+- [Network Setup](../admin-guide/network-setup.md) -- configuring CUDNs, security groups, and ACLs
 - [Glossary](../glossary.md) -- definitions of VPC networking terms

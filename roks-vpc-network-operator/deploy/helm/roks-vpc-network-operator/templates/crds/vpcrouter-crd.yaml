@@ -108,26 +108,6 @@ spec:
                     description: NATIPs advertises NAT-translated IP addresses.
                     type: boolean
                     default: false
-              functions:
-                description: Functions defines optional functions enabled on the router.
-                type: array
-                items:
-                  type: object
-                  required:
-                  - type
-                  properties:
-                    type:
-                      description: Type is the function type.
-                      type: string
-                      enum:
-                      - routing
-                      - firewall
-                      - wireguard
-                    config:
-                      description: Config is a key-value map of function-specific configuration.
-                      type: object
-                      additionalProperties:
-                        type: string
               dhcp:
                 description: DHCP controls DHCP server functionality on the router.
                 type: object
@@ -202,13 +182,6 @@ spec:
                   image:
                     description: Image is the container image to use for the gateway/router pod.
                     type: string
-                  replicas:
-                    description: Replicas is the number of gateway/router pod replicas.
-                    type: integer
-                    format: int32
-                    default: 1
-                    minimum: 1
-                    maximum: 3
           status:
             description: VPCRouterStatus defines the observed state of a VPCRouter.
             type: object
@@ -221,6 +194,9 @@ spec:
                 - Provisioning
                 - Ready
                 - Error
+              podIP:
+                description: PodIP is the cluster IP address of the router pod.
+                type: string
               transitIP:
                 description: TransitIP is the router's IP address on the transit network.
                 type: string

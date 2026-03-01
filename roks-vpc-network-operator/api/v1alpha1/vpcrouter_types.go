@@ -49,17 +49,6 @@ type RouteAdvertisement struct {
 	NATIPs bool `json:"natIPs"`
 }
 
-// RouterFunction defines an optional function enabled on the router.
-type RouterFunction struct {
-	// Type is the function type.
-	// +kubebuilder:validation:Enum=routing;firewall;wireguard
-	Type string `json:"type"`
-
-	// Config is a key-value map of function-specific configuration.
-	// +optional
-	Config map[string]string `json:"config,omitempty"`
-}
-
 // RouterDHCP controls DHCP server functionality on the router.
 type RouterDHCP struct {
 	// Enabled controls whether the router acts as a DHCP server.
@@ -99,10 +88,6 @@ type VPCRouterSpec struct {
 	// +optional
 	RouteAdvertisement *RouteAdvertisement `json:"routeAdvertisement,omitempty"`
 
-	// Functions defines optional functions enabled on the router.
-	// +optional
-	Functions []RouterFunction `json:"functions,omitempty"`
-
 	// DHCP controls DHCP server functionality on the router.
 	// +optional
 	DHCP *RouterDHCP `json:"dhcp,omitempty"`
@@ -121,6 +106,9 @@ type VPCRouterStatus struct {
 	// Phase is the current lifecycle phase of the router.
 	// +kubebuilder:validation:Enum=Pending;Provisioning;Ready;Error
 	Phase string `json:"phase,omitempty"`
+
+	// PodIP is the cluster IP address of the router pod.
+	PodIP string `json:"podIP,omitempty"`
 
 	// TransitIP is the router's IP address on the transit network.
 	TransitIP string `json:"transitIP,omitempty"`

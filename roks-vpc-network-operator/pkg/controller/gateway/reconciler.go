@@ -13,10 +13,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
 	"github.com/IBM/roks-vpc-network-operator/pkg/annotations"
@@ -123,8 +126,11 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, gw *v1alpha1.VPCGatewa
 		})
 	}
 
-	// Step 3: Ensure VPC routes
-	routeIDs, err := r.ensureVPCRoutes(ctx, gw)
+	// Step 3: Collect advertised routes from routers and merge with explicit routes
+	desiredRoutes := r.collectDesiredRoutes(ctx, gw)
+
+	// Step 3b: Ensure VPC routes (creates missing, deletes stale)
+	routeIDs, err := r.ensureVPCRoutes(ctx, gw, desiredRoutes)
 	if err != nil {
 		logger.Error(err, "Failed to ensure VPC routes")
 		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "create_routes", "error").Inc()
@@ -380,10 +386,51 @@ func (r *Reconciler) getUplinkNetworkInfo(ctx context.Context, networkName strin
 	return subnetID, vlanID, nil
 }
 
-// ensureVPCRoutes creates VPC routes for the gateway, using idempotent
-// checks against existing routes.
-func (r *Reconciler) ensureVPCRoutes(ctx context.Context, gw *v1alpha1.VPCGateway) ([]string, error) {
-	if len(gw.Spec.VPCRoutes) == 0 {
+// collectDesiredRoutes merges explicit spec.vpcRoutes with advertised routes
+// from VPCRouters that reference this gateway.
+func (r *Reconciler) collectDesiredRoutes(ctx context.Context, gw *v1alpha1.VPCGateway) []string {
+	logger := log.FromContext(ctx)
+	seen := map[string]bool{}
+
+	// Explicit routes from spec
+	for _, vr := range gw.Spec.VPCRoutes {
+		seen[vr.Destination] = true
+	}
+
+	// Advertised routes from routers
+	var routers v1alpha1.VPCRouterList
+	if err := r.Client.List(ctx, &routers, client.InNamespace(gw.Namespace)); err != nil {
+		logger.Error(err, "Failed to list VPCRouters for route collection")
+		// Continue with explicit routes only
+	} else {
+		for _, rt := range routers.Items {
+			if rt.Spec.Gateway == gw.Name {
+				for _, route := range rt.Status.AdvertisedRoutes {
+					seen[route] = true
+				}
+			}
+		}
+	}
+
+	result := make([]string, 0, len(seen))
+	for cidr := range seen {
+		result = append(result, cidr)
+	}
+	return result
+}
+
+// ensureVPCRoutes creates VPC routes for the desired destinations using
+// idempotent checks. Also deletes stale routes that are no longer desired.
+func (r *Reconciler) ensureVPCRoutes(ctx context.Context, gw *v1alpha1.VPCGateway, desiredDests []string) ([]string, error) {
+	logger := log.FromContext(ctx)
+
+	if len(desiredDests) == 0 {
+		// If there were previously tracked routes, clean them up
+		if len(gw.Status.VPCRouteIDs) > 0 {
+			if err := r.deleteStaleRoutes(ctx, gw, nil); err != nil {
+				logger.Error(err, "Failed to delete stale routes")
+			}
+		}
 		return nil, nil
 	}
 
@@ -398,34 +445,86 @@ func (r *Reconciler) ensureVPCRoutes(ctx context.Context, gw *v1alpha1.VPCGatewa
 		return nil, fmt.Errorf("ListRoutes: %w", err)
 	}
 
+	// Build maps for route lookup
 	existingByDest := make(map[string]string) // destination -> routeID
 	for _, route := range existingRoutes {
 		existingByDest[route.Destination] = route.ID
 	}
 
+	desiredSet := make(map[string]bool, len(desiredDests))
+	for _, d := range desiredDests {
+		desiredSet[d] = true
+	}
+
+	// Create missing routes
 	var routeIDs []string
-	for _, routeSpec := range gw.Spec.VPCRoutes {
-		// Check if route already exists for this destination
-		if existingID, ok := existingByDest[routeSpec.Destination]; ok {
+	for _, dest := range desiredDests {
+		if existingID, ok := existingByDest[dest]; ok {
 			routeIDs = append(routeIDs, existingID)
 			continue
 		}
 
-		routeName := fmt.Sprintf("roks-%s-gw-%s-%s", r.ClusterID, gw.Name, sanitizeDestination(routeSpec.Destination))
+		routeName := fmt.Sprintf("roks-%s-gw-%s-%s", r.ClusterID, gw.Name, sanitizeDestination(dest))
 		route, err := r.VPC.CreateRoute(ctx, r.VPCID, rtID, vpc.CreateRouteOptions{
 			Name:        routeName,
-			Destination: routeSpec.Destination,
+			Destination: dest,
 			Action:      "deliver",
 			NextHopIP:   gw.Status.ReservedIP,
 			Zone:        gw.Spec.Zone,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("CreateRoute(%s): %w", routeSpec.Destination, err)
+			return nil, fmt.Errorf("CreateRoute(%s): %w", dest, err)
 		}
 		routeIDs = append(routeIDs, route.ID)
 	}
 
+	// Delete stale routes (previously tracked but no longer desired)
+	if err := r.deleteStaleRoutes(ctx, gw, desiredSet); err != nil {
+		logger.Error(err, "Failed to delete stale routes")
+		// Non-fatal: routes were created successfully
+	}
+
 	return routeIDs, nil
+}
+
+// deleteStaleRoutes removes VPC routes that are tracked in status but no longer desired.
+func (r *Reconciler) deleteStaleRoutes(ctx context.Context, gw *v1alpha1.VPCGateway, desiredSet map[string]bool) error {
+	if len(gw.Status.VPCRouteIDs) == 0 {
+		return nil
+	}
+
+	rtID, err := r.getDefaultRoutingTableID(ctx)
+	if err != nil {
+		return fmt.Errorf("getDefaultRoutingTableID: %w", err)
+	}
+
+	// Get existing routes to check destinations
+	existingRoutes, err := r.VPC.ListRoutes(ctx, r.VPCID, rtID)
+	if err != nil {
+		return fmt.Errorf("ListRoutes: %w", err)
+	}
+
+	trackedSet := make(map[string]bool, len(gw.Status.VPCRouteIDs))
+	for _, id := range gw.Status.VPCRouteIDs {
+		trackedSet[id] = true
+	}
+
+	for _, route := range existingRoutes {
+		// Only consider routes we previously tracked
+		if !trackedSet[route.ID] {
+			continue
+		}
+		// If this route's destination is no longer desired, delete it
+		if desiredSet == nil || !desiredSet[route.Destination] {
+			if err := r.VPC.DeleteRoute(ctx, r.VPCID, rtID, route.ID); err != nil {
+				if !isVPCNotFound(err) {
+					return fmt.Errorf("DeleteRoute(%s): %w", route.ID, err)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // ensureFloatingIP creates or adopts a floating IP and binds it to the gateway's VNI.
@@ -692,9 +791,28 @@ func sanitizeDestination(dest string) string {
 }
 
 // SetupWithManager registers the VPCGateway reconciler with the controller manager.
+// Watches VPCRouter changes so that advertised routes from routers are collected
+// and created as VPC routes automatically.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("vpcgateway-controller")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.VPCGateway{}).
+		Watches(&v1alpha1.VPCRouter{}, handler.EnqueueRequestsFromMapFunc(
+			func(ctx context.Context, obj client.Object) []reconcile.Request {
+				rt, ok := obj.(*v1alpha1.VPCRouter)
+				if !ok {
+					return nil
+				}
+				if rt.Spec.Gateway == "" {
+					return nil
+				}
+				return []reconcile.Request{{
+					NamespacedName: types.NamespacedName{
+						Name:      rt.Spec.Gateway,
+						Namespace: rt.Namespace,
+					},
+				}}
+			},
+		)).
 		Complete(r)
 }

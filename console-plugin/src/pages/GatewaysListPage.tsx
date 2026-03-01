@@ -39,7 +39,7 @@ const GatewaysListPage: React.FC = () => {
     setIsDeleting(true);
     setDeleteError('');
     try {
-      const resp = await apiClient.deleteGateway(deleteTarget.name);
+      const resp = await apiClient.deleteGateway(deleteTarget.name, deleteTarget.namespace);
       if (resp.error) {
         const msg = resp.error.message || 'Delete failed';
         setDeleteError(typeof msg === 'string' ? msg : JSON.stringify(msg));
@@ -74,7 +74,7 @@ const GatewaysListPage: React.FC = () => {
         <Toolbar>
           <ToolbarContent>
             <ToolbarItem>
-              <Button variant="primary">Create Gateway</Button>
+              <Button variant="primary" onClick={() => navigate('/vpc-networking/gateways/create')}>Create Gateway</Button>
             </ToolbarItem>
           </ToolbarContent>
         </Toolbar>
@@ -100,6 +100,7 @@ const GatewaysListPage: React.FC = () => {
                 <Th>Zone</Th>
                 <Th>Uplink Network</Th>
                 <Th>Floating IP</Th>
+                <Th>PAR CIDR</Th>
                 <Th>VNI IP</Th>
                 <Th>Routes</Th>
                 <Th>Status</Th>
@@ -111,13 +112,14 @@ const GatewaysListPage: React.FC = () => {
               {gateways.map((gw: Gateway) => (
                 <Tr key={gw.name}>
                   <Td>
-                    <Button variant="link" isInline onClick={() => navigate(`/vpc-networking/gateways/${gw.name}`)}>
+                    <Button variant="link" isInline onClick={() => navigate(`/vpc-networking/gateways/${gw.name}?ns=${encodeURIComponent(gw.namespace)}`)}>
                       {gw.name}
                     </Button>
                   </Td>
                   <Td>{gw.zone || '-'}</Td>
                   <Td>{gw.uplinkNetwork || '-'}</Td>
                   <Td>{gw.floatingIP || '-'}</Td>
+                  <Td>{gw.publicAddressRangeCIDR || '-'}</Td>
                   <Td>{gw.reservedIP || '-'}</Td>
                   <Td>{gw.vpcRouteCount}</Td>
                   <Td><StatusBadge status={gw.syncStatus} /></Td>

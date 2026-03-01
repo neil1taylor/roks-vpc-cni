@@ -255,5 +255,5 @@ kubectl patch vm my-vm -n tenant-ns --type merge -p '{"metadata":{"finalizers":n
 - [Annotations Reference](annotations-reference.md) -- full list of all annotations
 - [Floating IPs](floating-ips.md) -- detailed guide on floating IP management
 - [Live Migration](live-migration.md) -- how VPC networking supports live migration
-- [Network Setup](network-setup.md) -- initial CUDN and VPC configuration
+- [Network Setup](../admin-guide/network-setup.md) -- initial CUDN and VPC configuration
 - [Glossary](../glossary.md) -- definitions of VPC networking terms

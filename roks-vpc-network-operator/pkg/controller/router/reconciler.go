@@ -17,7 +17,9 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
 	"github.com/IBM/roks-vpc-network-operator/pkg/finalizers"
@@ -220,7 +222,9 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 			r.emitEvent(router, "Normal", "PodDeleted", "Deleted stale router pod %s for recreation", podName)
 			// Fall through to create
 		} else {
-			// Pod exists and is current — check if it's running
+			// Pod exists and is current — update PodIP in status
+			router.Status.PodIP = existing.Status.PodIP
+			// Check if it's running
 			isRunning := existing.Status.Phase == corev1.PodRunning
 			return isRunning, nil
 		}
@@ -355,10 +359,36 @@ func stripPrefix(address string) string {
 }
 
 // SetupWithManager registers the VPCRouter reconciler with the controller manager.
+// Watches VPCGateway changes so that router pods are recreated when a gateway's
+// NAT rules, firewall, image, or MAC address change.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("vpcrouter-controller")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.VPCRouter{}).
 		Owns(&corev1.Pod{}).
+		Watches(&v1alpha1.VPCGateway{}, handler.EnqueueRequestsFromMapFunc(
+			func(ctx context.Context, obj client.Object) []reconcile.Request {
+				gw, ok := obj.(*v1alpha1.VPCGateway)
+				if !ok {
+					return nil
+				}
+				var routers v1alpha1.VPCRouterList
+				if err := mgr.GetClient().List(ctx, &routers, client.InNamespace(gw.Namespace)); err != nil {
+					return nil
+				}
+				var reqs []reconcile.Request
+				for _, rt := range routers.Items {
+					if rt.Spec.Gateway == gw.Name {
+						reqs = append(reqs, reconcile.Request{
+							NamespacedName: types.NamespacedName{
+								Name:      rt.Name,
+								Namespace: rt.Namespace,
+							},
+						})
+					}
+				}
+				return reqs
+			},
+		)).
 		Complete(r)
 }

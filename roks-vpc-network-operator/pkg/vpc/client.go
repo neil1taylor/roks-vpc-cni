@@ -44,18 +44,12 @@ type ExtendedClient interface {
 	VPCService
 	ZoneService
 	VNILister
-	FloatingIPLister
 	PublicGatewayService
 }
 
 // VNILister lists all VNIs in the account.
 type VNILister interface {
 	ListVNIs(ctx context.Context) ([]VNI, error)
-}
-
-// FloatingIPLister lists all floating IPs in the account.
-type FloatingIPLister interface {
-	ListFloatingIPs(ctx context.Context) ([]FloatingIP, error)
 }
 
 // PublicGatewayService handles listing public gateways (read-only, BFF use).
@@ -95,6 +89,7 @@ type FloatingIPService interface {
 	GetFloatingIP(ctx context.Context, fipID string) (*FloatingIP, error)
 	UpdateFloatingIP(ctx context.Context, fipID string, opts UpdateFloatingIPOptions) (*FloatingIP, error)
 	DeleteFloatingIP(ctx context.Context, fipID string) error
+	ListFloatingIPs(ctx context.Context) ([]FloatingIP, error)
 }
 
 // SecurityGroupService handles VPC security group and rule CRUD.

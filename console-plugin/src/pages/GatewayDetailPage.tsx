@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams } from 'react-router-dom-v5-compat';
+import { useParams, useSearchParams } from 'react-router-dom-v5-compat';
 import {
   PageSection,
   PageSectionVariants,
@@ -28,7 +28,9 @@ import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 const GatewayDetailPage: React.FC = () => {
   const { name } = useParams<{ name: string }>();
-  const { gateway, loading } = useGateway(name || '');
+  const [searchParams] = useSearchParams();
+  const ns = searchParams.get('ns') || undefined;
+  const { gateway, loading } = useGateway(name || '', ns);
   const navigate = useNavigate();
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -39,7 +41,7 @@ const GatewayDetailPage: React.FC = () => {
     if (!name) return;
     setActionLoading(true);
     setActionError(null);
-    const resp = await apiClient.deleteGateway(name);
+    const resp = await apiClient.deleteGateway(name, ns);
     if (resp.error) {
       setActionError(resp.error.message);
       setActionLoading(false);
@@ -126,6 +128,30 @@ const GatewayDetailPage: React.FC = () => {
                   <DescriptionListTerm>NAT Rules</DescriptionListTerm>
                   <DescriptionListDescription>{gateway.natRuleCount}</DescriptionListDescription>
                 </DescriptionListGroup>
+                <DescriptionListGroup>
+                  <DescriptionListTerm>Public Address Range</DescriptionListTerm>
+                  <DescriptionListDescription>
+                    {gateway.parEnabled ? (gateway.publicAddressRangeCIDR || 'Provisioning...') : 'Disabled'}
+                  </DescriptionListDescription>
+                </DescriptionListGroup>
+                {gateway.publicAddressRangeID && (
+                  <DescriptionListGroup>
+                    <DescriptionListTerm>PAR ID</DescriptionListTerm>
+                    <DescriptionListDescription>{gateway.publicAddressRangeID}</DescriptionListDescription>
+                  </DescriptionListGroup>
+                )}
+                {gateway.parPrefixLength && (
+                  <DescriptionListGroup>
+                    <DescriptionListTerm>PAR Prefix Length</DescriptionListTerm>
+                    <DescriptionListDescription>/{gateway.parPrefixLength}</DescriptionListDescription>
+                  </DescriptionListGroup>
+                )}
+                {gateway.ingressRoutingTableID && (
+                  <DescriptionListGroup>
+                    <DescriptionListTerm>Ingress Routing Table</DescriptionListTerm>
+                    <DescriptionListDescription>{gateway.ingressRoutingTableID}</DescriptionListDescription>
+                  </DescriptionListGroup>
+                )}
                 <DescriptionListGroup>
                   <DescriptionListTerm>Sync Status</DescriptionListTerm>
                   <DescriptionListDescription>

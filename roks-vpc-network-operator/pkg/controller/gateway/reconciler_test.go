@@ -840,6 +840,116 @@ func TestReconcileDelete_ExternalPARNotDeleted(t *testing.T) {
 	}
 }
 
+// TestReconcileNormal_WithAdvertisedRoutes tests that the gateway collects
+// advertised routes from routers that reference it and creates VPC routes.
+func TestReconcileNormal_WithAdvertisedRoutes(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "adv-gw",
+			Namespace:  "default",
+			Finalizers: []string{"vpc.roks.ibm.com/gateway-cleanup"},
+		},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone: "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{
+				Network: "uplink-net",
+			},
+			Transit: v1alpha1.GatewayTransit{
+				Address: "192.168.100.1",
+			},
+			// No explicit vpcRoutes — routes come from the router
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			VNIID:        "vni-adv-123",
+			AttachmentID: "att-adv-123",
+			BMServerID:   "bm-server-123",
+			MACAddress:   "fa:16:3e:aa:bb:cc",
+			ReservedIP:   "10.240.1.5",
+		},
+	}
+
+	// Router with connectedSegments route advertisement
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-adv", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "adv-gw",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+				{Name: "l2-db", Address: "10.200.0.1/24"},
+			},
+			RouteAdvertisement: &v1alpha1.RouteAdvertisement{ConnectedSegments: true},
+		},
+		Status: v1alpha1.VPCRouterStatus{
+			Phase:            "Ready",
+			AdvertisedRoutes: []string{"10.100.0.0/24", "10.200.0.0/24"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, router).
+		WithStatusSubresource(gw, router).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.GetVNIFn = func(ctx context.Context, vniID string) (*vpc.VNI, error) {
+		return &vpc.VNI{
+			ID:         "vni-adv-123",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			PrimaryIP:  vpc.ReservedIP{Address: "10.240.1.5"},
+		}, nil
+	}
+	mockVPC.ListRoutingTablesFn = func(ctx context.Context, vpcID string) ([]vpc.RoutingTable, error) {
+		return []vpc.RoutingTable{{ID: "rt-default", IsDefault: true}}, nil
+	}
+	mockVPC.ListRoutesFn = func(ctx context.Context, vpcID, routingTableID string) ([]vpc.Route, error) {
+		return []vpc.Route{}, nil
+	}
+
+	var createdDests []string
+	mockVPC.CreateRouteFn = func(ctx context.Context, vpcID, routingTableID string, opts vpc.CreateRouteOptions) (*vpc.Route, error) {
+		createdDests = append(createdDests, opts.Destination)
+		return &vpc.Route{
+			ID:          fmt.Sprintf("route-%s", sanitizeDestination(opts.Destination)),
+			Destination: opts.Destination,
+			NextHop:     opts.NextHopIP,
+		}, nil
+	}
+
+	r := &Reconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		VPC:       mockVPC,
+		ClusterID: "cluster-abc",
+		VPCID:     "vpc-123",
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "adv-gw", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	// Should have created routes for both advertised CIDRs
+	if len(createdDests) != 2 {
+		t.Fatalf("expected 2 routes created from advertised routes, got %d: %v", len(createdDests), createdDests)
+	}
+
+	updated := &v1alpha1.VPCGateway{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "adv-gw", Namespace: "default"}, updated); err != nil {
+		t.Fatalf("Failed to get updated VPCGateway: %v", err)
+	}
+	if len(updated.Status.VPCRouteIDs) != 2 {
+		t.Errorf("expected 2 VPCRouteIDs, got %d: %v", len(updated.Status.VPCRouteIDs), updated.Status.VPCRouteIDs)
+	}
+	if updated.Status.Phase != "Ready" {
+		t.Errorf("expected Phase 'Ready', got %q", updated.Status.Phase)
+	}
+}
+
 func TestReconcile_NotFound(t *testing.T) {
 	scheme := newTestScheme()
 

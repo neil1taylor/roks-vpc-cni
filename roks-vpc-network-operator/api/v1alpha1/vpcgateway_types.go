@@ -11,13 +11,6 @@ type RouterPodSpec struct {
 	// Image is the container image to use for the gateway/router pod.
 	// +optional
 	Image string `json:"image,omitempty"`
-
-	// Replicas is the number of gateway/router pod replicas.
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=3
-	Replicas *int32 `json:"replicas,omitempty"`
 }
 
 // GatewayFirewall defines firewall configuration for a gateway or router.

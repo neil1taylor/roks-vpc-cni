@@ -70,16 +70,33 @@ func (h *GatewayHandler) GetGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// VPCGateway is cluster-scoped, so no namespace needed
-	item, err := h.dynClient.Resource(vpcGatewayGVR).Namespace("").Get(r.Context(), name, metav1.GetOptions{})
-	if err != nil {
-		slog.ErrorContext(r.Context(), "failed to get VPCGateway", "name", name, "error", err)
-		WriteError(w, http.StatusNotFound, "gateway not found", "NOT_FOUND")
+	ns := r.URL.Query().Get("namespace")
+	if ns != "" {
+		// Namespace provided — direct namespaced Get
+		item, err := h.dynClient.Resource(vpcGatewayGVR).Namespace(ns).Get(r.Context(), name, metav1.GetOptions{})
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed to get VPCGateway", "name", name, "namespace", ns, "error", err)
+			WriteError(w, http.StatusNotFound, "gateway not found", "NOT_FOUND")
+			return
+		}
+		WriteJSON(w, http.StatusOK, unstructuredToGateway(item))
 		return
 	}
 
-	gateway := unstructuredToGateway(item)
-	WriteJSON(w, http.StatusOK, gateway)
+	// No namespace — cross-namespace List + filter by name
+	list, err := h.dynClient.Resource(vpcGatewayGVR).Namespace("").List(r.Context(), metav1.ListOptions{})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to list VPCGateways for get", "name", name, "error", err)
+		WriteError(w, http.StatusInternalServerError, "failed to list gateways", "LIST_FAILED")
+		return
+	}
+	for _, item := range list.Items {
+		if item.GetName() == name {
+			WriteJSON(w, http.StatusOK, unstructuredToGateway(&item))
+			return
+		}
+	}
+	WriteError(w, http.StatusNotFound, "gateway not found", "NOT_FOUND")
 }
 
 // CreateGateway handles POST /api/v1/gateways
@@ -112,7 +129,11 @@ func (h *GatewayHandler) CreateGateway(w http.ResponseWriter, r *http.Request) {
 	}
 
 	obj := buildGatewayUnstructured(req)
-	created, err := h.dynClient.Resource(vpcGatewayGVR).Namespace("").Create(r.Context(), obj, metav1.CreateOptions{})
+	ns := req.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	created, err := h.dynClient.Resource(vpcGatewayGVR).Namespace(ns).Create(r.Context(), obj, metav1.CreateOptions{})
 	if err != nil {
 		slog.ErrorContext(r.Context(), "failed to create VPCGateway", "error", err)
 		WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create gateway: %v", err), "CREATE_FAILED")
@@ -152,8 +173,29 @@ func (h *GatewayHandler) DeleteGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.dynClient.Resource(vpcGatewayGVR).Namespace("").Delete(r.Context(), name, metav1.DeleteOptions{}); err != nil {
-		slog.ErrorContext(r.Context(), "failed to delete VPCGateway", "name", name, "error", err)
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		// Fall back to cross-namespace list to find the namespace
+		list, err := h.dynClient.Resource(vpcGatewayGVR).Namespace("").List(r.Context(), metav1.ListOptions{})
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed to list VPCGateways for delete", "name", name, "error", err)
+			WriteError(w, http.StatusInternalServerError, "failed to find gateway", "LIST_FAILED")
+			return
+		}
+		for _, item := range list.Items {
+			if item.GetName() == name {
+				ns = item.GetNamespace()
+				break
+			}
+		}
+		if ns == "" {
+			WriteError(w, http.StatusNotFound, "gateway not found", "NOT_FOUND")
+			return
+		}
+	}
+
+	if err := h.dynClient.Resource(vpcGatewayGVR).Namespace(ns).Delete(r.Context(), name, metav1.DeleteOptions{}); err != nil {
+		slog.ErrorContext(r.Context(), "failed to delete VPCGateway", "name", name, "namespace", ns, "error", err)
 		WriteError(w, http.StatusInternalServerError, "failed to delete gateway", "DELETE_FAILED")
 		return
 	}
@@ -173,8 +215,15 @@ func unstructuredToGateway(obj *unstructured.Unstructured) model.GatewayResponse
 
 	if spec != nil {
 		gw.Zone, _, _ = unstructured.NestedString(obj.Object, "spec", "zone")
-		gw.UplinkNetwork, _, _ = unstructured.NestedString(obj.Object, "spec", "uplinkNetworkRef")
-		gw.TransitNetwork, _, _ = unstructured.NestedString(obj.Object, "spec", "transitNetworkRef")
+		gw.UplinkNetwork, _, _ = unstructured.NestedString(obj.Object, "spec", "uplink", "network")
+		gw.TransitNetwork, _, _ = unstructured.NestedString(obj.Object, "spec", "transit", "network")
+
+		// PAR spec
+		gw.PAREnabled, _, _ = unstructured.NestedBool(obj.Object, "spec", "publicAddressRange", "enabled")
+		parPrefix, found, _ := unstructured.NestedInt64(obj.Object, "spec", "publicAddressRange", "prefixLength")
+		if found {
+			gw.PARPrefixLength = int(parPrefix)
+		}
 	}
 
 	if status != nil {
@@ -192,6 +241,11 @@ func unstructuredToGateway(obj *unstructured.Unstructured) model.GatewayResponse
 		if found {
 			gw.NATRuleCount = int(natRuleCount)
 		}
+
+		// PAR status
+		gw.PublicAddressRangeID, _, _ = unstructured.NestedString(obj.Object, "status", "publicAddressRangeID")
+		gw.PublicAddressRangeCIDR, _, _ = unstructured.NestedString(obj.Object, "status", "publicAddressRangeCIDR")
+		gw.IngressRoutingTableID, _, _ = unstructured.NestedString(obj.Object, "status", "ingressRoutingTableID")
 	}
 
 	if ct := obj.GetCreationTimestamp(); !ct.IsZero() {
@@ -210,14 +264,41 @@ func buildGatewayUnstructured(req model.GatewayRequest) *unstructured.Unstructur
 		Kind:    "VPCGateway",
 	})
 	obj.SetName(req.Name)
+	if req.Namespace != "" {
+		obj.SetNamespace(req.Namespace)
+	}
+
+	transit := map[string]interface{}{
+		"address": req.TransitAddress,
+	}
+	if req.TransitCIDR != "" {
+		transit["cidr"] = req.TransitCIDR
+	}
+	if req.TransitNetwork != "" {
+		transit["network"] = req.TransitNetwork
+	}
 
 	spec := map[string]interface{}{
-		"zone":              req.Zone,
-		"uplinkNetworkRef":  req.Uplink,
+		"zone": req.Zone,
+		"uplink": map[string]interface{}{
+			"network": req.UplinkNetwork,
+		},
+		"transit": transit,
 	}
-	if req.Transit != "" {
-		spec["transitNetworkRef"] = req.Transit
+
+	if req.PAREnabled {
+		par := map[string]interface{}{
+			"enabled": true,
+		}
+		if req.PARPrefixLength > 0 {
+			par["prefixLength"] = int64(req.PARPrefixLength)
+		}
+		if req.PARID != "" {
+			par["id"] = req.PARID
+		}
+		spec["publicAddressRange"] = par
 	}
+
 	obj.Object["spec"] = spec
 
 	return obj

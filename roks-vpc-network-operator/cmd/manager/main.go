@@ -279,6 +279,7 @@ func main() {
 		K8sClient: mgr.GetClient(),
 		VPC:       vpcClient,
 		ClusterID: clusterID,
+		VPCID:     vpcID,
 	}
 	if err := mgr.Add(orphanGC); err != nil {
 		logger.Error(err, "Unable to add orphan GC")

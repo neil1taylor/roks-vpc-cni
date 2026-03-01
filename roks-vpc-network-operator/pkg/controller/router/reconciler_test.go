@@ -562,6 +562,62 @@ func TestBuildRouterPod_WithDHCP(t *testing.T) {
 	t.Error("expected DHCP_ENABLED env var to be present")
 }
 
+// TestBuildRouterPod_Probes tests that liveness and readiness probes are present.
+func TestBuildRouterPod_Probes(t *testing.T) {
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-probes", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+		},
+	}
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	pod := buildRouterPod(router, gw)
+	container := pod.Spec.Containers[0]
+
+	// Verify liveness probe
+	if container.LivenessProbe == nil {
+		t.Fatal("expected liveness probe to be present")
+	}
+	if container.LivenessProbe.Exec == nil {
+		t.Fatal("expected liveness probe to use exec handler")
+	}
+	if len(container.LivenessProbe.Exec.Command) == 0 {
+		t.Fatal("expected liveness probe command to be non-empty")
+	}
+	if container.LivenessProbe.Exec.Command[0] != "sysctl" {
+		t.Errorf("expected liveness probe command = 'sysctl', got %q", container.LivenessProbe.Exec.Command[0])
+	}
+	if container.LivenessProbe.InitialDelaySeconds != 30 {
+		t.Errorf("expected liveness InitialDelaySeconds = 30, got %d", container.LivenessProbe.InitialDelaySeconds)
+	}
+
+	// Verify readiness probe
+	if container.ReadinessProbe == nil {
+		t.Fatal("expected readiness probe to be present")
+	}
+	if container.ReadinessProbe.Exec == nil {
+		t.Fatal("expected readiness probe to use exec handler")
+	}
+	if container.ReadinessProbe.InitialDelaySeconds != 10 {
+		t.Errorf("expected readiness InitialDelaySeconds = 10, got %d", container.ReadinessProbe.InitialDelaySeconds)
+	}
+}
+
 // TestComputeSubnetGateway tests the subnet gateway derivation helper.
 func TestComputeSubnetGateway(t *testing.T) {
 	tests := []struct {
@@ -588,7 +644,10 @@ func TestComputeDHCPRange(t *testing.T) {
 	}{
 		{"10.100.0.1/24", "10.100.0.10,10.100.0.254,255.255.255.0,12h"},
 		{"192.168.1.1/24", "192.168.1.10,192.168.1.254,255.255.255.0,12h"},
+		{"10.200.0.1/20", "10.200.0.10,10.200.15.254,255.255.240.0,12h"},
+		{"172.16.0.1/28", "172.16.0.10,172.16.0.14,255.255.255.240,12h"},
 		{"10.100.0.1", ""}, // no prefix
+		{"invalid", ""},    // invalid address
 	}
 	for _, tc := range tests {
 		got := computeDHCPRange(tc.address)

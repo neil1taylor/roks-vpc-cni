@@ -39,7 +39,7 @@ const RoutersListPage: React.FC = () => {
     setIsDeleting(true);
     setDeleteError('');
     try {
-      const resp = await apiClient.deleteRouter(deleteTarget.name);
+      const resp = await apiClient.deleteRouter(deleteTarget.name, deleteTarget.namespace);
       if (resp.error) {
         const msg = resp.error.message || 'Delete failed';
         setDeleteError(typeof msg === 'string' ? msg : JSON.stringify(msg));
@@ -74,7 +74,7 @@ const RoutersListPage: React.FC = () => {
         <Toolbar>
           <ToolbarContent>
             <ToolbarItem>
-              <Button variant="primary">Create Router</Button>
+              <Button variant="primary" onClick={() => navigate('/vpc-networking/routers/create')}>Create Router</Button>
             </ToolbarItem>
           </ToolbarContent>
         </Toolbar>
@@ -110,12 +110,12 @@ const RoutersListPage: React.FC = () => {
               {routers.map((router: Router) => (
                 <Tr key={router.name}>
                   <Td>
-                    <Button variant="link" isInline onClick={() => navigate(`/vpc-networking/routers/${router.name}`)}>
+                    <Button variant="link" isInline onClick={() => navigate(`/vpc-networking/routers/${router.name}?ns=${encodeURIComponent(router.namespace)}`)}>
                       {router.name}
                     </Button>
                   </Td>
                   <Td>
-                    <Button variant="link" isInline onClick={() => navigate(`/vpc-networking/gateways/${router.gateway}`)}>
+                    <Button variant="link" isInline onClick={() => navigate(`/vpc-networking/gateways/${router.gateway}?ns=${encodeURIComponent(router.namespace)}`)}>
                       {router.gateway}
                     </Button>
                   </Td>

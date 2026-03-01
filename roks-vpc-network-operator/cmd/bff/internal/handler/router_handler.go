@@ -70,15 +70,32 @@ func (h *RouterHandler) GetRouter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.dynClient.Resource(vpcRouterGVR).Namespace("").Get(r.Context(), name, metav1.GetOptions{})
-	if err != nil {
-		slog.ErrorContext(r.Context(), "failed to get VPCRouter", "name", name, "error", err)
-		WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
+	ns := r.URL.Query().Get("namespace")
+	if ns != "" {
+		item, err := h.dynClient.Resource(vpcRouterGVR).Namespace(ns).Get(r.Context(), name, metav1.GetOptions{})
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed to get VPCRouter", "name", name, "namespace", ns, "error", err)
+			WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
+			return
+		}
+		WriteJSON(w, http.StatusOK, unstructuredToRouter(item))
 		return
 	}
 
-	router := unstructuredToRouter(item)
-	WriteJSON(w, http.StatusOK, router)
+	// No namespace — cross-namespace List + filter by name
+	list, err := h.dynClient.Resource(vpcRouterGVR).Namespace("").List(r.Context(), metav1.ListOptions{})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to list VPCRouters for get", "name", name, "error", err)
+		WriteError(w, http.StatusInternalServerError, "failed to list routers", "LIST_FAILED")
+		return
+	}
+	for _, item := range list.Items {
+		if item.GetName() == name {
+			WriteJSON(w, http.StatusOK, unstructuredToRouter(&item))
+			return
+		}
+	}
+	WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
 }
 
 // CreateRouter handles POST /api/v1/routers
@@ -111,7 +128,11 @@ func (h *RouterHandler) CreateRouter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	obj := buildRouterUnstructured(req)
-	created, err := h.dynClient.Resource(vpcRouterGVR).Namespace("").Create(r.Context(), obj, metav1.CreateOptions{})
+	ns := req.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	created, err := h.dynClient.Resource(vpcRouterGVR).Namespace(ns).Create(r.Context(), obj, metav1.CreateOptions{})
 	if err != nil {
 		slog.ErrorContext(r.Context(), "failed to create VPCRouter", "error", err)
 		WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create router: %v", err), "CREATE_FAILED")
@@ -151,8 +172,28 @@ func (h *RouterHandler) DeleteRouter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.dynClient.Resource(vpcRouterGVR).Namespace("").Delete(r.Context(), name, metav1.DeleteOptions{}); err != nil {
-		slog.ErrorContext(r.Context(), "failed to delete VPCRouter", "name", name, "error", err)
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		list, err := h.dynClient.Resource(vpcRouterGVR).Namespace("").List(r.Context(), metav1.ListOptions{})
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed to list VPCRouters for delete", "name", name, "error", err)
+			WriteError(w, http.StatusInternalServerError, "failed to find router", "LIST_FAILED")
+			return
+		}
+		for _, item := range list.Items {
+			if item.GetName() == name {
+				ns = item.GetNamespace()
+				break
+			}
+		}
+		if ns == "" {
+			WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
+			return
+		}
+	}
+
+	if err := h.dynClient.Resource(vpcRouterGVR).Namespace(ns).Delete(r.Context(), name, metav1.DeleteOptions{}); err != nil {
+		slog.ErrorContext(r.Context(), "failed to delete VPCRouter", "name", name, "namespace", ns, "error", err)
 		WriteError(w, http.StatusInternalServerError, "failed to delete router", "DELETE_FAILED")
 		return
 	}
@@ -169,7 +210,7 @@ func unstructuredToRouter(obj *unstructured.Unstructured) model.RouterResponse {
 	}
 
 	// Spec fields
-	rt.Gateway, _, _ = unstructured.NestedString(obj.Object, "spec", "gatewayRef")
+	rt.Gateway, _, _ = unstructured.NestedString(obj.Object, "spec", "gateway")
 
 	// Status fields
 	rt.Phase, _, _ = unstructured.NestedString(obj.Object, "status", "phase")
@@ -202,10 +243,10 @@ func unstructuredToRouter(obj *unstructured.Unstructured) model.RouterResponse {
 		rt.AdvertisedRoutes = routeSlice
 	}
 
-	// Functions from spec
-	funcSlice, found, _ := unstructured.NestedStringSlice(obj.Object, "spec", "functions")
+	// PodIP from status
+	podIP, found, _ := unstructured.NestedString(obj.Object, "status", "podIP")
 	if found {
-		rt.Functions = funcSlice
+		rt.PodIP = podIP
 	}
 
 	if ct := obj.GetCreationTimestamp(); !ct.IsZero() {
@@ -224,9 +265,21 @@ func buildRouterUnstructured(req model.RouterRequest) *unstructured.Unstructured
 		Kind:    "VPCRouter",
 	})
 	obj.SetName(req.Name)
+	if req.Namespace != "" {
+		obj.SetNamespace(req.Namespace)
+	}
+
+	networks := make([]interface{}, 0, len(req.Networks))
+	for _, n := range req.Networks {
+		networks = append(networks, map[string]interface{}{
+			"name":    n.Name,
+			"address": n.Address,
+		})
+	}
 
 	spec := map[string]interface{}{
-		"gatewayRef": req.Gateway,
+		"gateway":  req.Gateway,
+		"networks": networks,
 	}
 	obj.Object["spec"] = spec
 

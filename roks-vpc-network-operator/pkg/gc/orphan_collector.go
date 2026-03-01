@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,6 +37,7 @@ type OrphanCollector struct {
 	K8sClient client.Client
 	VPC       vpc.Client
 	ClusterID string
+	VPCID     string
 
 	// Interval between GC runs (default: 10 minutes)
 	Interval time.Duration
@@ -75,44 +77,58 @@ func (gc *OrphanCollector) Start(ctx context.Context) error {
 	}
 }
 
-// collect performs a single GC run.
+// collect performs a single GC run covering VNIs, FIPs, PARs, and VPC routes.
 func (gc *OrphanCollector) collect(ctx context.Context, gracePeriod time.Duration) error {
 	logger := log.FromContext(ctx).WithName("orphan-gc")
 
-	// 1. List all VNIs tagged with this cluster ID
+	orphanVNIs := gc.collectOrphanedVNIs(ctx, logger, gracePeriod)
+	orphanFIPs := gc.collectOrphanedFloatingIPs(ctx, logger)
+	orphanPARs := gc.collectOrphanedPARs(ctx, logger)
+	orphanRoutes := gc.collectOrphanedVPCRoutes(ctx, logger)
+
+	total := orphanVNIs + orphanFIPs + orphanPARs + orphanRoutes
+	if total > 0 {
+		logger.Info("Orphan GC completed",
+			"deletedVNIs", orphanVNIs,
+			"deletedFIPs", orphanFIPs,
+			"deletedPARs", orphanPARs,
+			"deletedRoutes", orphanRoutes)
+	} else {
+		logger.V(1).Info("Orphan GC run completed, no orphans found")
+	}
+
+	return nil
+}
+
+// collectOrphanedVNIs finds and deletes VNIs with no corresponding VM or gateway.
+func (gc *OrphanCollector) collectOrphanedVNIs(ctx context.Context, logger logr.Logger, gracePeriod time.Duration) int {
 	vnis, err := gc.VPC.ListVNIsByTag(ctx, gc.ClusterID, "", "")
 	if err != nil {
 		logger.Error(err, "Failed to list VNIs for orphan detection")
-		return err
+		return 0
 	}
 
-	// 2. Build a set of VNI IDs that are referenced by existing VMs
 	referencedVNIs := gc.buildReferencedVNISet(ctx)
 
 	now := time.Now()
+	_ = now
+	_ = gracePeriod
 	orphanCount := 0
 
 	for _, vni := range vnis {
-		// Skip VNIs that are referenced by VM annotations
 		if referencedVNIs[vni.ID] {
 			continue
 		}
 
-		// Parse namespace and VM name from VNI name.
-		// Supports both formats:
-		//   Legacy:       "roks-<cluster>-<ns>-<vmname>"
-		//   Multi-network: "roks-<cluster>-<ns>-<vmname>-<netname>"
 		ns, vmName := parseVNIName(vni.Name, gc.ClusterID)
 		if ns == "" || vmName == "" {
 			continue
 		}
 
-		// Check if the corresponding VirtualMachine still exists
 		vm := &unstructured.Unstructured{}
 		vm.SetGroupVersionKind(vmGVK)
 		err := gc.K8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: vmName}, vm)
 		if err == nil {
-			// VM exists — not an orphan
 			continue
 		}
 		if client.IgnoreNotFound(err) != nil {
@@ -120,12 +136,6 @@ func (gc *OrphanCollector) collect(ctx context.Context, gracePeriod time.Duratio
 			continue
 		}
 
-		// VM not found — check grace period
-		if gracePeriod > 0 {
-			_ = now
-		}
-
-		// Delete associated floating IP first (if any)
 		logger.Info("Deleting orphaned VNI", "vniID", vni.ID, "namespace", ns, "vmName", vmName)
 		if err := gc.VPC.DeleteVNI(ctx, vni.ID); err != nil {
 			logger.Error(err, "Failed to delete orphaned VNI", "vniID", vni.ID)
@@ -135,13 +145,135 @@ func (gc *OrphanCollector) collect(ctx context.Context, gracePeriod time.Duratio
 		orphanCount++
 	}
 
-	if orphanCount > 0 {
-		logger.Info("Orphan GC completed", "deletedVNIs", orphanCount)
-	} else {
-		logger.V(1).Info("Orphan GC run completed, no orphans found")
+	return orphanCount
+}
+
+// collectOrphanedFloatingIPs finds and deletes FIPs that are tagged with the
+// cluster ID but not referenced by any VPCGateway or FloatingIP CRD.
+func (gc *OrphanCollector) collectOrphanedFloatingIPs(ctx context.Context, logger logr.Logger) int {
+	fips, err := gc.VPC.ListFloatingIPs(ctx)
+	if err != nil {
+		logger.Error(err, "Failed to list floating IPs for orphan detection")
+		return 0
 	}
 
-	return nil
+	// Build referenced FIP set from VPCGateway statuses
+	referencedFIPs := gc.buildReferencedFIPSet(ctx)
+
+	orphanCount := 0
+	prefix := "roks-" + gc.ClusterID + "-"
+
+	for _, fip := range fips {
+		if !strings.HasPrefix(fip.Name, prefix) {
+			continue
+		}
+		if referencedFIPs[fip.ID] {
+			continue
+		}
+
+		logger.Info("Deleting orphaned floating IP", "fipID", fip.ID, "name", fip.Name, "address", fip.Address)
+		if err := gc.VPC.DeleteFloatingIP(ctx, fip.ID); err != nil {
+			logger.Error(err, "Failed to delete orphaned floating IP", "fipID", fip.ID)
+			continue
+		}
+		operatormetrics.OrphanGCDeletionsTotal.WithLabelValues("floatingip").Inc()
+		orphanCount++
+	}
+
+	return orphanCount
+}
+
+// collectOrphanedPARs finds and deletes PARs that are tagged with the
+// cluster ID but not referenced by any VPCGateway.
+func (gc *OrphanCollector) collectOrphanedPARs(ctx context.Context, logger logr.Logger) int {
+	if gc.VPCID == "" {
+		return 0
+	}
+
+	pars, err := gc.VPC.ListPublicAddressRanges(ctx, gc.VPCID)
+	if err != nil {
+		logger.Error(err, "Failed to list PARs for orphan detection")
+		return 0
+	}
+
+	referencedPARs := gc.buildReferencedPARSet(ctx)
+
+	orphanCount := 0
+	prefix := "roks-" + gc.ClusterID + "-"
+
+	for _, par := range pars {
+		if !strings.HasPrefix(par.Name, prefix) {
+			continue
+		}
+		if referencedPARs[par.ID] {
+			continue
+		}
+
+		logger.Info("Deleting orphaned PAR", "parID", par.ID, "name", par.Name, "cidr", par.CIDR)
+		if err := gc.VPC.DeletePublicAddressRange(ctx, par.ID); err != nil {
+			logger.Error(err, "Failed to delete orphaned PAR", "parID", par.ID)
+			continue
+		}
+		operatormetrics.OrphanGCDeletionsTotal.WithLabelValues("par").Inc()
+		orphanCount++
+	}
+
+	return orphanCount
+}
+
+// collectOrphanedVPCRoutes finds and deletes VPC routes in the default routing
+// table that are tagged with the cluster ID but not referenced by any VPCGateway.
+func (gc *OrphanCollector) collectOrphanedVPCRoutes(ctx context.Context, logger logr.Logger) int {
+	if gc.VPCID == "" {
+		return 0
+	}
+
+	// Find the default routing table
+	tables, err := gc.VPC.ListRoutingTables(ctx, gc.VPCID)
+	if err != nil {
+		logger.Error(err, "Failed to list routing tables for orphan detection")
+		return 0
+	}
+	var defaultRTID string
+	for _, t := range tables {
+		if t.IsDefault {
+			defaultRTID = t.ID
+			break
+		}
+	}
+	if defaultRTID == "" {
+		return 0
+	}
+
+	routes, err := gc.VPC.ListRoutes(ctx, gc.VPCID, defaultRTID)
+	if err != nil {
+		logger.Error(err, "Failed to list routes for orphan detection")
+		return 0
+	}
+
+	referencedRoutes := gc.buildReferencedRouteSet(ctx)
+
+	orphanCount := 0
+	prefix := "roks-" + gc.ClusterID + "-"
+
+	for _, route := range routes {
+		if !strings.HasPrefix(route.Name, prefix) {
+			continue
+		}
+		if referencedRoutes[route.ID] {
+			continue
+		}
+
+		logger.Info("Deleting orphaned VPC route", "routeID", route.ID, "name", route.Name, "destination", route.Destination)
+		if err := gc.VPC.DeleteRoute(ctx, gc.VPCID, defaultRTID, route.ID); err != nil {
+			logger.Error(err, "Failed to delete orphaned route", "routeID", route.ID)
+			continue
+		}
+		operatormetrics.OrphanGCDeletionsTotal.WithLabelValues("route").Inc()
+		orphanCount++
+	}
+
+	return orphanCount
 }
 
 // buildReferencedVNISet scans all VMs and VPCGateways and returns a set of
@@ -197,6 +329,114 @@ func (gc *OrphanCollector) buildReferencedVNISet(ctx context.Context) map[string
 			}
 			if vniID, ok := status["vniID"].(string); ok && vniID != "" {
 				result[vniID] = true
+			}
+		}
+	}
+
+	return result
+}
+
+// buildReferencedFIPSet returns a set of floating IP IDs that are actively
+// referenced by VPCGateway statuses or FloatingIP CRDs.
+func (gc *OrphanCollector) buildReferencedFIPSet(ctx context.Context) map[string]bool {
+	result := map[string]bool{}
+
+	gwList := &unstructured.UnstructuredList{}
+	gwList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   gatewayGVK.Group,
+		Version: gatewayGVK.Version,
+		Kind:    "VPCGatewayList",
+	})
+	if err := gc.K8sClient.List(ctx, gwList); err == nil {
+		for _, gw := range gwList.Items {
+			status, ok := gw.Object["status"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if fipID, ok := status["floatingIPID"].(string); ok && fipID != "" {
+				result[fipID] = true
+			}
+		}
+	}
+
+	// Also check FloatingIP CRDs
+	fipList := &unstructured.UnstructuredList{}
+	fipList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "vpc.roks.ibm.com",
+		Version: "v1alpha1",
+		Kind:    "FloatingIPList",
+	})
+	if err := gc.K8sClient.List(ctx, fipList); err == nil {
+		for _, fip := range fipList.Items {
+			status, ok := fip.Object["status"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if fipID, ok := status["floatingIPID"].(string); ok && fipID != "" {
+				result[fipID] = true
+			}
+		}
+	}
+
+	return result
+}
+
+// buildReferencedPARSet returns a set of PAR IDs referenced by VPCGateway statuses.
+func (gc *OrphanCollector) buildReferencedPARSet(ctx context.Context) map[string]bool {
+	result := map[string]bool{}
+
+	gwList := &unstructured.UnstructuredList{}
+	gwList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   gatewayGVK.Group,
+		Version: gatewayGVK.Version,
+		Kind:    "VPCGatewayList",
+	})
+	if err := gc.K8sClient.List(ctx, gwList); err == nil {
+		for _, gw := range gwList.Items {
+			status, ok := gw.Object["status"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if parID, ok := status["publicAddressRangeID"].(string); ok && parID != "" {
+				result[parID] = true
+			}
+		}
+	}
+
+	return result
+}
+
+// buildReferencedRouteSet returns a set of VPC route IDs referenced by VPCGateway statuses.
+func (gc *OrphanCollector) buildReferencedRouteSet(ctx context.Context) map[string]bool {
+	result := map[string]bool{}
+
+	gwList := &unstructured.UnstructuredList{}
+	gwList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   gatewayGVK.Group,
+		Version: gatewayGVK.Version,
+		Kind:    "VPCGatewayList",
+	})
+	if err := gc.K8sClient.List(ctx, gwList); err == nil {
+		for _, gw := range gwList.Items {
+			status, ok := gw.Object["status"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			// VPCRouteIDs
+			if routeIDs, ok := status["vpcRouteIDs"].([]interface{}); ok {
+				for _, rid := range routeIDs {
+					if id, ok := rid.(string); ok && id != "" {
+						result[id] = true
+					}
+				}
+			}
+			// IngressRouteIDs
+			if routeIDs, ok := status["ingressRouteIDs"].([]interface{}); ok {
+				for _, rid := range routeIDs {
+					if id, ok := rid.(string); ok && id != "" {
+						result[id] = true
+					}
+				}
 			}
 		}
 	}

@@ -129,7 +129,9 @@ spec:
 ```yaml
 # Written by operator after successful provisioning:
 vpc.roks.ibm.com/subnet-id: "0717-xxxx-xxxx-xxxx"
+vpc.roks.ibm.com/subnet-name: "roks-<cluster>-<cudn>"
 vpc.roks.ibm.com/subnet-status: "active"
+vpc.roks.ibm.com/subnet-error: ""              # Set on failure
 vpc.roks.ibm.com/vlan-attachments: "node1:att-id-1,node2:att-id-2"
 ```
 
@@ -143,7 +145,7 @@ vpc.roks.ibm.com/vlan-attachments: "node1:att-id-1,node2:att-id-2"
 vpc.roks.ibm.com/fip: "true"   # Request a floating IP
 ```
 
-### 5.2 Operator-managed Annotations
+### 5.2 Operator-managed Annotations (Single-Network VMs)
 
 | Annotation | Description |
 |------------|-------------|
@@ -153,6 +155,18 @@ vpc.roks.ibm.com/fip: "true"   # Request a floating IP
 | `vpc.roks.ibm.com/reserved-ip-id` | VPC reserved IP resource ID (for cleanup). |
 | `vpc.roks.ibm.com/fip-id` | Floating IP ID (if requested). |
 | `vpc.roks.ibm.com/fip-address` | Public floating IP address (if requested). |
+| `vpc.roks.ibm.com/attachment-id` | Per-VM VLAN attachment ID. |
+| `vpc.roks.ibm.com/bm-server-id` | Bare metal server ID hosting the VLAN attachment. |
+
+### 5.3 Multi-Network VM Annotations
+
+For VMs with multiple LocalNet interfaces, the webhook uses JSON annotations instead of the single-value annotations above:
+
+| Annotation | Description |
+|------------|-------------|
+| `vpc.roks.ibm.com/network-interfaces` | JSON array of `{interface, network, vniID, mac, reservedIP, reservedIPID, fipID, fipAddress}` objects. |
+| `vpc.roks.ibm.com/fip-networks` | Comma-separated interface names requesting FIPs (e.g., `"net1,net2"`). |
+| `vpc.roks.ibm.com/nncp-name` | Name of the NNCP created for OVN bridge-mappings. |
 
 ---
 
@@ -214,6 +228,62 @@ Periodically verifies VPC resources (VNI, reserved IP) still exist. Emits warnin
 2. Delete floating IP (if present) via `DELETE /floating_ips/{fip-id}`.
 3. Delete VNI via `DELETE /virtual_network_interfaces/{vni-id}` (auto-deletes reserved IP).
 4. Remove finalizer.
+
+### 6.4 UDN Reconciler
+
+**Watches:** `UserDefinedNetwork` (namespace-scoped) with LocalNet or Layer2 topology
+**Trigger:** Create, Update, Delete events
+
+Same logic as the CUDN reconciler but namespace-scoped. Uses finalizer `vpc.roks.ibm.com/udn-cleanup`.
+
+### 6.5 VPCGateway Reconciler
+
+**Watches:** `VPCGateway` CRD
+**Trigger:** Create, Update, Delete events
+
+#### 6.5.1 Creation Flow
+
+1. Add finalizer `vpc.roks.ibm.com/gateway-cleanup`.
+2. Look up uplink CUDN for subnet ID and VLAN ID.
+3. Pick a bare metal server, create VLAN attachment with inline VNI (`allow_ip_spoofing: true`, `enable_infrastructure_nat: false`).
+4. Create VPC routes for each `spec.vpcRoutes[].destination` (action: deliver, next_hop: VNI reserved IP).
+5. If `spec.floatingIP.enabled`: create or adopt floating IP bound to VNI.
+6. If `spec.publicAddressRange.enabled`: create PAR, ingress routing table, and ingress routes.
+
+#### 6.5.2 Deletion Flow
+
+1. Delete PAR resources (ingress routes, routing table, PAR).
+2. Delete or unbind floating IP.
+3. Delete VPC routes.
+4. Delete VLAN attachment (auto-deletes inline VNI).
+5. Remove finalizer.
+
+### 6.6 VPCRouter Reconciler
+
+**Watches:** `VPCRouter` CRD
+**Trigger:** Create, Update, Delete events
+
+#### 6.6.1 Creation Flow
+
+1. Add finalizer `vpc.roks.ibm.com/router-cleanup`.
+2. Validate referenced VPCGateway exists and is Ready.
+3. Create a privileged router pod with Multus attachments to uplink and workload networks.
+4. Pod configures IP forwarding, nftables NAT/firewall, and optional dnsmasq DHCP.
+
+#### 6.6.2 Deletion Flow
+
+1. Delete router pod.
+2. Remove finalizer.
+
+### 6.7 Finalizer Summary
+
+| Finalizer | Applied to | Cleans up |
+|-----------|-----------|-----------|
+| `vpc.roks.ibm.com/cudn-cleanup` | CUDN | VPC subnet + VLAN attachments |
+| `vpc.roks.ibm.com/udn-cleanup` | UDN | VPC subnet + VLAN attachments |
+| `vpc.roks.ibm.com/vm-cleanup` | VirtualMachine | VNI + reserved IP + floating IP |
+| `vpc.roks.ibm.com/gateway-cleanup` | VPCGateway | FIP + PAR + VPC routes + VLAN attachment + VNI |
+| `vpc.roks.ibm.com/router-cleanup` | VPCRouter | Router pod |
 
 ---
 
