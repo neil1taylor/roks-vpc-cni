@@ -19,10 +19,35 @@ Layer2 (OVN overlay) networks are isolated islands. VMs on L2 have no path to th
 
 Two new CRDs model a tiered routing system inspired by NSX-T:
 
-- **VPCGateway (T0)**: Per-zone gateway that bridges a LocalNet (VPC fabric) and a transit L2 network. Has a VPC identity (VNI, reserved IP), manages VPC custom routes for return traffic, and optionally binds a floating IP for internet ingress.
-- **VPCRouter (T1)**: Workload router that connects multiple L2 networks and uplinks to a T0 via the transit L2. Handles east-west routing between L2 segments and forwards north-south traffic to T0.
+- **VPCGateway (T0)**: Per-zone gateway that bridges a LocalNet (VPC fabric) and a transit L2 network. Has a VPC identity (VNI, reserved IP), manages VPC custom routes for return traffic, and optionally binds a floating IP for internet ingress. Handles NAT (SNAT/DNAT) for north-south traffic.
+- **VPCRouter (T1)**: Workload router that connects multiple L2 networks and uplinks to a T0 via the transit L2. Handles east-west routing between L2 segments and forwards north-south traffic to T0. Can optionally serve DHCP for connected L2 segments.
 
-A dedicated "transit" L2 network connects T0 and T1, following the NSX transit segment pattern.
+A dedicated "transit" L2 network connects T0 and T1, following the NSX transit segment pattern. The operator auto-creates this transit network when a VPCGateway is created.
+
+### NSX Feature Mapping
+
+Inspired by VMware NSX 4.x T0/T1 gateway architecture:
+
+| NSX Feature | Our Equivalent | Phase |
+|---|---|---|
+| Routing (DR — distributed) | Kernel IP forwarding in router pod | Phase 1 |
+| NAT (SNAT/DNAT/No-NAT) | nftables rules in T0 pod, CRD-driven | Phase 1 |
+| Route advertisement | T1 `routeAdvertisement` flags, T0 creates VPC routes | Phase 1 |
+| Auto-provisioned transit | Operator creates transit L2 CUDN automatically | Phase 1 |
+| Gateway firewall | nftables stateful firewall sidecar, rules via CRD | Phase 2 |
+| DHCP server on T1 | dnsmasq sidecar on T1, per-L2 pool config | Phase 3 |
+| DNS forwarder | CoreDNS sidecar with conditional forwarding | Future |
+| IPsec/WireGuard VPN | WireGuard sidecar for cross-cluster tunnelling | Future |
+| QoS profiles | tc/nftables rate limiting per interface | Future |
+| Active-active ECMP | Multiple T0 instances with VPC ECMP routes | Future |
+| VRF-lite (multi-tenancy) | Separate VPCGateway per tenant with isolated routes | Future |
+
+### DR/SR Architecture (from NSX)
+
+NSX gateways have two logical components — we adopt this pattern:
+
+- **Distributed Router (DR)**: Always present. In our design, this is the kernel `ip_forward` in every router pod. Handles pure IP forwarding for east-west and transit traffic.
+- **Service Router (SR)**: Only instantiated when stateful services are needed. In our design, these are sidecar containers (NAT, firewall, DHCP, WireGuard) injected by the reconciler when `spec.functions` or `spec.nat` are configured.
 
 ## Architecture
 
@@ -38,15 +63,17 @@ A dedicated "transit" L2 network connects T0 and T1, following the NSX transit s
      Pod w/ 2 interfaces:      Pod w/ 2 interfaces:
        net1: LocalNet (VNI)      net1: LocalNet (VNI)
        net2: transit-L2          net2: transit-L2
+     + NAT (SNAT/DNAT)        + NAT (SNAT/DNAT)
               |                         |
     ----------+-------------------------+----------
-              |     transit-L2 (stretched OVN)
+              |     transit-L2 (stretched OVN, auto-created)
               |
      [VPCRouter: workload-router]
      Pod w/ N+1 interfaces:
        net1: transit-L2 (uplink to T0)
        net2: l2-app-tier
        net3: l2-db-tier
+     + optional DHCP, firewall
               |         |
            L2-App    L2-DB
            (VMs)     (VMs)
@@ -56,10 +83,10 @@ A dedicated "transit" L2 network connects T0 and T1, following the NSX transit s
 
 | Flow | Path |
 |------|------|
-| L2 VM -> Internet | VM -> T1 (default gw) -> transit L2 -> T0 -> LocalNet VNI -> VPC fabric -> Internet |
-| Internet -> L2 VM | Internet -> FIP on T0 VNI -> T0 -> DNAT -> transit L2 -> T1 -> L2 -> VM |
-| L2-A VM -> L2-B VM | VM-A -> T1 (routes between L2 legs) -> VM-B (stays in OVN) |
-| L2 VM -> VPC subnet VM | VM -> T1 -> transit -> T0 -> LocalNet -> VPC route -> VPC subnet VM |
+| L2 VM -> Internet | VM -> T1 (default gw) -> transit L2 -> T0 SNAT -> LocalNet VNI -> VPC fabric -> Internet |
+| Internet -> L2 VM | Internet -> FIP on T0 VNI -> T0 DNAT -> transit L2 -> T1 -> L2 -> VM |
+| L2-A VM -> L2-B VM | VM-A -> T1 (routes between L2 legs) -> VM-B (stays in OVN, no NAT) |
+| L2 VM -> VPC subnet VM | VM -> T1 -> transit -> T0 (no-NAT rule) -> LocalNet -> VPC route -> VPC subnet VM |
 | VPC return to L2 | VPC route (L2 CIDR -> T0 VNI next-hop) -> T0 -> transit -> T1 -> L2 -> VM |
 
 ## CRD Specifications
@@ -82,18 +109,50 @@ spec:
       - r010-abc123
 
   # Downlink: transit L2 network connecting to T1 routers
+  # If omitted, operator auto-creates a transit L2 CUDN named "<gateway-name>-transit"
   transit:
-    network: transit-internal       # L2 CUDN name
+    network: ""                     # auto-created if empty
     address: 172.16.0.1/24          # gateway IP on transit segment
+    cidr: 172.16.0.0/24             # transit segment CIDR (for auto-creation)
 
-  # VPC routes the operator should create (L2 CIDRs -> this gateway's VNI)
+  # VPC routes: operator creates these automatically based on T1 route advertisements
+  # Can also be declared explicitly for static routes
   vpcRoutes:
     - destination: 10.100.0.0/24    # L2-A CIDR
     - destination: 10.200.0.0/24    # L2-B CIDR
 
+  # NAT rules (Phase 1)
+  nat:
+    # SNAT: masquerade L2 egress traffic behind the gateway's VNI IP
+    snat:
+      - source: 10.100.0.0/24        # L2-A CIDR
+        translatedAddress: ""         # empty = use VNI reserved IP (auto)
+        priority: 100
+      - source: 10.200.0.0/24        # L2-B CIDR
+        translatedAddress: ""
+        priority: 100
+    # DNAT: expose L2 services externally
+    dnat:
+      - externalAddress: ""           # empty = use floating IP
+        externalPort: 443
+        internalAddress: 10.100.0.10  # L2 VM IP
+        internalPort: 8443
+        protocol: tcp
+        priority: 50
+    # No-NAT: exempt specific traffic from SNAT (e.g., L2-to-VPC subnet)
+    noNat:
+      - source: 10.100.0.0/24
+        destination: 10.240.0.0/16    # VPC subnet range — don't SNAT
+        priority: 10                   # lower number = higher priority
+
   # Optional: bind a floating IP for internet ingress
   floatingIP:
     enabled: true
+
+  # Gateway firewall rules (Phase 2 — spec'd now, implemented later)
+  firewall:
+    enabled: false
+    rules: []                         # future: stateful nftables rules
 
   # Router pod configuration
   pod:
@@ -108,12 +167,21 @@ status:
   vniID: "02r7-..."
   reservedIP: 10.240.1.5
   floatingIP: 169.48.x.x
+  transitNetwork: gw-eu-de-1-transit    # auto-created transit CUDN name
   vpcRouteIDs:
     - r010-route-1
     - r010-route-2
+  interfaces:
+    - role: uplink
+      network: localnet-vpc
+      address: 10.240.1.5
+    - role: downlink
+      network: gw-eu-de-1-transit
+      address: 172.16.0.1
   conditions:
     - type: VNIReady
     - type: RoutesConfigured
+    - type: NATConfigured
     - type: PodReady
 ```
 
@@ -128,9 +196,9 @@ spec:
   # Reference to the T0 gateway for north-south traffic
   gateway: gw-eu-de-1
 
-  # Transit link (must match the gateway's transit network)
+  # Transit link (auto-populated from gateway if omitted)
   transit:
-    network: transit-internal
+    network: ""                     # auto-resolved from gateway's transit
     address: 172.16.0.2/24
 
   # L2 networks this router connects
@@ -140,16 +208,32 @@ spec:
     - name: l2-db-tier
       address: 10.200.0.1/24
 
+  # Route advertisement: which CIDRs to push to the T0 gateway
+  # T0 auto-creates VPC routes for advertised CIDRs
+  routeAdvertisement:
+    connectedSegments: true         # advertise all connected L2 CIDRs
+    staticRoutes: false             # advertise manually configured static routes
+    natIPs: false                   # future: advertise NAT external IPs
+
   # Pluggable functions
   functions:
-    - type: routing                 # always required
-    # Future:
-    # - type: firewall
-    #   config:
-    #     rules: firewall-rules-cm
-    # - type: wireguard
-    #   config:
-    #     peers: wg-peers-cm
+    - type: routing                 # always required, kernel IP forwarding
+
+  # DHCP server for connected L2 segments (Phase 3 — spec'd now)
+  dhcp:
+    enabled: false
+    # Per-network DHCP pools (future)
+    # pools:
+    #   - network: l2-app-tier
+    #     range: 10.100.0.100-10.100.0.200
+    #     gateway: 10.100.0.1         # T1's address (auto if omitted)
+    #     dns: [10.0.0.10]
+    #     leaseTime: 3600
+
+  # Gateway firewall (Phase 2 — spec'd now)
+  firewall:
+    enabled: false
+    rules: []
 
   pod:
     image: de.icr.io/roks/vpc-router:latest
@@ -168,6 +252,9 @@ status:
     - name: l2-db-tier
       address: 10.200.0.1
       connected: true
+  advertisedRoutes:
+    - 10.100.0.0/24
+    - 10.200.0.0/24
   conditions:
     - type: TransitConnected
     - type: RoutesConfigured
@@ -181,34 +268,40 @@ status:
 **Watches**: VPCGateway CRD
 
 **Create/Update**:
-1. Validate spec: verify LocalNet CUDN exists with subnet-id, verify transit L2 CUDN exists, verify zone match
-2. Ensure VNI on LocalNet subnet (reuse `ensureVNI` pattern from webhook): `AllowIPSpoofing: true`, `EnableInfrastructureNat: false`, tag `roks-gateway:<cluster-id>-<gateway-name>`
-3. Create VPC custom routes: for each `vpcRoutes[].destination`, call `CreateRoute` with `action: deliver`, `nextHop: <VNI reserved IP>`, `zone: spec.zone`. Idempotent by name/tag.
-4. Create/bind Floating IP if enabled
-5. Deploy router pod: K8s Deployment with Multus annotations (LocalNet + transit L2), init container for IP forwarding + static routes, node selector for zone
-6. Update status conditions
+1. Validate spec: verify LocalNet CUDN exists with subnet-id, verify zone match
+2. Auto-create transit L2 CUDN if `spec.transit.network` is empty: create a `ClusterUserDefinedNetwork` with `topology: Layer2`, CIDR from `spec.transit.cidr`, name `<gateway-name>-transit`
+3. Ensure VNI on LocalNet subnet (reuse `ensureVNI` pattern from webhook): `AllowIPSpoofing: true`, `EnableInfrastructureNat: false`, tag `roks-gateway:<cluster-id>-<gateway-name>`
+4. Create VPC custom routes: for each `vpcRoutes[].destination`, call `CreateRoute` with `action: deliver`, `nextHop: <VNI reserved IP>`, `zone: spec.zone`. Idempotent by name/tag.
+5. Configure NAT rules: generate nftables rules from `spec.nat`, write to ConfigMap, mount in router pod. Priority ordering: no-NAT (lowest number) > DNAT > SNAT.
+6. Create/bind Floating IP if enabled
+7. Deploy router pod: K8s Deployment with Multus annotations (LocalNet + transit L2), init container for IP forwarding + static routes + nftables, node selector for zone
+8. Update status conditions (VNIReady, RoutesConfigured, NATConfigured, PodReady)
 
 **Delete**:
 1. Delete VPC routes by stored IDs
 2. Delete Floating IP if exists
 3. Delete VNI
-4. Delete router Deployment
-5. Remove finalizer
+4. Delete router Deployment + ConfigMaps
+5. Delete auto-created transit CUDN (if operator-created)
+6. Remove finalizer
 
 ### VPCRouter Reconciler (`pkg/controller/router/`)
 
 **Watches**: VPCRouter CRD
 
 **Create/Update**:
-1. Validate spec: verify referenced gateway exists and is Ready, verify all L2 networks exist, verify transit network matches gateway
-2. Build route ConfigMap: default route via T0 transit IP, connected routes for each L2 CIDR
-3. Deploy router pod: Deployment with Multus annotations (transit + N x L2), init container applies routes from ConfigMap and enables IP forwarding
-4. Update status
+1. Validate spec: verify referenced gateway exists and is Ready, verify all L2 networks exist
+2. Auto-resolve transit: if `spec.transit.network` is empty, read gateway's `status.transitNetwork`
+3. Build route ConfigMap: default route via T0 transit IP, connected routes for each L2 CIDR
+4. Route advertisement: if `routeAdvertisement.connectedSegments` is true, ensure the gateway's `vpcRoutes` include all connected L2 CIDRs. Update the VPCGateway CR if needed (or use a shared annotation).
+5. Deploy router pod: Deployment with Multus annotations (transit + N x L2), init container applies routes from ConfigMap and enables IP forwarding
+6. Update status with connected networks and advertised routes
 
 **Delete**:
 1. Delete router Deployment
 2. Delete ConfigMap
-3. Remove finalizer
+3. Remove advertised routes from gateway (if dynamic)
+4. Remove finalizer
 
 ### Client Interface Changes
 
@@ -218,7 +311,12 @@ Promote `RoutingTableService` and `RouteService` from `ExtendedClient` to the ba
 
 ### Container Image
 
-Minimal Alpine Linux with iproute2. Kernel IP forwarding handles all routing — no userspace daemon needed for MVP.
+Minimal Alpine Linux with:
+- `iproute2` — IP forwarding, route management
+- `nftables` — NAT and firewall rules (Phase 1 NAT, Phase 2 firewall)
+- `dnsmasq` — DHCP server (Phase 3, optional sidecar)
+
+Kernel IP forwarding handles all routing. nftables handles NAT in the same pod (not a sidecar, since NAT is core to T0 function).
 
 ### Startup Sequence (Init Container)
 
@@ -233,23 +331,60 @@ sysctl -w net.ipv4.ip_forward=1
 ip route add 10.100.0.0/24 via 172.16.0.2 dev net2   # L2-A via T1
 ip route add 10.200.0.0/24 via 172.16.0.2 dev net2   # L2-B via T1
 
+# Apply NAT rules from ConfigMap
+nft -f /etc/nftables/gateway.conf
+
 # T1 example:
 ip route add default via 172.16.0.1 dev net1           # default to T0
 # L2 connected routes are implicit from interface addresses
 ```
 
-### Pluggable Functions (Future)
+### NAT Rule Generation (T0)
 
-Each function is a sidecar container injected by the reconciler based on `spec.functions`:
-- **firewall**: nftables rules from ConfigMap, watches for updates
-- **wireguard**: WireGuard interface + peer management for cross-cluster tunnelling
+The reconciler generates nftables config from `spec.nat`:
+
+```nft
+table ip nat {
+  # No-NAT rules (highest priority — skip NAT for these flows)
+  chain prerouting {
+    type nat hook prerouting priority -100; policy accept;
+    # No-DNAT exemptions evaluated here
+  }
+
+  chain postrouting {
+    type nat hook postrouting priority 100; policy accept;
+    # No-SNAT: skip SNAT for L2 -> VPC subnet traffic
+    ip saddr 10.100.0.0/24 ip daddr 10.240.0.0/16 accept
+    # SNAT: masquerade L2 egress
+    ip saddr 10.100.0.0/24 snat to 10.240.1.5
+    ip saddr 10.200.0.0/24 snat to 10.240.1.5
+  }
+
+  chain prerouting_dnat {
+    type nat hook prerouting priority -50; policy accept;
+    # DNAT: external port 443 -> internal 10.100.0.10:8443
+    tcp dport 443 dnat to 10.100.0.10:8443
+  }
+}
+```
+
+### Pluggable Functions (Sidecar Architecture)
+
+| Function | Container | Phase | Trigger |
+|---|---|---|---|
+| Routing (DR) | Init container + main | Phase 1 | Always |
+| NAT | Init container (nftables) | Phase 1 | `spec.nat` present |
+| Firewall | Sidecar: `nftables-controller` | Phase 2 | `spec.firewall.enabled` |
+| DHCP | Sidecar: `dnsmasq` | Phase 3 | `spec.dhcp.enabled` |
+| WireGuard | Sidecar: `wg-controller` | Future | `functions: [{type: wireguard}]` |
 
 ## Multi-AZ
 
 - L2 networks (OVN overlay) stretch across zones
 - LocalNet (VPC subnet + VLAN attachments) is zone-specific
-- One VPCGateway per zone, each with its own VNI and VPC routes
+- One VPCGateway per zone, each with its own VNI, VPC routes, and NAT rules
 - VPC routes are zone-scoped: each zone's routing table points L2 CIDRs to that zone's T0 VNI IP
+- Transit L2 is auto-created per gateway and stretched across zones
 - T1 routers are zone-agnostic (scheduled by K8s, transit L2 is stretched)
 - HA: K8s Deployment with `topologySpreadConstraints` for multi-zone spread
 
@@ -261,12 +396,14 @@ VPC Subnet A (10.240.1.0/24)        VPC Subnet B (10.240.2.0/24)
 [VPCGateway: gw-eu-de-1]           [VPCGateway: gw-eu-de-2]
   VNI IP: 10.240.1.5                  VNI IP: 10.240.2.5
   transit IP: 172.16.0.1              transit IP: 172.16.0.3
+  SNAT: L2 CIDRs -> 10.240.1.5       SNAT: L2 CIDRs -> 10.240.2.5
      |                                    |
 ─────+────────── transit-L2 (stretched) ──+──────
                       |
               [VPCRouter: workload-router]
               transit IP: 172.16.0.2
               L2-A: 10.100.0.1, L2-B: 10.200.0.1
+              advertises: 10.100.0.0/24, 10.200.0.0/24
 ```
 
 ## VM Integration
@@ -285,20 +422,155 @@ type VMNetworkInterface struct {
 }
 ```
 
+When Phase 3 DHCP is implemented, the webhook can skip cloud-init gateway injection for L2 networks served by a T1 with DHCP enabled — the VM will get its gateway via DHCP instead.
+
+## Console Plugin UI Design
+
+### Navigation
+
+Two new tabs in the VPCNetworkingShell tab bar:
+
+```
+Dashboard | Networks | Subnets | VNIs | VLAN Attachments | Floating IPs |
+  Gateways | Routers | Security Groups | ACLs | Routes | Topology
+```
+
+### Dashboard Integration
+
+New count cards in the dashboard for Gateways and Routers, plus a "Routing" summary section showing the T0/T1 topology at a glance.
+
+### Gateways List Page (`/vpc-networking/gateways`)
+
+Subtitle: "Tier-0 gateways bridge Layer2 overlay networks to the VPC fabric, providing north-south connectivity."
+
+Toolbar: `[+ Create Gateway]` button.
+
+Table columns: Name (link) | Zone | Uplink Network (link) | Floating IP | VNI IP | Routes | NAT Rules | Status (badge) | Age
+
+Empty state: `<EmptyState>` with gateway icon and "No gateways configured" message + Create button.
+
+### Gateway Creation Wizard
+
+`<Modal variant="large">` with `<Wizard>` steps:
+
+1. **Configuration**: Name (TextInput), Zone (FormSelect), Uplink Network (FormSelect, filtered to LocalNet CUDNs)
+2. **Transit**: Auto-create toggle (default on), transit CIDR (TextInput, default 172.16.0.0/24), gateway address (auto-computed as .1)
+3. **VPC Routes**: Table of L2 CIDRs with "Add Route" button. Each row: Destination CIDR + Remove.
+4. **NAT Rules**: Toggle "Enable SNAT for L2 egress" (auto-generates SNAT rules from routes). Optional DNAT rules table. No-NAT exemptions for VPC subnets.
+5. **Options**: Floating IP checkbox + existing FIP selector. Pod resources (expandable advanced section).
+6. **Review & Create**: DescriptionList summary of all config.
+
+### Gateway Detail Page (`/vpc-networking/gateways/:name`)
+
+Breadcrumb: Gateways > gw-eu-de-1. Action button: `[Delete Gateway]`.
+
+Cards:
+1. **Overview** — `DescriptionList isHorizontal`: Name, Zone, Phase (badge), Uplink (link), Transit, VNI ID, VNI IP, Floating IP (link), Created.
+2. **VPC Routes** — Table: Destination | Next Hop | Zone | Status. `[+ Add Route]` button.
+3. **NAT Rules** — Table: Type (SNAT/DNAT/No-NAT) | Source | Destination | Translated | Priority. `[+ Add Rule]` button.
+4. **Conditions** — Grid of condition badges: VNIReady, RoutesConfigured, NATConfigured, PodReady.
+
+### Routers List Page (`/vpc-networking/routers`)
+
+Subtitle: "Tier-1 routers connect Layer2 networks and uplink to Tier-0 gateways for north-south traffic."
+
+Toolbar: `[+ Create Router]` button.
+
+Table columns: Name (link) | Gateway (link) | Networks | Transit IP | Functions (labels) | Status (badge) | Age
+
+### Router Creation Wizard
+
+`<Modal variant="large">` with `<Wizard>` steps:
+
+1. **Gateway**: Select the T0 gateway to uplink to (FormSelect, from useGateways()). Transit auto-resolved.
+2. **Networks**: Multi-select L2 networks with per-network address assignment. Table: Network Name (FormSelect) | Router IP/CIDR (TextInput) | Remove. `[+ Add Network]`.
+3. **Route Advertisement**: Checkboxes: "Advertise connected segments" (default on), "Advertise static routes", "Advertise NAT IPs" (future, disabled).
+4. **Functions**: Card-based selection of enabled functions. "Routing" always on (disabled toggle). "Firewall" and "DHCP" shown with "Coming Soon" labels.
+5. **Review & Create**.
+
+### Router Detail Page (`/vpc-networking/routers/:name`)
+
+Breadcrumb: Routers > workload-router. Action button: `[Delete Router]`.
+
+Cards:
+1. **Overview** — `DescriptionList isHorizontal`: Name, Gateway (link), Phase (badge), Transit IP, Functions (labels), Created.
+2. **Connected Networks** — Table: Network (link) | Router IP | CIDR | Connected (check). `[+ Add Network]` button.
+3. **Advertised Routes** — List of CIDRs being advertised to T0.
+4. **DHCP Configuration** — "Coming Soon" empty state (Phase 3).
+5. **Firewall Rules** — "Coming Soon" empty state (Phase 2).
+6. **Conditions** — Grid: TransitConnected, RoutesConfigured, PodReady.
+
+### Topology Integration
+
+New node types in the topology viewer:
+
+- **VPCGateway**: Shield/gateway icon, blue color. Shows zone, VNI IP, FIP. Edges: uplink to VPC Subnet node, downlink to transit segment, edges to connected VPCRouters.
+- **VPCRouter**: Router icon, purple color. Shows connected network count, functions. Edges: uplink to transit segment (and transitively to VPCGateway), downlink edges to each connected L2 network.
+
+Filter checkboxes added for both node types in the topology toolbar.
+
+Node click opens the drawer panel with full detail (type, name, status, interfaces, routes, NAT rules).
+
+### BFF Endpoints
+
+New endpoints following existing patterns:
+
+```
+GET    /api/v1/gateways              — list all VPCGateway CRs
+GET    /api/v1/gateways/:name        — get single VPCGateway
+POST   /api/v1/gateways              — create VPCGateway
+DELETE /api/v1/gateways/:name        — delete VPCGateway
+GET    /api/v1/routers               — list all VPCRouter CRs
+GET    /api/v1/routers/:name         — get single VPCRouter
+POST   /api/v1/routers               — create VPCRouter
+DELETE /api/v1/routers/:name         — delete VPCRouter
+```
+
 ## Implementation Phases
 
-1. **Foundation**: CRD types, promote route APIs to Client, scaffold reconcilers, build router image
-2. **VPCGateway (T0)**: VNI creation, VPC route lifecycle, FIP binding, router pod deployment
-3. **VPCRouter (T1)**: ConfigMap routes, multi-leg Multus pod, default route to T0
-4. **VM Integration**: Webhook gateway injection for L2 interfaces, cloud-init enhancement
-5. **Console Plugin + BFF**: Gateway/Router list and detail pages, topology integration
-6. **Hardening**: Orphan GC for gateway VNIs/routes, drift detection, multi-AZ scheduling, events
+### Phase 1: Foundation + Core Routing + NAT
+- Define VPCGateway and VPCRouter CRD types in `api/v1alpha1/` (full spec including future fields)
+- Promote `RoutingTableService`/`RouteService` to base `Client` interface
+- Build router container image (Alpine + iproute2 + nftables)
+- VPCGateway reconciler: VNI creation, auto-create transit L2, VPC route lifecycle, NAT config generation, FIP binding, router pod deployment
+- VPCRouter reconciler: ConfigMap routes, multi-leg Multus pod, default route to T0, route advertisement to gateway
 
-## Out of Scope (Future)
+### Phase 2: Gateway Firewall
+- Firewall sidecar container (nftables-controller)
+- Firewall rules in CRD spec -> ConfigMap -> sidecar watches and applies
+- Stateful rules with connection tracking
+- Per-gateway rule sets (T0 and T1 independent)
 
-- Firewall sidecar (nftables rules via CRD/ConfigMap)
+### Phase 3: VM Integration + DHCP
+- Webhook gateway injection for L2 interfaces via cloud-init
+- DHCP sidecar (dnsmasq) on T1 for connected L2 segments
+- Per-network DHCP pool configuration
+- When DHCP is enabled, webhook skips cloud-init gateway injection
+
+### Phase 4: Console Plugin + BFF
+- BFF endpoints for VPCGateway/VPCRouter CRUD
+- Gateways list + detail pages
+- Routers list + detail pages
+- Creation wizards for both
+- Dashboard cards
+- Topology viewer integration
+
+### Phase 5: Hardening
+- Orphan GC for gateway VNIs and VPC routes
+- Drift detection on VPC routes (route exists? next-hop correct?)
+- Multi-AZ: zone-aware scheduling, topology spread constraints
+- Status conditions and events on both CRDs
+- Prometheus metrics for gateway/router health
+
+## Out of Scope (Future Phases)
+
 - WireGuard tunnelling sidecar (cross-cluster connectivity)
+- DNS forwarder (CoreDNS sidecar with conditional forwarding)
+- QoS profiles (tc/nftables rate limiting per interface)
 - VRRP/keepalived for T1 HA with virtual IP
-- OVN DHCP gateway advertisement
-- Active-active ECMP routing
+- Active-active ECMP routing (multiple T0 instances)
+- VRF-lite multi-tenancy (isolated routing tables per tenant)
+- OVN DHCP gateway advertisement (alternative to dnsmasq)
 - T1 auto-scaling based on throughput
+- IDS/IPS on gateways
+- L7 load balancing on T1
