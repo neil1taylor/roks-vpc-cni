@@ -18,6 +18,8 @@ type Client interface {
 	AddressPrefixService
 	BareMetalServerService
 	SubnetReservedIPService
+	RoutingTableService
+	RouteService
 }
 
 // BareMetalServerService handles listing VPC bare metal servers.
@@ -32,7 +34,7 @@ type BareMetalServerInfo struct {
 	Zone string
 }
 
-// ExtendedClient adds security group, ACL, VPC, zone, and route operations
+// ExtendedClient adds security group, ACL, VPC, and zone operations
 // used by the BFF service for console plugin data.
 type ExtendedClient interface {
 	Client
@@ -42,8 +44,6 @@ type ExtendedClient interface {
 	ZoneService
 	VNILister
 	FloatingIPLister
-	RoutingTableService
-	RouteService
 }
 
 // VNILister lists all VNIs in the account.
@@ -76,6 +76,7 @@ type VNIService interface {
 // VLANAttachmentService handles bare metal VLAN attachment CRUD.
 type VLANAttachmentService interface {
 	CreateVLANAttachment(ctx context.Context, opts CreateVLANAttachmentOptions) (*VLANAttachment, error)
+	CreateVMAttachment(ctx context.Context, opts CreateVMAttachmentOptions) (*VMAttachmentResult, error)
 	DeleteVLANAttachment(ctx context.Context, bmServerID, attachmentID string) error
 	ListVLANAttachments(ctx context.Context, bmServerID string) ([]VLANAttachment, error)
 	EnsurePCIAllowedVLAN(ctx context.Context, bmServerID string, vlanID int64) error
@@ -85,6 +86,7 @@ type VLANAttachmentService interface {
 type FloatingIPService interface {
 	CreateFloatingIP(ctx context.Context, opts CreateFloatingIPOptions) (*FloatingIP, error)
 	GetFloatingIP(ctx context.Context, fipID string) (*FloatingIP, error)
+	UpdateFloatingIP(ctx context.Context, fipID string, opts UpdateFloatingIPOptions) (*FloatingIP, error)
 	DeleteFloatingIP(ctx context.Context, fipID string) error
 }
 
@@ -188,10 +190,33 @@ type CreateVLANAttachmentOptions struct {
 	SubnetID   string
 }
 
+// CreateVMAttachmentOptions holds parameters for creating a per-VM VLAN
+// attachment with an inline VNI on a bare metal server.
+type CreateVMAttachmentOptions struct {
+	BMServerID       string
+	Name             string
+	VLANID           int64
+	SubnetID         string
+	VNIName          string
+	SecurityGroupIDs []string
+}
+
+// VMAttachmentResult holds the result of creating a per-VM VLAN attachment
+// including the inline VNI details (populated via GetVNI follow-up).
+type VMAttachmentResult struct {
+	AttachmentID string
+	BMServerID   string
+	VNI          VNI
+}
+
 type CreateFloatingIPOptions struct {
 	Name   string
 	Zone   string
 	VNIID  string
+}
+
+type UpdateFloatingIPOptions struct {
+	TargetID string // VNI ID to bind; empty string to unbind
 }
 
 // ── Response types ──

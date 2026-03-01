@@ -96,6 +96,13 @@ func (c *InstrumentedClient) CreateVLANAttachment(ctx context.Context, opts Crea
 	return result, err
 }
 
+func (c *InstrumentedClient) CreateVMAttachment(ctx context.Context, opts CreateVMAttachmentOptions) (*VMAttachmentResult, error) {
+	start := time.Now()
+	result, err := c.inner.CreateVMAttachment(ctx, opts)
+	recordCall("CreateVMAttachment", start, err)
+	return result, err
+}
+
 func (c *InstrumentedClient) DeleteVLANAttachment(ctx context.Context, bmServerID, attachmentID string) error {
 	start := time.Now()
 	err := c.inner.DeleteVLANAttachment(ctx, bmServerID, attachmentID)
@@ -128,6 +135,13 @@ func (c *InstrumentedClient) GetFloatingIP(ctx context.Context, fipID string) (*
 	start := time.Now()
 	result, err := c.inner.GetFloatingIP(ctx, fipID)
 	recordCall("GetFloatingIP", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) UpdateFloatingIP(ctx context.Context, fipID string, opts UpdateFloatingIPOptions) (*FloatingIP, error) {
+	start := time.Now()
+	result, err := c.inner.UpdateFloatingIP(ctx, fipID, opts)
+	recordCall("UpdateFloatingIP", start, err)
 	return result, err
 }
 
@@ -164,6 +178,41 @@ func (c *InstrumentedClient) ListBareMetalServers(ctx context.Context, vpcID str
 	result, err := c.inner.ListBareMetalServers(ctx, vpcID)
 	recordCall("ListBareMetalServers", start, err)
 	return result, err
+}
+
+func (c *InstrumentedClient) ListRoutingTables(ctx context.Context, vpcID string) ([]RoutingTable, error) {
+	start := time.Now()
+	result, err := c.inner.ListRoutingTables(ctx, vpcID)
+	recordCall("ListRoutingTables", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) GetRoutingTable(ctx context.Context, vpcID, routingTableID string) (*RoutingTable, error) {
+	start := time.Now()
+	result, err := c.inner.GetRoutingTable(ctx, vpcID, routingTableID)
+	recordCall("GetRoutingTable", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) ListRoutes(ctx context.Context, vpcID, routingTableID string) ([]Route, error) {
+	start := time.Now()
+	result, err := c.inner.ListRoutes(ctx, vpcID, routingTableID)
+	recordCall("ListRoutes", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) CreateRoute(ctx context.Context, vpcID, routingTableID string, opts CreateRouteOptions) (*Route, error) {
+	start := time.Now()
+	result, err := c.inner.CreateRoute(ctx, vpcID, routingTableID, opts)
+	recordCall("CreateRoute", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) DeleteRoute(ctx context.Context, vpcID, routingTableID, routeID string) error {
+	start := time.Now()
+	err := c.inner.DeleteRoute(ctx, vpcID, routingTableID, routeID)
+	recordCall("DeleteRoute", start, err)
+	return err
 }
 
 var _ Client = (*InstrumentedClient)(nil)
