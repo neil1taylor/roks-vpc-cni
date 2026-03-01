@@ -7,8 +7,6 @@ import {
   ToolbarContent,
   ToolbarItem,
   Spinner,
-  Modal,
-  ModalVariant,
   Alert,
   EmptyState,
   EmptyStateBody,
@@ -16,6 +14,7 @@ import {
   EmptyStateIcon,
   Text,
   TextVariants,
+  SearchInput,
 } from '@patternfly/react-core';
 import { CubesIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
@@ -24,33 +23,34 @@ import { useGateways } from '../api/hooks';
 import { Gateway } from '../api/types';
 import { apiClient } from '../api/client';
 import StatusBadge from '../components/StatusBadge';
+import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 import { formatRelativeTime } from '../utils/formatters';
 
 const GatewaysListPage: React.FC = () => {
   const { gateways, loading, error } = useGateways();
   const [deleteTarget, setDeleteTarget] = useState<Gateway | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [searchFilter, setSearchFilter] = useState('');
   const navigate = useNavigate();
+
+  const filteredGateways = gateways?.filter(
+    (gw) => gw.name.toLowerCase().includes(searchFilter.toLowerCase()),
+  );
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    setIsDeleting(true);
     setDeleteError('');
     try {
       const resp = await apiClient.deleteGateway(deleteTarget.name, deleteTarget.namespace);
       if (resp.error) {
         const msg = resp.error.message || 'Delete failed';
         setDeleteError(typeof msg === 'string' ? msg : JSON.stringify(msg));
-        setIsDeleting(false);
         return;
       }
       setDeleteTarget(null);
-      setIsDeleting(false);
       window.location.reload();
     } catch (e) {
-      setIsDeleting(false);
       setDeleteError(e instanceof Error ? e.message : JSON.stringify(e));
     }
   };
@@ -71,8 +71,21 @@ const GatewaysListPage: React.FC = () => {
         <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
           Gateways route traffic between Layer2 overlay networks and the VPC fabric.
         </Text>
+
+        {deleteError && (
+          <Alert variant="danger" title={deleteError} isInline isPlain style={{ marginBottom: '16px' }} />
+        )}
+
         <Toolbar>
           <ToolbarContent>
+            <ToolbarItem>
+              <SearchInput
+                placeholder="Filter by name"
+                value={searchFilter}
+                onChange={(_e, value) => setSearchFilter(value)}
+                onClear={() => setSearchFilter('')}
+              />
+            </ToolbarItem>
             <ToolbarItem>
               <Button variant="primary" onClick={() => navigate('/vpc-networking/gateways/create')}>Create Gateway</Button>
             </ToolbarItem>
@@ -85,11 +98,16 @@ const GatewaysListPage: React.FC = () => {
           </div>
         )}
 
-        {(!gateways || gateways.length === 0) ? (
+        {(!filteredGateways || filteredGateways.length === 0) ? (
           <EmptyState>
-            <EmptyStateHeader titleText="No gateways configured" icon={<EmptyStateIcon icon={CubesIcon} />} />
+            <EmptyStateHeader
+              titleText={searchFilter ? 'No matching gateways' : 'No gateways configured'}
+              icon={<EmptyStateIcon icon={CubesIcon} />}
+            />
             <EmptyStateBody>
-              Create a VPCGateway to route traffic between Layer2 overlay networks and the VPC fabric.
+              {searchFilter
+                ? `No gateways match "${searchFilter}". Try a different search or clear the filter.`
+                : 'Create a VPCGateway to route traffic between Layer2 overlay networks and the VPC fabric.'}
             </EmptyStateBody>
           </EmptyState>
         ) : (
@@ -109,7 +127,7 @@ const GatewaysListPage: React.FC = () => {
               </Tr>
             </Thead>
             <Tbody>
-              {gateways.map((gw: Gateway) => (
+              {filteredGateways.map((gw: Gateway) => (
                 <Tr key={gw.name}>
                   <Td>
                     <Button variant="link" isInline onClick={() => navigate(`/vpc-networking/gateways/${gw.name}?ns=${encodeURIComponent(gw.namespace)}`)}>
@@ -136,26 +154,14 @@ const GatewaysListPage: React.FC = () => {
         )}
       </PageSection>
 
-      <Modal
-        variant={ModalVariant.small}
-        title={`Delete ${deleteTarget?.name || 'gateway'}?`}
+      <DeleteConfirmModal
         isOpen={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        actions={[
-          <Button key="cancel" variant={ButtonVariant.link} onClick={() => setDeleteTarget(null)} isDisabled={isDeleting}>
-            Cancel
-          </Button>,
-          <Button key="delete" variant={ButtonVariant.danger} onClick={handleDelete} isLoading={isDeleting} isDisabled={isDeleting}>
-            Delete
-          </Button>,
-        ]}
-      >
-        {deleteError && (
-          <Alert variant="danger" isInline title={deleteError} style={{ marginBottom: '16px' }} />
-        )}
-        Are you sure you want to delete gateway <strong>{deleteTarget?.name}</strong>?
-        This will remove all associated VPC routes, NAT rules, and the gateway VNI.
-      </Modal>
+        title={`Delete ${deleteTarget?.name || 'gateway'}?`}
+        message="Deleting this gateway will remove its uplink VNI, floating IP, all VPC routes, NAT rules, and any associated Public Address Range. Connected routers will lose their uplink."
+        resourceName={deleteTarget?.name}
+        onConfirm={handleDelete}
+        onCancel={() => { setDeleteTarget(null); setDeleteError(''); }}
+      />
     </VPCNetworkingShell>
   );
 };

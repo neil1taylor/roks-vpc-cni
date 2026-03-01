@@ -47,7 +47,7 @@ Inspired by VMware NSX 4.x T0/T1 gateway architecture:
 NSX gateways have two logical components — we adopt this pattern:
 
 - **Distributed Router (DR)**: Always present. In our design, this is the kernel `ip_forward` in every router pod. Handles pure IP forwarding for east-west and transit traffic.
-- **Service Router (SR)**: Only instantiated when stateful services are needed. In our design, these are sidecar containers (NAT, firewall, DHCP, WireGuard) injected by the reconciler when `spec.functions` or `spec.nat` are configured.
+- **Service Router (SR)**: Only instantiated when stateful services are needed. In our design, these are sidecar containers (NAT, firewall, DHCP, WireGuard) injected by the reconciler when `spec.nat`, `spec.firewall`, or `spec.dhcp` are configured.
 
 ## Architecture
 
@@ -160,7 +160,6 @@ spec:
     resources:
       requests: { cpu: 100m, memory: 128Mi }
       limits:   { cpu: 500m, memory: 256Mi }
-    replicas: 1
 
 status:
   phase: Ready                # Pending | Provisioning | Ready | Error
@@ -215,10 +214,6 @@ spec:
     staticRoutes: false             # advertise manually configured static routes
     natIPs: false                   # future: advertise NAT external IPs
 
-  # Pluggable functions
-  functions:
-    - type: routing                 # always required, kernel IP forwarding
-
   # DHCP server for connected L2 segments (Phase 3 — spec'd now)
   dhcp:
     enabled: false
@@ -240,11 +235,11 @@ spec:
     resources:
       requests: { cpu: 100m, memory: 128Mi }
       limits:   { cpu: 500m, memory: 256Mi }
-    replicas: 1
 
 status:
   phase: Ready
   transitIP: 172.16.0.2
+  podIP: 10.131.0.15              # router pod IP (used as VPC route next-hop)
   networks:
     - name: l2-app-tier
       address: 10.100.0.1
@@ -265,7 +260,7 @@ status:
 
 ### VPCGateway Reconciler (`pkg/controller/gateway/`)
 
-**Watches**: VPCGateway CRD
+**Watches**: VPCGateway CRD, VPCRouter status (for route advertisement auto-collection)
 
 **Create/Update**:
 1. Validate spec: verify LocalNet CUDN exists with subnet-id, verify zone match
@@ -287,7 +282,7 @@ status:
 
 ### VPCRouter Reconciler (`pkg/controller/router/`)
 
-**Watches**: VPCRouter CRD
+**Watches**: VPCRouter CRD, VPCGateway changes (NAT, firewall, image, MAC trigger pod recreation)
 
 **Create/Update**:
 1. Validate spec: verify referenced gateway exists and is Ready, verify all L2 networks exist
@@ -376,7 +371,7 @@ table ip nat {
 | NAT | Init container (nftables) | Phase 1 | `spec.nat` present |
 | Firewall | Sidecar: `nftables-controller` | Phase 2 | `spec.firewall.enabled` |
 | DHCP | Sidecar: `dnsmasq` | Phase 3 | `spec.dhcp.enabled` |
-| WireGuard | Sidecar: `wg-controller` | Future | `functions: [{type: wireguard}]` |
+| WireGuard | Sidecar: `wg-controller` | Future | Dedicated CRD field (future) |
 
 ## Multi-AZ
 
@@ -476,7 +471,7 @@ Subtitle: "Tier-1 routers connect Layer2 networks and uplink to Tier-0 gateways 
 
 Toolbar: `[+ Create Router]` button.
 
-Table columns: Name (link) | Gateway (link) | Networks | Transit IP | Functions (labels) | Status (badge) | Age
+Table columns: Name (link) | Gateway (link) | Networks | Transit IP | Status (badge) | Age
 
 ### Router Creation Wizard
 
@@ -485,15 +480,14 @@ Table columns: Name (link) | Gateway (link) | Networks | Transit IP | Functions 
 1. **Gateway**: Select the T0 gateway to uplink to (FormSelect, from useGateways()). Transit auto-resolved.
 2. **Networks**: Multi-select L2 networks with per-network address assignment. Table: Network Name (FormSelect) | Router IP/CIDR (TextInput) | Remove. `[+ Add Network]`.
 3. **Route Advertisement**: Checkboxes: "Advertise connected segments" (default on), "Advertise static routes", "Advertise NAT IPs" (future, disabled).
-4. **Functions**: Card-based selection of enabled functions. "Routing" always on (disabled toggle). "Firewall" and "DHCP" shown with "Coming Soon" labels.
-5. **Review & Create**.
+4. **Review & Create**.
 
 ### Router Detail Page (`/vpc-networking/routers/:name`)
 
 Breadcrumb: Routers > workload-router. Action button: `[Delete Router]`.
 
 Cards:
-1. **Overview** — `DescriptionList isHorizontal`: Name, Gateway (link), Phase (badge), Transit IP, Functions (labels), Created.
+1. **Overview** — `DescriptionList isHorizontal`: Name, Gateway (link), Phase (badge), Transit IP, Pod IP, Created.
 2. **Connected Networks** — Table: Network (link) | Router IP | CIDR | Connected (check). `[+ Add Network]` button.
 3. **Advertised Routes** — List of CIDRs being advertised to T0.
 4. **DHCP Configuration** — "Coming Soon" empty state (Phase 3).
@@ -505,7 +499,7 @@ Cards:
 New node types in the topology viewer:
 
 - **VPCGateway**: Shield/gateway icon, blue color. Shows zone, VNI IP, FIP. Edges: uplink to VPC Subnet node, downlink to transit segment, edges to connected VPCRouters.
-- **VPCRouter**: Router icon, purple color. Shows connected network count, functions. Edges: uplink to transit segment (and transitively to VPCGateway), downlink edges to each connected L2 network.
+- **VPCRouter**: Router icon, purple color. Shows connected network count, pod IP. Edges: uplink to transit segment (and transitively to VPCGateway), downlink edges to each connected L2 network.
 
 Filter checkboxes added for both node types in the topology toolbar.
 
@@ -556,7 +550,7 @@ DELETE /api/v1/routers/:name         — delete VPCRouter
 - Topology viewer integration
 
 ### Phase 5: Hardening
-- Orphan GC for gateway VNIs and VPC routes
+- Orphan GC for VNIs, floating IPs, PARs, and VPC routes
 - Drift detection on VPC routes (route exists? next-hop correct?)
 - Multi-AZ: zone-aware scheduling, topology spread constraints
 - Status conditions and events on both CRDs

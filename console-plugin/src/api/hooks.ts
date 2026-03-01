@@ -22,6 +22,7 @@ import {
   Route,
   ReservedIP,
   PublicGateway,
+  NamespaceInfo,
   ApiResponse,
   ApiError,
 } from './types';
@@ -470,6 +471,24 @@ export function usePAR(id: string) {
     [id],
   );
   return { par, loading, error };
+}
+
+// Namespace Hooks
+export function useNamespaces(): {
+  namespaces: NamespaceInfo[] | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const { data, loading, error } = useBFFData(
+    () => apiClient.listNamespaces(),
+    [],
+  );
+
+  const filtered = data
+    ?.filter((ns) => !ns.name.startsWith('openshift-') && !ns.name.startsWith('kube-'))
+    .sort((a, b) => a.name.localeCompare(b.name)) || null;
+
+  return { namespaces: filtered, loading, error };
 }
 
 // Kubernetes CR Hooks

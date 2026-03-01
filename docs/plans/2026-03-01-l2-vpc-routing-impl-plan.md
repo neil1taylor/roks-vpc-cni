@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Implement NSX T0/T1-style tiered routing between Layer2 OVN overlay networks and VPC fabric via two new CRDs (VPCGateway, VPCRouter), complete with NAT, route advertisement, console UI, and pluggable functions architecture.
+**Goal:** Implement NSX T0/T1-style tiered routing between Layer2 OVN overlay networks and VPC fabric via two new CRDs (VPCGateway, VPCRouter), complete with NAT, route advertisement, DHCP, firewall, and console UI.
 
 **Architecture:** Two-tier router model — VPCGateway (T0) bridges LocalNet/VPC and a transit L2 with per-zone VNI + VPC routes + NAT. VPCRouter (T1) connects multiple L2 segments and uplinks to T0 via transit. Router pods use kernel IP forwarding + nftables NAT. Pluggable sidecars for firewall/DHCP/WireGuard.
 
@@ -195,12 +195,6 @@ type FirewallRule struct {
 type RouterPodSpec struct {
 	// +optional
 	Image string `json:"image,omitempty"`
-
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=3
-	Replicas *int32 `json:"replicas,omitempty"`
 }
 
 // ── Status ──
@@ -294,9 +288,6 @@ type VPCRouterSpec struct {
 	RouteAdvertisement *RouteAdvertisement `json:"routeAdvertisement,omitempty"`
 
 	// +optional
-	Functions []RouterFunction `json:"functions,omitempty"`
-
-	// +optional
 	DHCP *RouterDHCP `json:"dhcp,omitempty"`
 
 	// +optional
@@ -337,15 +328,6 @@ type RouteAdvertisement struct {
 	NATIPs bool `json:"natIPs,omitempty"`
 }
 
-type RouterFunction struct {
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=routing;firewall;wireguard
-	Type string `json:"type"`
-
-	// +optional
-	Config map[string]string `json:"config,omitempty"`
-}
-
 type RouterDHCP struct {
 	// +optional
 	// +kubebuilder:default=false
@@ -359,6 +341,8 @@ type VPCRouterStatus struct {
 	Phase string `json:"phase,omitempty"`
 
 	TransitIP string `json:"transitIP,omitempty"`
+
+	PodIP string `json:"podIP,omitempty"`
 
 	Networks []RouterNetworkStatus `json:"networks,omitempty"`
 
@@ -1608,9 +1592,9 @@ type RouterResponse struct {
 	Gateway          string                `json:"gateway"`
 	Phase            string                `json:"phase"`
 	TransitIP        string                `json:"transitIP,omitempty"`
+	PodIP            string                `json:"podIP,omitempty"`
 	Networks         []RouterNetworkResp   `json:"networks"`
 	AdvertisedRoutes []string              `json:"advertisedRoutes,omitempty"`
-	Functions        []string              `json:"functions,omitempty"`
 	SyncStatus       string                `json:"syncStatus"`
 	CreatedAt        string                `json:"createdAt,omitempty"`
 }
@@ -1724,9 +1708,9 @@ export interface Router {
   gateway: string;
   phase: string;
   transitIP?: string;
+  podIP?: string;
   networks: RouterNetwork[];
   advertisedRoutes?: string[];
-  functions?: string[];
   syncStatus: string;
   createdAt?: string;
 }
@@ -1964,7 +1948,7 @@ git commit -m "feat: add Gateway detail page to console plugin"
 
 **Step 1: Write Routers list page**
 
-Same pattern as GatewaysListPage. Columns: Name (link) | Gateway (link) | Networks count | Transit IP | Functions (labels) | Status | Age.
+Same pattern as GatewaysListPage. Columns: Name (link) | Gateway (link) | Networks count | Transit IP | Pod IP | Status | Age.
 
 **Step 2: Write Router detail page**
 

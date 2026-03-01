@@ -19,11 +19,16 @@ import {
   FormSelect,
   FormSelectOption,
   Radio,
+  Title,
+  Text,
+  TextVariants,
 } from '@patternfly/react-core';
 import { Link, useNavigate } from 'react-router-dom-v5-compat';
 import { apiClient } from '../api/client';
 import { CreateGatewayRequest } from '../api/types';
-import { usePARs } from '../api/hooks';
+import { usePARs, useZones, useNetworkDefinitions, useNamespaces } from '../api/hooks';
+import { isValidIPv4 } from '../utils/validators';
+import { isValidCIDRv4 } from '../utils/validators';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
 const GatewayCreatePage: React.FC = () => {
@@ -40,10 +45,23 @@ const GatewayCreatePage: React.FC = () => {
   const [parID, setPARID] = useState('');
   const { pars } = usePARs();
   const unattachedPARs = pars?.filter((p) => !p.gatewayName) || [];
+  const { zones, loading: zonesLoading } = useZones();
+  const { networks, loading: networksLoading } = useNetworkDefinitions();
+  const localNetNetworks = networks?.filter((n) => n.topology === 'LocalNet') || [];
+  const { namespaces, loading: namespacesLoading } = useNamespaces();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const isValid = name.trim() !== '' && zone.trim() !== '' && uplinkNetwork.trim() !== '' && transitAddress.trim() !== '';
+  const transitAddressValid = transitAddress === '' || isValidIPv4(transitAddress);
+  const transitCIDRValid = transitCIDR === '' || isValidCIDRv4(transitCIDR);
+
+  const isValid =
+    name.trim() !== '' &&
+    zone !== '' &&
+    uplinkNetwork !== '' &&
+    transitAddress.trim() !== '' &&
+    transitAddressValid &&
+    transitCIDRValid;
 
   const handleSubmit = async () => {
     if (!isValid) return;
@@ -78,6 +96,11 @@ const GatewayCreatePage: React.FC = () => {
           <BreadcrumbItem><Link to="/vpc-networking/gateways">Gateways</Link></BreadcrumbItem>
           <BreadcrumbItem isActive>Create</BreadcrumbItem>
         </Breadcrumb>
+        <Title headingLevel="h1" style={{ marginTop: '16px' }}>Create VPCGateway</Title>
+        <Text component={TextVariants.p} style={{ marginTop: '8px', color: 'var(--pf-v5-global--Color--200)' }}>
+          A VPCGateway connects overlay networks to the VPC fabric by provisioning an uplink VNI, floating IP, and VPC routes.
+          It serves as the exit point for traffic leaving the cluster to reach VPC or public destinations.
+        </Text>
       </PageSection>
 
       <PageSection>
@@ -90,39 +113,110 @@ const GatewayCreatePage: React.FC = () => {
               <FormGroup label="Name" isRequired fieldId="gw-name">
                 <TextInput id="gw-name" value={name} onChange={(_e, v) => setName(v)} isRequired />
                 <FormHelperText>
-                  <HelperText><HelperTextItem>Unique name for the VPCGateway resource</HelperTextItem></HelperText>
+                  <HelperText><HelperTextItem>Kubernetes resource name. Use lowercase letters, numbers, and hyphens.</HelperTextItem></HelperText>
                 </FormHelperText>
               </FormGroup>
 
               <FormGroup label="Namespace" fieldId="gw-namespace">
-                <TextInput id="gw-namespace" value={namespace} onChange={(_e, v) => setNamespace(v)} />
+                <FormSelect
+                  id="gw-namespace"
+                  value={namespace}
+                  onChange={(_e, v) => setNamespace(v)}
+                  isDisabled={namespacesLoading}
+                >
+                  {namespacesLoading ? (
+                    <FormSelectOption value="" label="Loading namespaces..." isPlaceholder />
+                  ) : (
+                    <>
+                      {namespaces?.map((ns) => (
+                        <FormSelectOption key={ns.name} value={ns.name} label={ns.name} />
+                      ))}
+                    </>
+                  )}
+                </FormSelect>
               </FormGroup>
 
               <FormGroup label="Zone" isRequired fieldId="gw-zone">
-                <TextInput id="gw-zone" value={zone} onChange={(_e, v) => setZone(v)} isRequired placeholder="e.g. eu-de-1" />
+                <FormSelect
+                  id="gw-zone"
+                  value={zone}
+                  onChange={(_e, v) => setZone(v)}
+                  isDisabled={zonesLoading}
+                >
+                  <FormSelectOption value="" label="Select a zone" isPlaceholder />
+                  {zones?.map((z) => (
+                    <FormSelectOption key={z.name || z.id} value={z.name || z.id} label={z.name || z.id} />
+                  ))}
+                </FormSelect>
                 <FormHelperText>
-                  <HelperText><HelperTextItem>VPC availability zone</HelperTextItem></HelperText>
+                  <HelperText><HelperTextItem>VPC availability zone where the gateway's uplink VNI and floating IP will be provisioned</HelperTextItem></HelperText>
                 </FormHelperText>
               </FormGroup>
 
               <FormGroup label="Uplink Network" isRequired fieldId="gw-uplink">
-                <TextInput id="gw-uplink" value={uplinkNetwork} onChange={(_e, v) => setUplinkNetwork(v)} isRequired placeholder="e.g. localnet-uplink" />
-                <FormHelperText>
-                  <HelperText><HelperTextItem>Name of the LocalNet CUDN/UDN for the uplink</HelperTextItem></HelperText>
-                </FormHelperText>
+                <FormSelect
+                  id="gw-uplink"
+                  value={uplinkNetwork}
+                  onChange={(_e, v) => setUplinkNetwork(v)}
+                  isDisabled={networksLoading}
+                >
+                  <FormSelectOption value="" label="Select a LocalNet network" isPlaceholder />
+                  {localNetNetworks.map((n) => (
+                    <FormSelectOption
+                      key={`${n.kind}-${n.name}`}
+                      value={n.name}
+                      label={`${n.name} (${n.kind === 'ClusterUserDefinedNetwork' ? 'CUDN' : 'UDN'})`}
+                    />
+                  ))}
+                </FormSelect>
+                {!networksLoading && localNetNetworks.length === 0 && (
+                  <FormHelperText>
+                    <HelperText><HelperTextItem variant="warning">No LocalNet networks available. Create a LocalNet CUDN or UDN first.</HelperTextItem></HelperText>
+                  </FormHelperText>
+                )}
+                {(networksLoading || localNetNetworks.length > 0) && (
+                  <FormHelperText>
+                    <HelperText><HelperTextItem>The LocalNet CUDN or UDN that provides the gateway's uplink to the VPC fabric</HelperTextItem></HelperText>
+                  </FormHelperText>
+                )}
               </FormGroup>
 
               <FormGroup label="Transit Address" isRequired fieldId="gw-transit-addr">
-                <TextInput id="gw-transit-addr" value={transitAddress} onChange={(_e, v) => setTransitAddress(v)} isRequired placeholder="e.g. 192.168.255.1" />
+                <TextInput
+                  id="gw-transit-addr"
+                  value={transitAddress}
+                  onChange={(_e, v) => setTransitAddress(v)}
+                  isRequired
+                  placeholder="e.g. 192.168.255.1"
+                  validated={transitAddressValid ? 'default' : 'error'}
+                />
                 <FormHelperText>
-                  <HelperText><HelperTextItem>Gateway IP address on the transit network</HelperTextItem></HelperText>
+                  <HelperText>
+                    <HelperTextItem variant={transitAddressValid ? 'default' : 'error'}>
+                      {transitAddressValid
+                        ? 'IP address assigned to the gateway on the transit network for router-to-gateway communication'
+                        : 'Enter a valid IPv4 address (e.g. 192.168.255.1)'}
+                    </HelperTextItem>
+                  </HelperText>
                 </FormHelperText>
               </FormGroup>
 
               <FormGroup label="Transit CIDR" fieldId="gw-transit-cidr">
-                <TextInput id="gw-transit-cidr" value={transitCIDR} onChange={(_e, v) => setTransitCIDR(v)} placeholder="e.g. 192.168.255.0/24" />
+                <TextInput
+                  id="gw-transit-cidr"
+                  value={transitCIDR}
+                  onChange={(_e, v) => setTransitCIDR(v)}
+                  placeholder="e.g. 192.168.255.0/24"
+                  validated={transitCIDRValid ? 'default' : 'error'}
+                />
                 <FormHelperText>
-                  <HelperText><HelperTextItem>CIDR block for the transit network (optional)</HelperTextItem></HelperText>
+                  <HelperText>
+                    <HelperTextItem variant={transitCIDRValid ? 'default' : 'error'}>
+                      {transitCIDRValid
+                        ? 'CIDR block of the transit network. If omitted, defaults to /24 based on the transit address.'
+                        : 'Enter a valid IPv4 CIDR (e.g. 192.168.255.0/24)'}
+                    </HelperTextItem>
+                  </HelperText>
                 </FormHelperText>
               </FormGroup>
 
@@ -135,7 +229,7 @@ const GatewayCreatePage: React.FC = () => {
                   onChange={(_e, checked) => setPAREnabled(checked)}
                 />
                 <FormHelperText>
-                  <HelperText><HelperTextItem>Provision a block of public IPs routed through this gateway</HelperTextItem></HelperText>
+                  <HelperText><HelperTextItem>A Public Address Range provides a block of contiguous public IPs routed to this gateway</HelperTextItem></HelperText>
                 </FormHelperText>
               </FormGroup>
 

@@ -66,7 +66,7 @@ Ten reconciliation loops + one mutating webhook + orphan GC:
 | VPCGateway Reconciler | `pkg/controller/gateway/` | `VPCGateway` CRD | VPC uplink VNI, FIP, PAR, VPC routes |
 | VPCRouter Reconciler | `pkg/controller/router/` | `VPCRouter` CRD | Router pod with IP forwarding, NAT, DHCP |
 | VM Webhook | `pkg/webhook/` | `VirtualMachine` CREATE | Creates VNI, injects MAC+IP into VM spec |
-| Orphan GC | `pkg/gc/` | Periodic (10 min) | Deletes orphaned VPC resources (15 min grace) |
+| Orphan GC | `pkg/gc/` | Periodic (10 min) | Deletes orphaned VPC resources: VNIs, FIPs, PARs, VPC routes (15 min grace) |
 
 **CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip), `VPCGateway` (vgw), `VPCRouter` (vrt)
 

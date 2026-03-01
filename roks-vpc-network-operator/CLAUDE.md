@@ -48,11 +48,14 @@ Ten reconciliation loops + one mutating webhook + orphan GC:
 - **FloatingIP** (`pkg/controller/floatingip/`) — full FIP lifecycle via VPC API
 
 ### Gateway + Router Reconcilers
-- **VPCGateway** (`pkg/controller/gateway/reconciler.go`) — creates uplink VNI via VLAN attachment, manages FIP, PAR, VPC routes. See `api/v1alpha1/vpcgateway_types.go`.
-- **VPCRouter** (`pkg/controller/router/reconciler.go`) — creates privileged router pod with Multus attachments, IP forwarding, nftables NAT/firewall, optional dnsmasq DHCP. See `api/v1alpha1/vpcrouter_types.go`.
+- **VPCGateway** (`pkg/controller/gateway/reconciler.go`) — creates uplink VNI via VLAN attachment, manages FIP, PAR, VPC routes. Also watches VPCRouter status to auto-collect `advertisedRoutes` and create/delete VPC routes. See `api/v1alpha1/vpcgateway_types.go`.
+- **VPCRouter** (`pkg/controller/router/reconciler.go`) — creates privileged router pod with Multus attachments, IP forwarding, nftables NAT/firewall, optional dnsmasq DHCP. Also watches referenced VPCGateway for NAT/firewall/image/MAC changes and auto-recreates the router pod when they change. Exposes `status.podIP`. See `api/v1alpha1/vpcrouter_types.go`.
+
+**Bidirectional watching pattern**: Gateway watches Router status (for route advertisement), Router watches Gateway spec (for config propagation). This creates a reactive loop where gateway config changes flow down to router pods, and router route advertisements flow up to VPC routes.
 
 ### Orphan GC (`pkg/gc/orphan_collector.go`)
 - Periodic (every 10 min), lists VPC resources by cluster tag, cross-references with K8s objects, deletes orphans older than 15 min.
+- Covers all operator-managed VPC resource types: VNIs, floating IPs, public address ranges (PARs), and VPC routes.
 
 ## Key Implementation Details
 
@@ -82,7 +85,7 @@ Five finalizer names:
 - `vpc.roks.ibm.com/router-cleanup` — on VPCRouters (deletes router pod)
 
 ### Orphan GC (`pkg/gc/orphan_collector.go`)
-Periodic goroutine (every 10 min). Lists VPC resources by cluster tag, cross-references with K8s objects, deletes orphans older than 15 min.
+Periodic goroutine (every 10 min). Lists VPC resources by cluster tag, cross-references with K8s objects, deletes orphans older than 15 min. Covers VNIs, floating IPs, PARs, and VPC routes.
 
 ### VNI Creation Parameters
 Critical — every VNI must be created with:

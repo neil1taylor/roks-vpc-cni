@@ -14,8 +14,6 @@ import {
   DescriptionListTerm,
   DescriptionListDescription,
   Button,
-  Modal,
-  ModalVariant,
   Alert,
   Split,
   SplitItem,
@@ -23,9 +21,10 @@ import {
 } from '@patternfly/react-core';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
 import { Link, useNavigate } from 'react-router-dom-v5-compat';
-import { useRouter } from '../api/hooks';
+import { useRouter, useGateway } from '../api/hooks';
 import { apiClient } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
+import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import { formatTimestamp } from '../utils/formatters';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
@@ -34,6 +33,7 @@ const RouterDetailPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const ns = searchParams.get('ns') || undefined;
   const { router, loading } = useRouter(name || '', ns);
+  const { gateway: gatewayDetail } = useGateway(router?.gateway || '', router?.namespace);
   const navigate = useNavigate();
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -68,13 +68,14 @@ const RouterDetailPage: React.FC = () => {
           <Spinner size="lg" />
         ) : router ? (
           <>
+            {actionError && (
+              <Alert variant="danger" title={actionError} isInline style={{ marginBottom: '1rem' }} />
+            )}
+
             <Card style={{ marginBottom: '24px' }}>
-              <CardBody>
-                {actionError && (
-                  <Alert variant="danger" title={actionError} isInline style={{ marginBottom: '1rem' }} />
-                )}
-                <Split hasGutter style={{ marginBottom: '1rem' }}>
-                  <SplitItem isFilled />
+              <CardTitle>
+                <Split hasGutter>
+                  <SplitItem isFilled>Overview</SplitItem>
                   <SplitItem>
                     <Button
                       variant="danger"
@@ -85,6 +86,8 @@ const RouterDetailPage: React.FC = () => {
                     </Button>
                   </SplitItem>
                 </Split>
+              </CardTitle>
+              <CardBody>
                 <DescriptionList>
                   <DescriptionListGroup>
                     <DescriptionListTerm>Name</DescriptionListTerm>
@@ -98,6 +101,14 @@ const RouterDetailPage: React.FC = () => {
                     <DescriptionListTerm>Gateway</DescriptionListTerm>
                     <DescriptionListDescription>
                       <Link to={`/vpc-networking/gateways/${router.gateway}?ns=${encodeURIComponent(router.namespace)}`}>{router.gateway}</Link>
+                      {gatewayDetail && (
+                        <>
+                          {' '}
+                          <Label isCompact color="blue">{gatewayDetail.zone}</Label>
+                          {' '}
+                          <StatusBadge status={gatewayDetail.phase} />
+                        </>
+                      )}
                     </DescriptionListDescription>
                   </DescriptionListGroup>
                   <DescriptionListGroup>
@@ -181,35 +192,15 @@ const RouterDetailPage: React.FC = () => {
         )}
       </PageSection>
 
-      <Modal
-        title="Delete Router"
-        variant={ModalVariant.small}
+      <DeleteConfirmModal
         isOpen={isDeleteModalOpen}
-        onClose={() => { setIsDeleteModalOpen(false); setActionError(null); }}
-        actions={[
-          <Button
-            key="delete"
-            variant="danger"
-            onClick={handleDelete}
-            isLoading={actionLoading}
-            isDisabled={actionLoading}
-          >
-            Delete
-          </Button>,
-          <Button
-            key="cancel"
-            variant="link"
-            onClick={() => { setIsDeleteModalOpen(false); setActionError(null); }}
-          >
-            Cancel
-          </Button>,
-        ]}
-      >
-        {actionError && (
-          <Alert variant="danger" title={actionError} isInline style={{ marginBottom: '1rem' }} />
-        )}
-        Are you sure you want to delete router <strong>{router?.name}</strong>? This action cannot be undone.
-      </Modal>
+        title="Delete Router"
+        message={`Deleting router "${router?.name}" will remove the router pod and disconnect all attached networks from the gateway. VMs on those networks will lose external connectivity. This action cannot be undone.`}
+        resourceName={router?.name}
+        onConfirm={handleDelete}
+        onCancel={() => { setIsDeleteModalOpen(false); setActionError(null); }}
+        isLoading={actionLoading}
+      />
     </VPCNetworkingShell>
   );
 };

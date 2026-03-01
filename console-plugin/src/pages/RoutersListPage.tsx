@@ -7,8 +7,6 @@ import {
   ToolbarContent,
   ToolbarItem,
   Spinner,
-  Modal,
-  ModalVariant,
   Alert,
   EmptyState,
   EmptyStateBody,
@@ -16,6 +14,7 @@ import {
   EmptyStateIcon,
   Text,
   TextVariants,
+  SearchInput,
 } from '@patternfly/react-core';
 import { CubesIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
@@ -24,33 +23,34 @@ import { useRouters } from '../api/hooks';
 import { Router } from '../api/types';
 import { apiClient } from '../api/client';
 import StatusBadge from '../components/StatusBadge';
+import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 import { formatRelativeTime } from '../utils/formatters';
 
 const RoutersListPage: React.FC = () => {
   const { routers, loading, error } = useRouters();
   const [deleteTarget, setDeleteTarget] = useState<Router | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [searchFilter, setSearchFilter] = useState('');
   const navigate = useNavigate();
+
+  const filteredRouters = routers?.filter(
+    (r) => r.name.toLowerCase().includes(searchFilter.toLowerCase()),
+  );
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    setIsDeleting(true);
     setDeleteError('');
     try {
       const resp = await apiClient.deleteRouter(deleteTarget.name, deleteTarget.namespace);
       if (resp.error) {
         const msg = resp.error.message || 'Delete failed';
         setDeleteError(typeof msg === 'string' ? msg : JSON.stringify(msg));
-        setIsDeleting(false);
         return;
       }
       setDeleteTarget(null);
-      setIsDeleting(false);
       window.location.reload();
     } catch (e) {
-      setIsDeleting(false);
       setDeleteError(e instanceof Error ? e.message : JSON.stringify(e));
     }
   };
@@ -71,8 +71,21 @@ const RoutersListPage: React.FC = () => {
         <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
           Routers connect workload networks to a gateway for external access and inter-network routing.
         </Text>
+
+        {deleteError && (
+          <Alert variant="danger" title={deleteError} isInline isPlain style={{ marginBottom: '16px' }} />
+        )}
+
         <Toolbar>
           <ToolbarContent>
+            <ToolbarItem>
+              <SearchInput
+                placeholder="Filter by name"
+                value={searchFilter}
+                onChange={(_e, value) => setSearchFilter(value)}
+                onClear={() => setSearchFilter('')}
+              />
+            </ToolbarItem>
             <ToolbarItem>
               <Button variant="primary" onClick={() => navigate('/vpc-networking/routers/create')}>Create Router</Button>
             </ToolbarItem>
@@ -85,11 +98,16 @@ const RoutersListPage: React.FC = () => {
           </div>
         )}
 
-        {(!routers || routers.length === 0) ? (
+        {(!filteredRouters || filteredRouters.length === 0) ? (
           <EmptyState>
-            <EmptyStateHeader titleText="No routers configured" icon={<EmptyStateIcon icon={CubesIcon} />} />
+            <EmptyStateHeader
+              titleText={searchFilter ? 'No matching routers' : 'No routers configured'}
+              icon={<EmptyStateIcon icon={CubesIcon} />}
+            />
             <EmptyStateBody>
-              Create a VPCRouter to connect Layer2 segments and uplink to a gateway.
+              {searchFilter
+                ? `No routers match "${searchFilter}". Try a different search or clear the filter.`
+                : 'Create a VPCRouter to connect Layer2 segments and uplink to a gateway.'}
             </EmptyStateBody>
           </EmptyState>
         ) : (
@@ -107,7 +125,7 @@ const RoutersListPage: React.FC = () => {
               </Tr>
             </Thead>
             <Tbody>
-              {routers.map((router: Router) => (
+              {filteredRouters.map((router: Router) => (
                 <Tr key={router.name}>
                   <Td>
                     <Button variant="link" isInline onClick={() => navigate(`/vpc-networking/routers/${router.name}?ns=${encodeURIComponent(router.namespace)}`)}>
@@ -136,26 +154,14 @@ const RoutersListPage: React.FC = () => {
         )}
       </PageSection>
 
-      <Modal
-        variant={ModalVariant.small}
-        title={`Delete ${deleteTarget?.name || 'router'}?`}
+      <DeleteConfirmModal
         isOpen={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        actions={[
-          <Button key="cancel" variant={ButtonVariant.link} onClick={() => setDeleteTarget(null)} isDisabled={isDeleting}>
-            Cancel
-          </Button>,
-          <Button key="delete" variant={ButtonVariant.danger} onClick={handleDelete} isLoading={isDeleting} isDisabled={isDeleting}>
-            Delete
-          </Button>,
-        ]}
-      >
-        {deleteError && (
-          <Alert variant="danger" isInline title={deleteError} style={{ marginBottom: '16px' }} />
-        )}
-        Are you sure you want to delete router <strong>{deleteTarget?.name}</strong>?
-        This will disconnect all attached networks and remove the router.
-      </Modal>
+        title={`Delete ${deleteTarget?.name || 'router'}?`}
+        message="Deleting this router will remove the router pod and disconnect all attached networks from the gateway. VMs on those networks will lose external connectivity."
+        resourceName={deleteTarget?.name}
+        onConfirm={handleDelete}
+        onCancel={() => { setDeleteTarget(null); setDeleteError(''); }}
+      />
     </VPCNetworkingShell>
   );
 };

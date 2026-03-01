@@ -462,13 +462,12 @@ spec:
 
 ### 3.6 Gateway with pod overrides
 
-Override the default container image or replica count for the router pod.
+Override the default container image for the router pod.
 
 ```yaml
 spec:
   pod:
     image: "de.icr.io/roks/vpc-router:v1.0.0"   # Custom router image
-    replicas: 1                                     # 1-3 replicas
 ```
 
 ---
@@ -583,21 +582,26 @@ spec:
 
 With `connectedSegments: true` and a network at `10.100.0.1/24`, the router advertises `10.100.0.0/24` in `status.advertisedRoutes`.
 
-### 4.4 Router functions
+The VPCGateway reconciler watches all VPCRouter status changes. When a router's `advertisedRoutes` change, the gateway automatically collects routes from all associated routers and creates or deletes VPC routes accordingly. You do not need to manually add `vpcRoutes` to the gateway spec when using route advertisement.
 
-Optional functions extend the router's capabilities:
+### 4.4 Router pod health probes
 
-```yaml
-spec:
-  functions:
-  - type: routing              # IP forwarding (enabled by default)
-  - type: firewall             # nftables firewall
-    config:
-      defaultPolicy: drop      # Function-specific config
-  - type: wireguard            # WireGuard VPN (future)
-    config:
-      listenPort: "51820"
+The router pod includes liveness and readiness probes to ensure reliable operation:
+
+- **Liveness probe**: Checks that IP forwarding is enabled via `sysctl -n net.ipv4.ip_forward`. If forwarding is disabled (e.g., due to a kernel issue), the pod is restarted.
+- **Readiness probe**: Verifies the uplink interface is configured and operational by checking `ip route show default | grep -q uplink && ip link show uplink | grep -q UP`. The pod is marked unready if the uplink is down.
+
+### 4.5 Router pod IP in status
+
+The router's pod IP is exposed in `status.podIP`. This is used by the gateway to know the next-hop address for VPC routes:
+
+```bash
+oc get vpcrouter demo-router -n roks-vpc-network-operator -o jsonpath='{.status.podIP}'
 ```
+
+### 4.6 Gateway-triggered router pod recreation
+
+The VPCRouter reconciler watches the referenced VPCGateway for changes. If the gateway's NAT rules, firewall rules, container image, or uplink MAC address change, the router pod is automatically recreated to pick up the new configuration. This ensures router pods always reflect the latest gateway settings without manual intervention.
 
 ---
 
@@ -1517,7 +1521,6 @@ oc delete namespace vm-demo
 | `firewall.enabled` | bool | No | `false` | Enable firewall |
 | `firewall.rules[]` | | No | - | Firewall rules |
 | `pod.image` | string | No | - | Router pod image |
-| `pod.replicas` | int | No | `1` | Pod replicas (1-3) |
 
 ### VPCRouter spec fields
 
@@ -1535,9 +1538,7 @@ oc delete namespace vm-demo
 | `routeAdvertisement.connectedSegments` | bool | No | `true` | Advertise connected CIDRs |
 | `routeAdvertisement.staticRoutes` | bool | No | `false` | Advertise static routes |
 | `routeAdvertisement.natIPs` | bool | No | `false` | Advertise NAT IPs |
-| `functions[].type` | string | No | - | routing, firewall, wireguard |
 | `pod.image` | string | No | - | Container image |
-| `pod.replicas` | int | No | `1` | Pod replicas (1-3) |
 
 ### Finalizers
 
@@ -1598,6 +1599,13 @@ oc delete namespace vm-demo
 | `RoutesConfigured` | VPC routes created |
 | `FloatingIPReady` | FIP bound to VNI |
 | `PARReady` | PAR with ingress routing configured |
+
+#### VPCRouter status fields
+
+| Field | Description |
+|------|-------------|
+| `podIP` | IP address of the router pod (used as VPC route next-hop) |
+| `advertisedRoutes` | CIDRs advertised to the gateway (auto-collected for VPC routes) |
 
 #### VPCRouter conditions
 

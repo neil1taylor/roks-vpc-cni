@@ -238,15 +238,17 @@ Same logic as the CUDN reconciler but namespace-scoped. Uses finalizer `vpc.roks
 
 ### 6.5 VPCGateway Reconciler
 
-**Watches:** `VPCGateway` CRD
-**Trigger:** Create, Update, Delete events
+**Watches:** `VPCGateway` CRD, `VPCRouter` status changes (for route advertisement collection)
+**Trigger:** Create, Update, Delete events on VPCGateway; status updates on associated VPCRouters
+
+The gateway reconciler also watches VPCRouter objects. When any router's `status.advertisedRoutes` change, the gateway automatically collects `advertisedRoutes` from all routers that reference it and creates or deletes VPC routes accordingly. This provides dynamic route advertisement without manual `vpcRoutes` entries.
 
 #### 6.5.1 Creation Flow
 
 1. Add finalizer `vpc.roks.ibm.com/gateway-cleanup`.
 2. Look up uplink CUDN for subnet ID and VLAN ID.
 3. Pick a bare metal server, create VLAN attachment with inline VNI (`allow_ip_spoofing: true`, `enable_infrastructure_nat: false`).
-4. Create VPC routes for each `spec.vpcRoutes[].destination` (action: deliver, next_hop: VNI reserved IP).
+4. Create VPC routes for each `spec.vpcRoutes[].destination` and each advertised route from associated VPCRouters (action: deliver, next_hop: VNI reserved IP).
 5. If `spec.floatingIP.enabled`: create or adopt floating IP bound to VNI.
 6. If `spec.publicAddressRange.enabled`: create PAR, ingress routing table, and ingress routes.
 
@@ -260,15 +262,18 @@ Same logic as the CUDN reconciler but namespace-scoped. Uses finalizer `vpc.roks
 
 ### 6.6 VPCRouter Reconciler
 
-**Watches:** `VPCRouter` CRD
-**Trigger:** Create, Update, Delete events
+**Watches:** `VPCRouter` CRD, `VPCGateway` changes (NAT, firewall, image, MAC)
+**Trigger:** Create, Update, Delete events on VPCRouter; spec changes on referenced VPCGateway
+
+The router reconciler watches the referenced VPCGateway. If the gateway's NAT rules, firewall rules, container image, or uplink MAC address change, the router pod is automatically recreated to pick up the new configuration.
 
 #### 6.6.1 Creation Flow
 
 1. Add finalizer `vpc.roks.ibm.com/router-cleanup`.
 2. Validate referenced VPCGateway exists and is Ready.
-3. Create a privileged router pod with Multus attachments to uplink and workload networks.
+3. Create a privileged router pod with Multus attachments to uplink and workload networks. Pod includes a liveness probe (`sysctl -n net.ipv4.ip_forward`) and readiness probe (uplink interface UP check).
 4. Pod configures IP forwarding, nftables NAT/firewall, and optional dnsmasq DHCP.
+5. Update `status.podIP` with the router pod's IP address.
 
 #### 6.6.2 Deletion Flow
 
@@ -554,7 +559,7 @@ Every 5 minutes, verify VPC resources referenced in CUDN/VM annotations still ex
 
 ### 11.3 Orphan Garbage Collection
 
-Runs every 10 minutes. Scans for VPC resources tagged with the cluster ID that have no corresponding K8s object. Grace period: 15 minutes before deletion.
+Runs every 10 minutes. Scans for VPC resources tagged with the cluster ID that have no corresponding K8s object. Grace period: 15 minutes before deletion. Covers all operator-managed VPC resource types: VNIs, floating IPs, public address ranges (PARs), and VPC routes.
 
 ### 11.4 Scaling Considerations
 
