@@ -26,6 +26,91 @@ Integrate WireGuard-based mesh networking for use cases beyond single-VPC connec
 - Not needed for single-VPC, single-cluster deployments where VPCGateway/VPCRouter already handles routing
 - Adds a fourth networking layer (VPC L3 > OVN LocalNet L2 > VPCRouter > WireGuard) — debuggability impact should be considered
 
+## Router Pod Performance Improvements
+
+**Status**: Under consideration
+
+The current VPCRouter pod uses a Fedora container running a bash init script with kernel nftables forwarding over Multus veth interfaces. This is functional but has throughput limitations for high-bandwidth workloads.
+
+### Current Architecture
+
+Traffic path: **VM → OVN overlay → Multus veth → router pod (nftables) → uplink veth → OVN overlay → VPC fabric**
+
+| Factor | Current State | Impact |
+|--------|--------------|--------|
+| **Data path** | Veth pairs (Multus CNI) | ~5-10% overhead vs native bridge |
+| **Forwarding engine** | Kernel nftables | Single-threaded per flow, no fast-path |
+| **Resource limits** | None set | Competes with all pods on the node |
+| **CPU affinity** | None | Kernel scheduler decides, no pinning |
+| **NIC mode** | OVN LocalNet (software) | No SR-IOV passthrough |
+| **Container image** | `fedora:40` + bash init | Not a purpose-built forwarding binary |
+| **Acceleration** | None | No DPDK, XDP, or eBPF fast-path |
+
+### Estimated Throughput
+
+- **Small packets (64B):** ~200-500 Kpps
+- **Large packets / bulk transfer:** ~5-15 Gbps (depends on BM NIC and available CPU)
+- **With NAT rules:** ~10-30% additional overhead per rule chain
+
+### Proposed Improvements
+
+**Tier 1 — Low effort, immediate gains**
+
+- **Resource requests and limits** — Guarantee CPU/memory for the forwarding pod. Prevents starvation under node pressure.
+- **CPU pinning** — Use `runtimeClassName` or Kubernetes CPU Manager (`static` policy) to pin the router pod to dedicated cores. Eliminates context-switch overhead.
+- **Node affinity** — Schedule router pods on nodes with the most available bandwidth (bare metal workers with 25/100G NICs).
+
+**Tier 2 — Medium effort, significant gains**
+
+- **Purpose-built router image** — Replace `fedora:40` + bash script with a compiled Go or C binary that configures interfaces and applies nftables at startup. Eliminates `dnf install` overhead (~30s startup), reduces image size from ~1GB to ~50MB, and enables structured health reporting.
+- **XDP/eBPF fast-path** — Attach XDP programs to Multus interfaces for forwarding decisions before packets enter the kernel network stack. 10-100x PPS improvement for simple forwarding rules. Complex NAT still falls back to nftables.
+- **Host networking mode** — Run the router pod with `hostNetwork: true` and use VRF or network namespaces for isolation. Eliminates veth overhead entirely. Tradeoff: loses Multus interface abstraction.
+
+**Tier 3 — High effort, maximum performance**
+
+- **SR-IOV interfaces** — Use SR-IOV VFs for the uplink interface, bypassing OVN entirely on the VPC side. Requires SR-IOV device plugin and Network Operator configuration. Near line-rate performance.
+- **DPDK userspace forwarding** — Run VPP (fd.io) or a custom DPDK application inside the router pod for full userspace packet processing. Requires hugepages, dedicated cores, and SR-IOV VFs. Achieves 40-100 Gbps on modern NICs.
+- **FRRouting replacement** — Replace the bash init script with FRRouting (FRR) for dynamic routing protocol support (BGP, OSPF) alongside high-performance forwarding via its built-in dataplane.
+
+### Resource Configuration Sketch
+
+```yaml
+# VPCRouter CRD extension
+spec:
+  pod:
+    resources:
+      requests:
+        cpu: "2"
+        memory: "1Gi"
+      limits:
+        cpu: "4"
+        memory: "2Gi"
+    runtimeClassName: performance  # CPU Manager static policy
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
+      feature.node.kubernetes.io/network-sriov.capable: "true"
+```
+
+### When to Invest
+
+For most KubeVirt VM workloads (tens of VMs, moderate traffic), the current approach is sufficient. Performance optimization becomes important for:
+
+- **NFV workloads** — Network functions requiring line-rate packet processing
+- **Storage replication** — iSCSI/NFS between VMs across subnets
+- **Bulk data transfer** — Analytics, ML training data movement between many VMs
+- **High VM density** — 100+ VMs routing through a single router pod
+- **Latency-sensitive** — Financial, gaming, or real-time communication workloads
+
+### Implementation Notes
+
+- Tier 1 changes are additive — extend `buildRouterPod()` in `pkg/controller/router/pod.go` to set resource fields from `spec.pod.resources`
+- XDP programs can coexist with nftables — use XDP for fast-path forwarding, nftables for complex NAT/firewall
+- SR-IOV requires the OpenShift SR-IOV Network Operator to be installed on the cluster
+- DPDK requires hugepages configuration via MachineConfig and node tuning
+- A purpose-built image could be maintained as `de.icr.io/roks/vpc-network-router:latest` alongside the operator/BFF/plugin images
+
+---
+
 ## Enhanced DHCP Management
 
 **Status**: Under consideration
