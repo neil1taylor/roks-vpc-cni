@@ -69,7 +69,7 @@ const GatewaysListPage: React.FC = () => {
     <VPCNetworkingShell>
       <PageSection>
         <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
-          Tier-0 gateways bridge Layer2 overlay networks to the VPC fabric.
+          Gateways route traffic between Layer2 overlay networks and the VPC fabric.
         </Text>
         <Toolbar>
           <ToolbarContent>
@@ -89,7 +89,7 @@ const GatewaysListPage: React.FC = () => {
           <EmptyState>
             <EmptyStateHeader titleText="No gateways configured" icon={<EmptyStateIcon icon={CubesIcon} />} />
             <EmptyStateBody>
-              Create a VPCGateway to bridge Layer2 overlay networks to the VPC fabric.
+              Create a VPCGateway to route traffic between Layer2 overlay networks and the VPC fabric.
             </EmptyStateBody>
           </EmptyState>
         ) : (

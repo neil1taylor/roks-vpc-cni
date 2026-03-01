@@ -69,7 +69,7 @@ const RoutersListPage: React.FC = () => {
     <VPCNetworkingShell>
       <PageSection>
         <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
-          Tier-1 routers connect Layer2 segments and uplink to a gateway.
+          Routers connect workload networks to a gateway for external access and inter-network routing.
         </Text>
         <Toolbar>
           <ToolbarContent>

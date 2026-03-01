@@ -65,7 +65,7 @@ const VLANAttachmentsPage: React.FC = () => {
     <VPCNetworkingShell>
       <PageSection>
         <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
-          VLAN attachments on bare metal worker nodes that bridge VPC subnets to OVN LocalNet networks.
+          VLAN attachments on bare metal worker nodes that connect VPC subnets to OVN LocalNet networks.
         </Text>
         <Card>
           <CardBody>
