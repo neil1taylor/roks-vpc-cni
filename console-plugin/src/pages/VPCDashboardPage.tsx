@@ -23,6 +23,8 @@ import {
   useK8sFloatingIPs,
   useNetworkDefinitions,
   useClusterInfo,
+  useGateways,
+  useRouters,
 } from '../api/hooks';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
@@ -46,6 +48,8 @@ const VPCDashboardPage: React.FC = () => {
   const { vnis: k8sVNIs, loading: k8sVNILoading } = useK8sVNIs();
   const { attachments: k8sAttachments, loading: k8sAttLoading } = useK8sVLANAttachments();
   const { floatingIps: k8sFIPs, loading: k8sFIPLoading } = useK8sFloatingIPs();
+  const { gateways, loading: gwLoading } = useGateways();
+  const { routers, loading: rtLoading } = useRouters();
   const { networks, loading: networksLoading } = useNetworkDefinitions();
 
   const renderCount = (count: number | undefined, loading: boolean) => {
@@ -135,6 +139,18 @@ const VPCDashboardPage: React.FC = () => {
             <Card isCompact>
               <CardTitle>FloatingIPs</CardTitle>
               <CardBody>{renderCount(k8sFIPs?.length, k8sFIPLoading)}</CardBody>
+            </Card>
+          </GridItem>
+          <GridItem span={3}>
+            <Card isCompact>
+              <CardTitle>Gateways (T0)</CardTitle>
+              <CardBody>{renderCount(gateways?.length, gwLoading)}</CardBody>
+            </Card>
+          </GridItem>
+          <GridItem span={3}>
+            <Card isCompact>
+              <CardTitle>Routers (T1)</CardTitle>
+              <CardBody>{renderCount(routers?.length, rtLoading)}</CardBody>
             </Card>
           </GridItem>
         </Grid>
