@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
 	"github.com/IBM/roks-vpc-network-operator/pkg/annotations"
 	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	"github.com/IBM/roks-vpc-network-operator/pkg/finalizers"
@@ -158,7 +159,15 @@ func (w *VMMutatingWebhook) Handle(ctx context.Context, req admission.Request) a
 				}
 			}
 		}
-		// Layer2 interfaces: no VPC resources, just record in the annotation
+		// Layer2 interfaces: no VPC resources needed, but inject router gateway if available
+		if netInfo.IsLayer2() {
+			gatewayIP := w.findRouterGateway(ctx, req.Namespace, netInfo.Name)
+			if gatewayIP != "" {
+				entry.Gateway = gatewayIP
+				logger.Info("Injected router gateway for L2 interface",
+					"network", netInfo.Name, "gateway", gatewayIP)
+			}
+		}
 
 		vmNetInterfaces = append(vmNetInterfaces, entry)
 	}
@@ -218,6 +227,38 @@ func (w *VMMutatingWebhook) Handle(ctx context.Context, req admission.Request) a
 func (w *VMMutatingWebhook) InjectDecoder(d admission.Decoder) error {
 	w.decoder = d
 	return nil
+}
+
+// findRouterGateway looks up VPCRouter CRs in the given namespace to find
+// a router that connects to the specified L2 network. Returns the router's
+// IP address for that network (without prefix length), or empty string if none found.
+func (w *VMMutatingWebhook) findRouterGateway(ctx context.Context, namespace, networkName string) string {
+	if w.K8s == nil {
+		return ""
+	}
+
+	routerList := &v1alpha1.VPCRouterList{}
+	if err := w.K8s.List(ctx, routerList, client.InNamespace(namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list VPCRouters for gateway lookup")
+		return ""
+	}
+
+	for _, router := range routerList.Items {
+		if router.Status.Phase != "Ready" {
+			continue
+		}
+		for _, net := range router.Spec.Networks {
+			if net.Name == networkName {
+				// Strip prefix length from address (e.g. "10.100.0.1/24" -> "10.100.0.1")
+				ip := net.Address
+				if idx := strings.IndexByte(ip, '/'); idx > 0 {
+					ip = ip[:idx]
+				}
+				return ip
+			}
+		}
+	}
+	return ""
 }
 
 // ensureVNIAttachment creates a per-VM VLAN attachment with inline VNI on any

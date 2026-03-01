@@ -3,13 +3,21 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	admissionv1 "k8s.io/api/admission/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
 	"github.com/IBM/roks-vpc-network-operator/pkg/annotations"
+	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
 )
 
@@ -94,7 +102,7 @@ func TestFindLocalNetNetworks(t *testing.T) {
 						"devices": map[string]interface{}{
 							"interfaces": []interface{}{
 								map[string]interface{}{
-									"name":   "default",
+									"name":       "default",
 									"masquerade": map[string]interface{}{},
 								},
 								map[string]interface{}{
@@ -213,10 +221,10 @@ func TestInjectCloudInitNetworkConfig(t *testing.T) {
 	}
 
 	// Verify it contains the IP
-	if !containsString2(networkData, "10.240.64.12/24") {
+	if !strings.Contains(networkData, "10.240.64.12/24") {
 		t.Errorf("network data should contain IP, got: %s", networkData)
 	}
-	if !containsString2(networkData, "10.240.64.1") {
+	if !strings.Contains(networkData, "10.240.64.1") {
 		t.Errorf("network data should contain gateway, got: %s", networkData)
 	}
 }
@@ -259,14 +267,369 @@ func TestContainsString(t *testing.T) {
 	}
 }
 
-// helpers - can't reuse strings.Contains to avoid collision with webhook helpers
-func containsString2(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+// newTestScheme builds a scheme with core k8s types, our CRD types, and
+// unstructured OVN CUDN/UDN types for use with the fake client.
+func newTestScheme() *runtime.Scheme {
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = v1alpha1.AddToScheme(s)
+
+	// Register unstructured CUDN GVK so the fake client can serve it
+	s.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: "k8s.ovn.org", Version: "v1", Kind: "ClusterUserDefinedNetwork"},
+		&unstructured.Unstructured{},
+	)
+	s.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: "k8s.ovn.org", Version: "v1", Kind: "ClusterUserDefinedNetworkList"},
+		&unstructured.UnstructuredList{},
+	)
+	return s
+}
+
+// makeLayer2CUDN creates an unstructured Layer2 CUDN for testing.
+func makeLayer2CUDN(name string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.ovn.org/v1",
+			"kind":       "ClusterUserDefinedNetwork",
+			"metadata": map[string]interface{}{
+				"name": name,
+			},
+			"spec": map[string]interface{}{
+				"network": map[string]interface{}{
+					"topology": "Layer2",
+					"layer2": map[string]interface{}{
+						"role": "Secondary",
+					},
+				},
+			},
+		},
+	}
+}
+
+// makeL2VMObj creates a VM JSON object with a single Layer2 multus interface.
+func makeL2VMObj(vmName, namespace, networkRef string) map[string]interface{} {
+	return map[string]interface{}{
+		"apiVersion": "kubevirt.io/v1",
+		"kind":       "VirtualMachine",
+		"metadata": map[string]interface{}{
+			"name":      vmName,
+			"namespace": namespace,
+		},
+		"spec": map[string]interface{}{
+			"template": map[string]interface{}{
+				"spec": map[string]interface{}{
+					"networks": []interface{}{
+						map[string]interface{}{
+							"name": "default",
+							"pod":  map[string]interface{}{},
+						},
+						map[string]interface{}{
+							"name": "l2net",
+							"multus": map[string]interface{}{
+								"networkName": networkRef,
+							},
+						},
+					},
+					"domain": map[string]interface{}{
+						"devices": map[string]interface{}{
+							"interfaces": []interface{}{
+								map[string]interface{}{
+									"name":       "default",
+									"masquerade": map[string]interface{}{},
+								},
+								map[string]interface{}{
+									"name":   "l2net",
+									"bridge": map[string]interface{}{},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// extractNetworkInterfacesFromPatch parses the admission response patches to
+// extract the network-interfaces annotation value from the mutated VM.
+func extractNetworkInterfacesFromPatch(t *testing.T, originalRaw []byte, resp admission.Response) []network.VMNetworkInterface {
+	t.Helper()
+
+	// The response Patches field contains typed JSON patch operations.
+	// The webhook builds the entire annotations map and sets it at
+	// /metadata/annotations. Find that operation.
+	for _, op := range resp.Patches {
+		if op.Path == "/metadata/annotations" || op.Path == "/metadata/annotations/" {
+			// Value is a map of annotations
+			annotMap, ok := op.Value.(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected annotations value to be a map, got %T", op.Value)
+			}
+			netIfacesStr, ok := annotMap[annotations.NetworkInterfaces].(string)
+			if !ok {
+				t.Fatalf("expected network-interfaces annotation to be a string, got %T", annotMap[annotations.NetworkInterfaces])
+			}
+			var netIfaces []network.VMNetworkInterface
+			if err := json.Unmarshal([]byte(netIfacesStr), &netIfaces); err != nil {
+				t.Fatalf("failed to unmarshal network-interfaces JSON: %v", err)
+			}
+			return netIfaces
 		}
 	}
-	return false
+
+	// If the annotations path was not found as a whole object, look for the
+	// specific annotation key path (JSON Pointer with ~ escaping).
+	annotKey := strings.ReplaceAll(annotations.NetworkInterfaces, "/", "~1")
+	targetPath := "/metadata/annotations/" + annotKey
+	for _, op := range resp.Patches {
+		if op.Path == targetPath {
+			netIfacesStr, ok := op.Value.(string)
+			if !ok {
+				t.Fatalf("expected annotation value to be string, got %T", op.Value)
+			}
+			var netIfaces []network.VMNetworkInterface
+			if err := json.Unmarshal([]byte(netIfacesStr), &netIfaces); err != nil {
+				t.Fatalf("failed to unmarshal network-interfaces JSON: %v", err)
+			}
+			return netIfaces
+		}
+	}
+
+	// Debug: print all patch operations
+	for i, op := range resp.Patches {
+		t.Logf("patch[%d]: op=%s path=%s value=%v", i, op.Operation, op.Path, op.Value)
+	}
+
+	t.Fatal("could not find network-interfaces annotation in patch operations")
+	return nil
+}
+
+func TestFindRouterGateway(t *testing.T) {
+	s := newTestScheme()
+
+	// Create a Ready VPCRouter with networks
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-router",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-1",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "my-l2-net", Address: "10.100.0.1/24"},
+				{Name: "other-net", Address: "10.200.0.1/16"},
+			},
+		},
+		Status: v1alpha1.VPCRouterStatus{
+			Phase: "Ready",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(router).
+		WithStatusSubresource(&v1alpha1.VPCRouter{}).
+		Build()
+
+	// Update the status via status subresource
+	router.Status.Phase = "Ready"
+	if err := fakeClient.Status().Update(context.Background(), router); err != nil {
+		t.Fatalf("failed to update router status: %v", err)
+	}
+
+	w := &VMMutatingWebhook{K8s: fakeClient}
+
+	// Should find the gateway for a matching network
+	gw := w.findRouterGateway(context.Background(), "default", "my-l2-net")
+	if gw != "10.100.0.1" {
+		t.Errorf("expected gateway '10.100.0.1', got %q", gw)
+	}
+
+	// Should find gateway for the other network
+	gw2 := w.findRouterGateway(context.Background(), "default", "other-net")
+	if gw2 != "10.200.0.1" {
+		t.Errorf("expected gateway '10.200.0.1', got %q", gw2)
+	}
+
+	// Should return empty for unknown network
+	gw3 := w.findRouterGateway(context.Background(), "default", "nonexistent")
+	if gw3 != "" {
+		t.Errorf("expected empty gateway for unknown network, got %q", gw3)
+	}
+
+	// Should return empty for wrong namespace
+	gw4 := w.findRouterGateway(context.Background(), "other-ns", "my-l2-net")
+	if gw4 != "" {
+		t.Errorf("expected empty gateway in wrong namespace, got %q", gw4)
+	}
+}
+
+func TestFindRouterGateway_NotReady(t *testing.T) {
+	s := newTestScheme()
+
+	// Create a VPCRouter that is NOT Ready
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pending-router",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-1",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "my-l2-net", Address: "10.100.0.1/24"},
+			},
+		},
+		Status: v1alpha1.VPCRouterStatus{
+			Phase: "Pending",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(router).
+		WithStatusSubresource(&v1alpha1.VPCRouter{}).
+		Build()
+
+	// Update status to Pending
+	router.Status.Phase = "Pending"
+	_ = fakeClient.Status().Update(context.Background(), router)
+
+	w := &VMMutatingWebhook{K8s: fakeClient}
+
+	gw := w.findRouterGateway(context.Background(), "default", "my-l2-net")
+	if gw != "" {
+		t.Errorf("expected empty gateway when router is not Ready, got %q", gw)
+	}
+}
+
+func TestWebhook_L2WithGateway(t *testing.T) {
+	s := newTestScheme()
+
+	cudn := makeLayer2CUDN("my-l2-net")
+
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-router",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-1",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "my-l2-net", Address: "10.100.0.1/24"},
+			},
+		},
+		Status: v1alpha1.VPCRouterStatus{
+			Phase: "Ready",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(cudn, router).
+		WithStatusSubresource(&v1alpha1.VPCRouter{}).
+		Build()
+
+	// Set the router status via status subresource
+	router.Status.Phase = "Ready"
+	if err := fakeClient.Status().Update(context.Background(), router); err != nil {
+		t.Fatalf("failed to update router status: %v", err)
+	}
+
+	w := &VMMutatingWebhook{
+		VPC:       vpc.NewMockClient(),
+		K8s:       fakeClient,
+		ClusterID: "test-cluster",
+	}
+
+	vmObj := makeL2VMObj("test-vm", "default", "my-l2-net")
+	raw, _ := json.Marshal(vmObj)
+
+	resp := w.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: "CREATE",
+			Name:      "test-vm",
+			Namespace: "default",
+			Object:    runtime.RawExtension{Raw: raw},
+		},
+	})
+
+	if !resp.Allowed {
+		t.Fatalf("expected VM to be allowed, got denied: %s", resp.Result.Message)
+	}
+
+	netIfaces := extractNetworkInterfacesFromPatch(t, raw, resp)
+
+	if len(netIfaces) != 1 {
+		t.Fatalf("expected 1 network interface, got %d", len(netIfaces))
+	}
+
+	iface := netIfaces[0]
+	if iface.NetworkName != "my-l2-net" {
+		t.Errorf("expected networkName 'my-l2-net', got %q", iface.NetworkName)
+	}
+	if iface.Topology != "Layer2" {
+		t.Errorf("expected topology 'Layer2', got %q", iface.Topology)
+	}
+	if iface.Gateway != "10.100.0.1" {
+		t.Errorf("expected gateway '10.100.0.1', got %q", iface.Gateway)
+	}
+}
+
+func TestWebhook_L2WithoutGateway(t *testing.T) {
+	s := newTestScheme()
+
+	cudn := makeLayer2CUDN("my-l2-net-no-router")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(cudn).
+		Build()
+
+	w := &VMMutatingWebhook{
+		VPC:       vpc.NewMockClient(),
+		K8s:       fakeClient,
+		ClusterID: "test-cluster",
+	}
+
+	vmObj := makeL2VMObj("test-vm", "default", "my-l2-net-no-router")
+	raw, _ := json.Marshal(vmObj)
+
+	resp := w.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: "CREATE",
+			Name:      "test-vm",
+			Namespace: "default",
+			Object:    runtime.RawExtension{Raw: raw},
+		},
+	})
+
+	if !resp.Allowed {
+		t.Fatalf("expected VM to be allowed, got denied: %s", resp.Result.Message)
+	}
+
+	netIfaces := extractNetworkInterfacesFromPatch(t, raw, resp)
+
+	if len(netIfaces) != 1 {
+		t.Fatalf("expected 1 network interface, got %d", len(netIfaces))
+	}
+
+	iface := netIfaces[0]
+	if iface.NetworkName != "my-l2-net-no-router" {
+		t.Errorf("expected networkName 'my-l2-net-no-router', got %q", iface.NetworkName)
+	}
+	if iface.Topology != "Layer2" {
+		t.Errorf("expected topology 'Layer2', got %q", iface.Topology)
+	}
+	if iface.Gateway != "" {
+		t.Errorf("expected empty gateway when no router exists, got %q", iface.Gateway)
+	}
+}
+
+// containsString2 checks if s contains substr.
+// Named with a "2" suffix to avoid collision with the webhook's containsString helper.
+func containsString2(s, substr string) bool {
+	return strings.Contains(s, substr)
 }
 
 // Suppress unused import

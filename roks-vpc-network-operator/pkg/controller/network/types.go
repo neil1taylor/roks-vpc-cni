@@ -49,4 +49,7 @@ type VMNetworkInterface struct {
 	// Per-VM VLAN attachment fields
 	AttachmentID string `json:"attachmentId,omitempty"`
 	BMServerID   string `json:"bmServerId,omitempty"`
+
+	// Gateway is the default gateway IP for this interface (injected from VPCRouter)
+	Gateway string `json:"gateway,omitempty"`
 }
