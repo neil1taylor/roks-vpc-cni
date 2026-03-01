@@ -159,5 +159,21 @@
       "path": "/vpc-networking/gateways/:name",
       "component": { "$codeRef": "GatewayDetailPage" }
     }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/routers",
+      "component": { "$codeRef": "RoutersListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/routers/:name",
+      "component": { "$codeRef": "RouterDetailPage" }
+    }
   }
 ]
