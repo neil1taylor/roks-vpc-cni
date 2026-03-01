@@ -207,5 +207,29 @@
       "path": "/vpc-networking/routers/:name",
       "component": { "$codeRef": "RouterDetailPage" }
     }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/l2-bridges",
+      "component": { "$codeRef": "L2BridgesListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/l2-bridges/create",
+      "component": { "$codeRef": "L2BridgeCreatePage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/l2-bridges/:name",
+      "component": { "$codeRef": "L2BridgeDetailPage" }
+    }
   }
 ]
