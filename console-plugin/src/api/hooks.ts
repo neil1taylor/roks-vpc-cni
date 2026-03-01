@@ -491,6 +491,23 @@ export function useNamespaces(): {
   return { namespaces: filtered, loading, error };
 }
 
+// L2 Bridge Hooks
+export function useL2Bridges() {
+  const { data: l2bridges, loading, error } = useBFFData(
+    () => apiClient.listL2Bridges(),
+    [],
+  );
+  return { l2bridges, loading, error };
+}
+
+export function useL2Bridge(name: string, namespace?: string) {
+  const { data: l2bridge, loading, error } = useBFFData(
+    () => apiClient.getL2Bridge(name, namespace),
+    [name, namespace],
+  );
+  return { l2bridge, loading, error };
+}
+
 // Kubernetes CR Hooks
 
 export function useK8sVPCSubnets(namespace?: string): {

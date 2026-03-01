@@ -545,3 +545,67 @@ export interface CreatePARRequest {
   zone: string;
   prefixLength: number;
 }
+
+// ── VPCL2Bridge ──
+
+export interface L2Bridge {
+  name: string;
+  namespace: string;
+  type: 'gretap-wireguard' | 'l2vpn' | 'evpn-vxlan';
+  gatewayRef: string;
+  networkRef: {
+    name: string;
+    kind: string;
+    namespace?: string;
+  };
+  remoteEndpoint: string;
+  phase: string;
+  tunnelEndpoint?: string;
+  remoteMACsLearned: number;
+  localMACsAdvertised: number;
+  bytesIn: number;
+  bytesOut: number;
+  lastHandshake?: string;
+  tunnelMTU: number;
+  mssClamp: boolean;
+  podName?: string;
+  syncStatus: string;
+  createdAt?: string;
+}
+
+export interface CreateL2BridgeRequest {
+  name: string;
+  namespace?: string;
+  type: string;
+  gatewayRef: string;
+  networkRef: {
+    name: string;
+    kind: string;
+    namespace?: string;
+  };
+  remoteEndpoint: string;
+  wireguard?: {
+    privateKeySecretName: string;
+    privateKeySecretKey: string;
+    peerPublicKey: string;
+    listenPort?: number;
+    tunnelAddressLocal: string;
+    tunnelAddressRemote: string;
+  };
+  l2vpn?: {
+    nsxManagerHost: string;
+    l2vpnServiceID: string;
+    credentialsSecretName: string;
+    credentialsSecretKey: string;
+    edgeImage?: string;
+  };
+  evpn?: {
+    asn: number;
+    peerASN: number;
+    vni: number;
+    routeReflector?: string;
+    frrImage?: string;
+  };
+  tunnelMTU?: number;
+  mssClamp?: boolean;
+}

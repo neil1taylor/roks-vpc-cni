@@ -32,6 +32,8 @@ import {
   CreateRouterRequest,
   PublicAddressRange,
   CreatePARRequest,
+  L2Bridge,
+  CreateL2BridgeRequest,
   ApiResponse,
   ApiError,
 } from './types';
@@ -481,6 +483,25 @@ class VPCNetworkClient {
 
   async deletePAR(id: string): Promise<ApiResponse<void>> {
     return this.request<void>('DELETE', `/pars/${id}`);
+  }
+
+  // L2 Bridge Operations
+  async listL2Bridges(): Promise<ApiResponse<L2Bridge[]>> {
+    return this.request<L2Bridge[]>('GET', '/l2bridges');
+  }
+
+  async getL2Bridge(name: string, namespace?: string): Promise<ApiResponse<L2Bridge>> {
+    const params = namespace ? `?ns=${encodeURIComponent(namespace)}` : '';
+    return this.request<L2Bridge>('GET', `/l2bridges/${encodeURIComponent(name)}${params}`);
+  }
+
+  async createL2Bridge(req: CreateL2BridgeRequest): Promise<ApiResponse<L2Bridge>> {
+    return this.request<L2Bridge>('POST', '/l2bridges', req as unknown as Record<string, unknown>);
+  }
+
+  async deleteL2Bridge(name: string, namespace?: string): Promise<ApiResponse<void>> {
+    const params = namespace ? `?ns=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>('DELETE', `/l2bridges/${encodeURIComponent(name)}${params}`);
   }
 }
 
