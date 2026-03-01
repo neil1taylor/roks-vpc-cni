@@ -25,7 +25,8 @@
       "NetworksList": "./src/pages/NetworksListPage",
       "NetworkDetail": "./src/pages/NetworkDetailPage",
       "ReservedIPs": "./src/pages/ReservedIPsPage",
-      "GatewaysListPage": "./src/plugin-gateways.ts"
+      "GatewaysListPage": "./src/plugin-gateways.ts",
+      "GatewayDetailPage": "./src/pages/GatewayDetailPage"
     },
     "dependencies": {
       "@console/pluginAPI": "*"
