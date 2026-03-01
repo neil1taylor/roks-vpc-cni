@@ -504,3 +504,74 @@ type CreatePARRequest struct {
 	Zone         string `json:"zone"`
 	PrefixLength int    `json:"prefixLength"`
 }
+
+// ── L2 Bridge ──
+
+// L2BridgeNetworkRefResp represents the networkRef in L2Bridge responses.
+type L2BridgeNetworkRefResp struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// L2BridgeResponse represents a VPCL2Bridge resource.
+type L2BridgeResponse struct {
+	Name                string                 `json:"name"`
+	Namespace           string                 `json:"namespace"`
+	Type                string                 `json:"type"`
+	GatewayRef          string                 `json:"gatewayRef"`
+	NetworkRef          L2BridgeNetworkRefResp `json:"networkRef"`
+	RemoteEndpoint      string                 `json:"remoteEndpoint"`
+	Phase               string                 `json:"phase"`
+	TunnelEndpoint      string                 `json:"tunnelEndpoint,omitempty"`
+	RemoteMACsLearned   int32                  `json:"remoteMACsLearned"`
+	LocalMACsAdvertised int32                  `json:"localMACsAdvertised"`
+	BytesIn             int64                  `json:"bytesIn"`
+	BytesOut            int64                  `json:"bytesOut"`
+	LastHandshake       string                 `json:"lastHandshake,omitempty"`
+	TunnelMTU           int32                  `json:"tunnelMTU,omitempty"`
+	MSSClamp            *bool                  `json:"mssClamp,omitempty"`
+	PodName             string                 `json:"podName,omitempty"`
+	SyncStatus          string                 `json:"syncStatus"`
+	CreatedAt           string                 `json:"createdAt,omitempty"`
+}
+
+// L2BridgeNetworkRefReq represents the networkRef in L2Bridge create requests.
+type L2BridgeNetworkRefReq struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// L2BridgeWireGuardReq represents WireGuard config in L2Bridge create requests.
+type L2BridgeWireGuardReq struct {
+	PrivateKeySecret     string `json:"privateKeySecret"`
+	PrivateKeySecretKey  string `json:"privateKeySecretKey"`
+	PeerPublicKey        string `json:"peerPublicKey"`
+	ListenPort           *int32 `json:"listenPort,omitempty"`
+	TunnelAddressLocal   string `json:"tunnelAddressLocal"`
+	TunnelAddressRemote  string `json:"tunnelAddressRemote"`
+}
+
+// L2BridgeRemoteReq represents the remote endpoint in L2Bridge create requests.
+type L2BridgeRemoteReq struct {
+	Endpoint  string                `json:"endpoint"`
+	WireGuard *L2BridgeWireGuardReq `json:"wireGuard,omitempty"`
+}
+
+// L2BridgeMTUReq represents MTU settings in L2Bridge create requests.
+type L2BridgeMTUReq struct {
+	TunnelMTU *int32 `json:"tunnelMTU,omitempty"`
+	MSSClamp  *bool  `json:"mssClamp,omitempty"`
+}
+
+// L2BridgeRequest represents a request to create a VPCL2Bridge.
+type L2BridgeRequest struct {
+	Name       string                 `json:"name"`
+	Namespace  string                 `json:"namespace,omitempty"`
+	Type       string                 `json:"type"`
+	GatewayRef string                 `json:"gatewayRef"`
+	NetworkRef L2BridgeNetworkRefReq  `json:"networkRef"`
+	Remote     L2BridgeRemoteReq      `json:"remote"`
+	MTU        *L2BridgeMTUReq        `json:"mtu,omitempty"`
+}

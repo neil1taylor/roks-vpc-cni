@@ -18,6 +18,7 @@ import (
 	cudnctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/cudn"
 	fipctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/floatingip"
 	gatewayctr "github.com/IBM/roks-vpc-network-operator/pkg/controller/gateway"
+	l2bridgectr "github.com/IBM/roks-vpc-network-operator/pkg/controller/l2bridge"
 	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	nodectrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/node"
 	routerctr "github.com/IBM/roks-vpc-network-operator/pkg/controller/router"
@@ -249,6 +250,15 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Unable to create VPCRouter controller")
+		os.Exit(1)
+	}
+
+	if err := (&l2bridgectr.Reconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("l2bridge-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "Unable to create VPCL2Bridge controller")
 		os.Exit(1)
 	}
 
