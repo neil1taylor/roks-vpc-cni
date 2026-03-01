@@ -143,5 +143,13 @@
       "path": "/vpc-networking/networks/:name",
       "component": { "$codeRef": "NetworkDetail" }
     }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/gateways",
+      "component": { "$codeRef": "GatewaysListPage" }
+    }
   }
 ]

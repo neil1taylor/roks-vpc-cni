@@ -25,6 +25,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       case 'running':
       case 'synced':
       case 'connected':
+      case 'ready':
         return 'green';
       case 'pending':
       case 'provisioning':
@@ -54,6 +55,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       running: 'Running',
       synced: 'Synced',
       connected: 'Connected',
+      ready: 'Ready',
       pending: 'Pending',
       provisioning: 'Provisioning',
       updating: 'Updating',

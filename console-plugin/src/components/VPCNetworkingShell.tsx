@@ -24,6 +24,7 @@ const tabs = [
   { key: 'security-groups', label: 'Security Groups', path: '/vpc-networking/security-groups' },
   { key: 'network-acls', label: 'Network ACLs', path: '/vpc-networking/network-acls' },
   { key: 'routes', label: 'Routes', path: '/vpc-networking/routes' },
+  { key: 'gateways', label: 'Gateways', path: '/vpc-networking/gateways' },
   { key: 'topology', label: 'Topology', path: '/vpc-networking/topology' },
 ];
 
