@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Implement NSX T0/T1-style tiered routing between Layer2 OVN overlay networks and VPC fabric via two new CRDs (VPCGateway, VPCRouter), complete with NAT, route advertisement, DHCP, firewall, and console UI.
+**Goal:** Implement tiered routing between Layer2 OVN overlay networks and VPC fabric via two new CRDs (VPCGateway, VPCRouter), complete with NAT, route advertisement, DHCP, firewall, and console UI.
 
-**Architecture:** Two-tier router model — VPCGateway (T0) bridges LocalNet/VPC and a transit L2 with per-zone VNI + VPC routes + NAT. VPCRouter (T1) connects multiple L2 segments and uplinks to T0 via transit. Router pods use kernel IP forwarding + nftables NAT. Pluggable sidecars for firewall/DHCP/WireGuard.
+**Architecture:** Two-tier router model — VPCGateway bridges LocalNet/VPC and a transit L2 with per-zone VNI + VPC routes + NAT. VPCRouter connects multiple L2 segments and uplinks to the gateway via transit. Router pods use kernel IP forwarding + nftables NAT + optional dnsmasq DHCP.
 
 **Tech Stack:** Go 1.22+, controller-runtime, IBM VPC Go SDK, nftables, Alpine Linux router image, PatternFly 5/React console plugin, OpenShift dynamic plugin SDK.
 
@@ -1559,7 +1559,7 @@ git commit -m "feat: add nftables NAT configuration generator for VPCGateway"
 Add to `roks-vpc-network-operator/cmd/bff/internal/model/types.go`:
 
 ```go
-// ── Gateway (T0) ──
+// ── Gateway ──
 
 type GatewayResponse struct {
 	Name           string            `json:"name"`
@@ -1584,7 +1584,7 @@ type GatewayRequest struct {
 	Transit string `json:"transit,omitempty"`
 }
 
-// ── Router (T1) ──
+// ── Router ──
 
 type RouterResponse struct {
 	Name             string                `json:"name"`
@@ -1675,7 +1675,7 @@ git commit -m "feat: add BFF endpoints for VPCGateway and VPCRouter"
 Add to `console-plugin/src/api/types.ts`:
 
 ```typescript
-// ── VPCGateway (T0) ──
+// ── VPCGateway ──
 
 export interface Gateway {
   name: string;
@@ -1700,7 +1700,7 @@ export interface CreateGatewayRequest {
   transit?: string;
 }
 
-// ── VPCRouter (T1) ──
+// ── VPCRouter ──
 
 export interface Router {
   name: string;
@@ -1830,7 +1830,7 @@ git commit -m "feat: add Gateway and Router types, API client, and hooks"
 
 Create `console-plugin/src/pages/GatewaysListPage.tsx` following the exact pattern from `NetworksListPage.tsx`:
 - Wrap in `<VPCNetworkingShell>`
-- Subtitle: "Tier-0 gateways bridge Layer2 overlay networks to the VPC fabric."
+- Subtitle: "Gateways bridge Layer2 overlay networks to the VPC fabric."
 - Toolbar: `<Button variant="primary">Create Gateway</Button>`
 - Table columns: Name (link to `/vpc-networking/gateways/:name`) | Zone | Uplink Network | Floating IP | VNI IP | Routes | Status (StatusBadge) | Age (formatRelativeTime)
 - Loading: `<Spinner>`
@@ -1985,13 +1985,13 @@ Add `useGateways()` and `useRouters()` hooks to the dashboard page. Add two new 
 ```tsx
 <GridItem span={2}>
   <Card isCompact>
-    <CardTitle>Gateways (T0)</CardTitle>
+    <CardTitle>Gateways</CardTitle>
     <CardBody>{renderCount(gateways?.length ?? 0, gwLoading)}</CardBody>
   </Card>
 </GridItem>
 <GridItem span={2}>
   <Card isCompact>
-    <CardTitle>Routers (T1)</CardTitle>
+    <CardTitle>Routers</CardTitle>
     <CardBody>{renderCount(routers?.length ?? 0, rtLoading)}</CardBody>
   </Card>
 </GridItem>
@@ -2055,7 +2055,7 @@ Expected: All tests pass (old and new).
 
 ```bash
 git add pkg/webhook/
-git commit -m "feat: inject T1 router gateway IP for L2 VMs in webhook"
+git commit -m "feat: inject router gateway IP for L2 VMs in webhook"
 ```
 
 ---
