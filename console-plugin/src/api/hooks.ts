@@ -430,10 +430,10 @@ export function useGateways() {
   return { gateways, loading, error };
 }
 
-export function useGateway(name: string) {
+export function useGateway(name: string, namespace?: string) {
   const { data: gateway, loading, error } = useBFFData(
-    () => apiClient.getGateway(name),
-    [name],
+    () => apiClient.getGateway(name, namespace),
+    [name, namespace],
   );
   return { gateway, loading, error };
 }
@@ -447,12 +447,29 @@ export function useRouters() {
   return { routers, loading, error };
 }
 
-export function useRouter(name: string) {
+export function useRouter(name: string, namespace?: string) {
   const { data: router, loading, error } = useBFFData(
-    () => apiClient.getRouter(name),
-    [name],
+    () => apiClient.getRouter(name, namespace),
+    [name, namespace],
   );
   return { router, loading, error };
+}
+
+// PAR (Public Address Range) Hooks
+export function usePARs() {
+  const { data: pars, loading, error } = useBFFData(
+    () => apiClient.listPARs(),
+    [],
+  );
+  return { pars, loading, error };
+}
+
+export function usePAR(id: string) {
+  const { data: par, loading, error } = useBFFData(
+    () => apiClient.getPAR(id),
+    [id],
+  );
+  return { par, loading, error };
 }
 
 // Kubernetes CR Hooks

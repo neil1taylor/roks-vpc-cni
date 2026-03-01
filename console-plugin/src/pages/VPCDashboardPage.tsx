@@ -25,6 +25,7 @@ import {
   useClusterInfo,
   useGateways,
   useRouters,
+  usePARs,
 } from '../api/hooks';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
@@ -42,6 +43,7 @@ const VPCDashboardPage: React.FC = () => {
   const { securityGroups, loading: sgLoading } = useSecurityGroups();
   const { networkAcls, loading: aclLoading } = useNetworkACLs();
   const { floatingIps, loading: fipLoading } = useFloatingIPs();
+  const { pars, loading: parLoading } = usePARs();
 
   // K8s CR counts — skip VNI/VLAN watches when ROKS-managed
   const { subnets: k8sSubnets, loading: k8sSubnetLoading } = useK8sVPCSubnets();
@@ -95,6 +97,12 @@ const VPCDashboardPage: React.FC = () => {
             <Card isCompact>
               <CardTitle>Floating IPs</CardTitle>
               <CardBody>{renderCount(floatingIps?.length, fipLoading)}</CardBody>
+            </Card>
+          </GridItem>
+          <GridItem span={2}>
+            <Card isCompact>
+              <CardTitle>PARs</CardTitle>
+              <CardBody>{renderCount(pars?.length, parLoading)}</CardBody>
             </Card>
           </GridItem>
         </Grid>

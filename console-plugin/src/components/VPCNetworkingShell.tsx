@@ -21,6 +21,7 @@ const tabs = [
   { key: 'vnis', label: 'VNIs', path: '/vpc-networking/vnis' },
   { key: 'vlan-attachments', label: 'VLAN Attachments', path: '/vpc-networking/vlan-attachments' },
   { key: 'floating-ips', label: 'Floating IPs', path: '/vpc-networking/floating-ips' },
+  { key: 'pars', label: 'PARs', path: '/vpc-networking/pars' },
   { key: 'security-groups', label: 'Security Groups', path: '/vpc-networking/security-groups' },
   { key: 'network-acls', label: 'Network ACLs', path: '/vpc-networking/network-acls' },
   { key: 'routes', label: 'Routes', path: '/vpc-networking/routes' },

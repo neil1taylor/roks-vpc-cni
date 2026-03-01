@@ -444,6 +444,7 @@ export interface FeatureFlags {
   networkACLManagement: boolean;
   floatingIPManagement: boolean;
   routeManagement: boolean;
+  parManagement: boolean;
   roksAPIAvailable: boolean;
   cudnManagement: boolean;
   udnManagement: boolean;
@@ -475,13 +476,26 @@ export interface Gateway {
   natRuleCount: number;
   syncStatus: string;
   createdAt?: string;
+  // PAR fields
+  parEnabled: boolean;
+  parPrefixLength?: number;
+  publicAddressRangeID?: string;
+  publicAddressRangeCIDR?: string;
+  ingressRoutingTableID?: string;
 }
 
 export interface CreateGatewayRequest {
   name: string;
+  namespace?: string;
   zone: string;
-  uplink: string;
-  transit?: string;
+  uplinkNetwork: string;
+  transitAddress: string;
+  transitCIDR?: string;
+  transitNetwork?: string;
+  // PAR fields
+  parEnabled?: boolean;
+  parPrefixLength?: number;
+  parID?: string;
 }
 
 // ── VPCRouter ──
@@ -507,5 +521,26 @@ export interface RouterNetwork {
 
 export interface CreateRouterRequest {
   name: string;
+  namespace?: string;
   gateway: string;
+  networks?: { name: string; address: string }[];
+}
+
+// ── Public Address Range (PAR) ──
+
+export interface PublicAddressRange {
+  id: string;
+  name: string;
+  cidr: string;
+  zone: string;
+  lifecycleState: string;
+  createdAt?: string;
+  gatewayName?: string;
+  gatewayNamespace?: string;
+}
+
+export interface CreatePARRequest {
+  name: string;
+  zone: string;
+  prefixLength: number;
 }

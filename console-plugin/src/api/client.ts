@@ -30,6 +30,8 @@ import {
   CreateGatewayRequest,
   Router,
   CreateRouterRequest,
+  PublicAddressRange,
+  CreatePARRequest,
   ApiResponse,
   ApiError,
 } from './types';
@@ -431,16 +433,18 @@ class VPCNetworkClient {
     return this.request<Gateway[]>('GET', '/gateways');
   }
 
-  async getGateway(name: string): Promise<ApiResponse<Gateway>> {
-    return this.request<Gateway>('GET', `/gateways/${name}`);
+  async getGateway(name: string, namespace?: string): Promise<ApiResponse<Gateway>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<Gateway>('GET', `/gateways/${name}${params}`);
   }
 
   async createGateway(req: CreateGatewayRequest): Promise<ApiResponse<Gateway>> {
     return this.request<Gateway>('POST', '/gateways', req as unknown as Record<string, unknown>);
   }
 
-  async deleteGateway(name: string): Promise<ApiResponse<void>> {
-    return this.request<void>('DELETE', `/gateways/${name}`);
+  async deleteGateway(name: string, namespace?: string): Promise<ApiResponse<void>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>('DELETE', `/gateways/${name}${params}`);
   }
 
   // Router Operations
@@ -448,16 +452,35 @@ class VPCNetworkClient {
     return this.request<Router[]>('GET', '/routers');
   }
 
-  async getRouter(name: string): Promise<ApiResponse<Router>> {
-    return this.request<Router>('GET', `/routers/${name}`);
+  async getRouter(name: string, namespace?: string): Promise<ApiResponse<Router>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<Router>('GET', `/routers/${name}${params}`);
   }
 
   async createRouter(req: CreateRouterRequest): Promise<ApiResponse<Router>> {
     return this.request<Router>('POST', '/routers', req as unknown as Record<string, unknown>);
   }
 
-  async deleteRouter(name: string): Promise<ApiResponse<void>> {
-    return this.request<void>('DELETE', `/routers/${name}`);
+  async deleteRouter(name: string, namespace?: string): Promise<ApiResponse<void>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>('DELETE', `/routers/${name}${params}`);
+  }
+
+  // PAR (Public Address Range) Operations
+  async listPARs(): Promise<ApiResponse<PublicAddressRange[]>> {
+    return this.request<PublicAddressRange[]>('GET', '/pars');
+  }
+
+  async getPAR(id: string): Promise<ApiResponse<PublicAddressRange>> {
+    return this.request<PublicAddressRange>('GET', `/pars/${id}`);
+  }
+
+  async createPAR(req: CreatePARRequest): Promise<ApiResponse<PublicAddressRange>> {
+    return this.request<PublicAddressRange>('POST', '/pars', req as unknown as Record<string, unknown>);
+  }
+
+  async deletePAR(id: string): Promise<ApiResponse<void>> {
+    return this.request<void>('DELETE', `/pars/${id}`);
   }
 }
 

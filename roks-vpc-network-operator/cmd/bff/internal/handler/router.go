@@ -245,6 +245,29 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 		}
 	})
 
+	// Public Address Range (PAR) routes
+	parHandler := NewPARHandler(vpcClient, rbacChecker, dynClient, clusterInfo.VPCID)
+	mux.HandleFunc("/api/v1/pars", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(parHandler.ListPARs).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(parHandler.CreatePAR).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+	mux.HandleFunc("/api/v1/pars/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(parHandler.GetPAR).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(parHandler.DeletePAR).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+
 	// VPCRouter routes
 	rtHandler := NewRouterHandler(dynClient, rbacChecker)
 	mux.HandleFunc("/api/v1/routers", func(w http.ResponseWriter, r *http.Request) {
@@ -293,6 +316,7 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 				"layer2Support":            true,
 				"multiNetworkVMs":          true,
 				"routeManagement":          true,
+				"parManagement":            true,
 				"roksAPIAvailable":         roksAPIAvailable,
 			},
 		})

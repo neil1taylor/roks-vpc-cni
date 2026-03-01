@@ -422,14 +422,27 @@ type GatewayResponse struct {
 	NATRuleCount   int    `json:"natRuleCount"`
 	SyncStatus     string `json:"syncStatus"`
 	CreatedAt      string `json:"createdAt,omitempty"`
+	// PAR fields
+	PAREnabled             bool   `json:"parEnabled"`
+	PARPrefixLength        int    `json:"parPrefixLength,omitempty"`
+	PublicAddressRangeID   string `json:"publicAddressRangeID,omitempty"`
+	PublicAddressRangeCIDR string `json:"publicAddressRangeCIDR,omitempty"`
+	IngressRoutingTableID  string `json:"ingressRoutingTableID,omitempty"`
 }
 
 // GatewayRequest represents a request to create a VPCGateway.
 type GatewayRequest struct {
-	Name    string `json:"name"`
-	Zone    string `json:"zone"`
-	Uplink  string `json:"uplink"`
-	Transit string `json:"transit,omitempty"`
+	Name           string `json:"name"`
+	Namespace      string `json:"namespace,omitempty"`
+	Zone           string `json:"zone"`
+	UplinkNetwork  string `json:"uplinkNetwork"`
+	TransitAddress string `json:"transitAddress"`
+	TransitCIDR    string `json:"transitCIDR,omitempty"`
+	TransitNetwork string `json:"transitNetwork,omitempty"`
+	// PAR fields
+	PAREnabled      bool   `json:"parEnabled,omitempty"`
+	PARPrefixLength int    `json:"parPrefixLength,omitempty"`
+	PARID           string `json:"parID,omitempty"`
 }
 
 // ── Router ──
@@ -443,7 +456,7 @@ type RouterResponse struct {
 	TransitIP        string              `json:"transitIP,omitempty"`
 	Networks         []RouterNetworkResp `json:"networks"`
 	AdvertisedRoutes []string            `json:"advertisedRoutes,omitempty"`
-	Functions        []string            `json:"functions,omitempty"`
+	PodIP            string              `json:"podIP,omitempty"`
 	SyncStatus       string              `json:"syncStatus"`
 	CreatedAt        string              `json:"createdAt,omitempty"`
 }
@@ -455,8 +468,38 @@ type RouterNetworkResp struct {
 	Connected bool   `json:"connected"`
 }
 
+// RouterNetworkReq represents a network entry in a router create request.
+type RouterNetworkReq struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
+
 // RouterRequest represents a request to create a VPCRouter.
 type RouterRequest struct {
-	Name    string `json:"name"`
-	Gateway string `json:"gateway"`
+	Name      string             `json:"name"`
+	Namespace string             `json:"namespace,omitempty"`
+	Gateway   string             `json:"gateway"`
+	Networks  []RouterNetworkReq `json:"networks,omitempty"`
+}
+
+// ── Public Address Range (PAR) ──
+
+// PARResponse represents a VPC public address range.
+type PARResponse struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	CIDR           string `json:"cidr"`
+	Zone           string `json:"zone"`
+	LifecycleState string `json:"lifecycleState"`
+	CreatedAt      string `json:"createdAt,omitempty"`
+	// Cross-reference: which gateway owns this PAR (from K8s CRD status)
+	GatewayName string `json:"gatewayName,omitempty"`
+	GatewayNS   string `json:"gatewayNamespace,omitempty"`
+}
+
+// CreatePARRequest represents a request to create a public address range.
+type CreatePARRequest struct {
+	Name         string `json:"name"`
+	Zone         string `json:"zone"`
+	PrefixLength int    `json:"prefixLength"`
 }

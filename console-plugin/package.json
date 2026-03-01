@@ -25,9 +25,13 @@
       "NetworksList": "./src/pages/NetworksListPage",
       "NetworkDetail": "./src/pages/NetworkDetailPage",
       "ReservedIPs": "./src/pages/ReservedIPsPage",
+      "PARsListPage": "./src/pages/PARsListPage",
+      "PARDetailPage": "./src/pages/PARDetailPage",
       "GatewaysListPage": "./src/plugin-gateways.ts",
+      "GatewayCreatePage": "./src/pages/GatewayCreatePage",
       "GatewayDetailPage": "./src/pages/GatewayDetailPage",
       "RoutersListPage": "./src/plugin-routers.ts",
+      "RouterCreatePage": "./src/pages/RouterCreatePage",
       "RouterDetailPage": "./src/pages/RouterDetailPage"
     },
     "dependencies": {

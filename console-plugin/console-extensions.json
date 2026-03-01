@@ -148,8 +148,32 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
+      "path": "/vpc-networking/pars",
+      "component": { "$codeRef": "PARsListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/pars/:id",
+      "component": { "$codeRef": "PARDetailPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
       "path": "/vpc-networking/gateways",
       "component": { "$codeRef": "GatewaysListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/gateways/create",
+      "component": { "$codeRef": "GatewayCreatePage" }
     }
   },
   {
@@ -166,6 +190,14 @@
       "exact": true,
       "path": "/vpc-networking/routers",
       "component": { "$codeRef": "RoutersListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/routers/create",
+      "component": { "$codeRef": "RouterCreatePage" }
     }
   },
   {
