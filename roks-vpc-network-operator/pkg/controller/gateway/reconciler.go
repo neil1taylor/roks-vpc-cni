@@ -8,13 +8,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
+	"github.com/IBM/roks-vpc-network-operator/pkg/annotations"
 	"github.com/IBM/roks-vpc-network-operator/pkg/finalizers"
 	operatormetrics "github.com/IBM/roks-vpc-network-operator/pkg/metrics"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
@@ -185,11 +188,21 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gw *v1alpha1.VPCGatewa
 }
 
 // ensureVNI creates the uplink VNI for the gateway.
+// It looks up the subnet ID from the uplink CUDN's annotations.
+// After creation, it polls GetVNI until the primary IP is assigned.
 func (r *Reconciler) ensureVNI(ctx context.Context, gw *v1alpha1.VPCGateway) (*vpc.VNI, error) {
+	logger := log.FromContext(ctx)
 	name := fmt.Sprintf("roks-%s-gw-%s", r.ClusterID, gw.Name)
+
+	// Look up the uplink CUDN to get the VPC subnet ID
+	subnetID, err := r.getUplinkSubnetID(ctx, gw.Spec.Uplink.Network)
+	if err != nil {
+		return nil, fmt.Errorf("getUplinkSubnetID(%s): %w", gw.Spec.Uplink.Network, err)
+	}
 
 	vni, err := r.VPC.CreateVNI(ctx, vpc.CreateVNIOptions{
 		Name:             name,
+		SubnetID:         subnetID,
 		SecurityGroupIDs: gw.Spec.Uplink.SecurityGroupIDs,
 		ClusterID:        r.ClusterID,
 	})
@@ -197,7 +210,47 @@ func (r *Reconciler) ensureVNI(ctx context.Context, gw *v1alpha1.VPCGateway) (*v
 		return nil, fmt.Errorf("CreateVNI(%s): %w", name, err)
 	}
 
+	// Poll until primary IP is assigned (VPC API may return 0.0.0.0 initially)
+	if vni.PrimaryIP.Address == "" || vni.PrimaryIP.Address == "0.0.0.0" {
+		for i := 0; i < 10; i++ {
+			time.Sleep(2 * time.Second)
+			vni, err = r.VPC.GetVNI(ctx, vni.ID)
+			if err != nil {
+				return nil, fmt.Errorf("GetVNI(%s) while waiting for IP: %w", vni.ID, err)
+			}
+			if vni.PrimaryIP.Address != "" && vni.PrimaryIP.Address != "0.0.0.0" {
+				logger.Info("VNI primary IP assigned", "vniID", vni.ID, "ip", vni.PrimaryIP.Address)
+				break
+			}
+		}
+		if vni.PrimaryIP.Address == "" || vni.PrimaryIP.Address == "0.0.0.0" {
+			return nil, fmt.Errorf("VNI %s primary IP not assigned after 20s", vni.ID)
+		}
+	}
+
 	return vni, nil
+}
+
+// getUplinkSubnetID looks up the CUDN by name and reads its subnet-id annotation.
+func (r *Reconciler) getUplinkSubnetID(ctx context.Context, networkName string) (string, error) {
+	cudn := &unstructured.Unstructured{}
+	cudn.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "k8s.ovn.org",
+		Version: "v1",
+		Kind:    "ClusterUserDefinedNetwork",
+	})
+
+	if err := r.Get(ctx, client.ObjectKey{Name: networkName}, cudn); err != nil {
+		return "", fmt.Errorf("get CUDN %s: %w", networkName, err)
+	}
+
+	annots := cudn.GetAnnotations()
+	subnetID := annots[annotations.SubnetID]
+	if subnetID == "" {
+		return "", fmt.Errorf("CUDN %s has no %s annotation", networkName, annotations.SubnetID)
+	}
+
+	return subnetID, nil
 }
 
 // ensureVPCRoutes creates VPC routes for the gateway, using idempotent

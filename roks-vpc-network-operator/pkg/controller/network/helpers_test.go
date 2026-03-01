@@ -581,12 +581,38 @@ func TestDeleteVLANAttachments_VPCError_ReturnsError(t *testing.T) {
 
 	mockVPC := vpc.NewMockClient()
 	mockVPC.DeleteVLANAttachmentFn = func(ctx context.Context, bmServerID, attachmentID string) error {
-		return fmt.Errorf("VPC API error: not found")
+		return fmt.Errorf("VPC API error: internal server error")
 	}
 
 	err := DeleteVLANAttachments(context.Background(), fakeClient, mockVPC, obj)
 	if err == nil {
 		t.Fatal("expected error from VPC API failure")
+	}
+}
+
+func TestDeleteVLANAttachments_NotFound_Tolerates(t *testing.T) {
+	scheme := newTestScheme()
+
+	annots := map[string]string{
+		annotations.VLANAttachments: "bm-node-1:vla-1",
+	}
+	obj := makeTestObj("test-cudn", annots)
+
+	node1 := makeBareMetalNode("bm-node-1", "ibm://acct/us-south/us-south-1/server-1")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(obj, node1).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.DeleteVLANAttachmentFn = func(ctx context.Context, bmServerID, attachmentID string) error {
+		return fmt.Errorf("VPC API error: not found")
+	}
+
+	err := DeleteVLANAttachments(context.Background(), fakeClient, mockVPC, obj)
+	if err != nil {
+		t.Fatalf("expected 404 to be tolerated, got error: %v", err)
 	}
 }
 
@@ -698,6 +724,23 @@ func TestDeleteVPCSubnet_VPCError(t *testing.T) {
 	err := DeleteVPCSubnet(context.Background(), mockVPC, obj)
 	if err == nil {
 		t.Fatal("expected error from VPC API failure")
+	}
+}
+
+func TestDeleteVPCSubnet_NotFound_Tolerates(t *testing.T) {
+	annots := map[string]string{
+		annotations.SubnetID: "subnet-gone",
+	}
+	obj := makeTestObj("test-cudn", annots)
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.DeleteSubnetFn = func(ctx context.Context, subnetID string) error {
+		return fmt.Errorf("VPC API error: subnet not found")
+	}
+
+	err := DeleteVPCSubnet(context.Background(), mockVPC, obj)
+	if err != nil {
+		t.Fatalf("expected 404 to be tolerated, got error: %v", err)
 	}
 }
 
@@ -997,6 +1040,115 @@ func TestEnsureVPCSubnet_PassesThroughPublicGatewayID(t *testing.T) {
 
 	if capturedOpts.PublicGatewayID != "pgw-abc123" {
 		t.Errorf("expected PublicGatewayID='pgw-abc123', got %q", capturedOpts.PublicGatewayID)
+	}
+}
+
+func TestEnsureVPCSubnet_AdoptRejectsCIDRMismatch(t *testing.T) {
+	scheme := newTestScheme()
+	annots := map[string]string{
+		annotations.VPCID: "vpc-123",
+		annotations.Zone:  "us-south-1",
+		annotations.CIDR:  "10.240.64.0/24",
+	}
+	obj := makeTestObj("mismatch-cudn", annots)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(obj).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	// ListSubnets returns a subnet with the expected name but a different CIDR
+	mockVPC.ListSubnetsFn = func(ctx context.Context, vpcID string) ([]vpc.Subnet, error) {
+		return []vpc.Subnet{
+			{
+				ID:     "subnet-wrong-cidr",
+				Name:   "roks-cluster-abc-mismatch-cudn",
+				CIDR:   "10.240.99.0/24",
+				Status: "available",
+			},
+		}, nil
+	}
+
+	created, err := EnsureVPCSubnet(context.Background(), fakeClient, mockVPC, obj, "cluster-abc", "test")
+	if err == nil {
+		t.Fatal("expected error for CIDR mismatch on adoption")
+	}
+	if created {
+		t.Error("expected created=false on CIDR mismatch")
+	}
+	if !strings.Contains(err.Error(), "has CIDR") {
+		t.Errorf("expected CIDR mismatch error, got: %v", err)
+	}
+
+	// Verify error was written to annotation
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(obj.GroupVersionKind())
+	if getErr := fakeClient.Get(context.Background(), types.NamespacedName{Name: "mismatch-cudn"}, updated); getErr != nil {
+		t.Fatalf("Failed to get updated object: %v", getErr)
+	}
+	updatedAnnots := updated.GetAnnotations()
+	if updatedAnnots[annotations.SubnetStatus] != "error" {
+		t.Errorf("expected subnet-status='error', got %q", updatedAnnots[annotations.SubnetStatus])
+	}
+	if !strings.Contains(updatedAnnots[annotations.SubnetError], "10.240.99.0/24") {
+		t.Errorf("expected subnet-error to mention existing CIDR, got %q", updatedAnnots[annotations.SubnetError])
+	}
+
+	// CreateSubnet should NOT have been called
+	if mockVPC.CallCount("CreateSubnet") != 0 {
+		t.Error("CreateSubnet should not be called on CIDR mismatch")
+	}
+}
+
+func TestEnsureVPCSubnet_AdoptMatchingCIDR(t *testing.T) {
+	scheme := newTestScheme()
+	annots := map[string]string{
+		annotations.VPCID: "vpc-123",
+		annotations.Zone:  "us-south-1",
+		annotations.CIDR:  "10.240.64.0/24",
+	}
+	obj := makeTestObj("adopt-cudn", annots)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(obj).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.ListSubnetsFn = func(ctx context.Context, vpcID string) ([]vpc.Subnet, error) {
+		return []vpc.Subnet{
+			{
+				ID:     "subnet-existing",
+				Name:   "roks-cluster-abc-adopt-cudn",
+				CIDR:   "10.240.64.0/24",
+				Status: "available",
+			},
+		}, nil
+	}
+
+	created, err := EnsureVPCSubnet(context.Background(), fakeClient, mockVPC, obj, "cluster-abc", "test")
+	if err != nil {
+		t.Fatalf("EnsureVPCSubnet() error = %v", err)
+	}
+	if !created {
+		t.Error("expected created=true for adopted subnet")
+	}
+
+	// Verify adoption wrote the correct subnet ID
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(obj.GroupVersionKind())
+	if getErr := fakeClient.Get(context.Background(), types.NamespacedName{Name: "adopt-cudn"}, updated); getErr != nil {
+		t.Fatalf("Failed to get updated object: %v", getErr)
+	}
+	updatedAnnots := updated.GetAnnotations()
+	if updatedAnnots[annotations.SubnetID] != "subnet-existing" {
+		t.Errorf("expected subnet-id='subnet-existing', got %q", updatedAnnots[annotations.SubnetID])
+	}
+
+	// CreateSubnet should NOT have been called (adopted instead)
+	if mockVPC.CallCount("CreateSubnet") != 0 {
+		t.Error("CreateSubnet should not be called when adopting existing subnet")
 	}
 }
 

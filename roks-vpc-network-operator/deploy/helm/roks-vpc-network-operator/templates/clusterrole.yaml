@@ -22,6 +22,12 @@ rules:
   - floatingips
   - floatingips/status
   - floatingips/finalizers
+  - vpcgateways
+  - vpcgateways/status
+  - vpcgateways/finalizers
+  - vpcrouters
+  - vpcrouters/status
+  - vpcrouters/finalizers
   verbs:
   - create
   - delete

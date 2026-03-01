@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -34,6 +35,7 @@ type Reconciler struct {
 	VPC        vpc.Client
 	ClusterID  string
 	NNCPConfig network.NNCPConfig
+	Recorder   record.EventRecorder
 }
 
 // Reconcile handles UDN create/update/delete events.
@@ -128,13 +130,18 @@ func (r *Reconciler) reconcileLayer2(ctx context.Context, udn client.Object) (ct
 }
 
 // reconcileDeleteLocalNet handles LocalNet UDN deletion.
-// If VNIs still exist on the subnet, the VPC subnet is left in place and the user must clean it up manually.
+// VLAN attachments are always deleted (we created them). The VPC subnet is only deleted if no external
+// resources (e.g. VSIs created via IBM Cloud UI/CLI) are using it.
 func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, udn client.Object) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	annots := udn.GetAnnotations()
 
-	// Check if VNIs still exist on this subnet
-	skipVPCCleanup := false
+	// Always delete VLAN attachments — we created them and they don't depend on subnet emptiness
+	if err := network.DeleteVLANAttachments(ctx, r.Client, r.VPC, udn); err != nil {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// Delete VPC subnet only if no external resources are using it
 	if subnetID := annots[annotations.SubnetID]; subnetID != "" {
 		hasVNIs, count, err := network.SubnetHasActiveVNIs(ctx, r.VPC, subnetID)
 		if err != nil {
@@ -142,20 +149,14 @@ func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, udn client.Obj
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		if hasVNIs {
-			logger.Error(nil, "VPC subnet has active VNIs — skipping VPC resource cleanup. "+
-				"Delete the VNIs and subnet manually in the IBM Cloud console.",
-				"udn", udn.GetName(), "subnetID", subnetID, "activeVNIs", count)
-			skipVPCCleanup = true
-		}
-	}
-
-	if !skipVPCCleanup {
-		if err := network.DeleteVLANAttachments(ctx, r.Client, r.VPC, udn); err != nil {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-
-		if err := network.DeleteVPCSubnet(ctx, r.VPC, udn); err != nil {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			msg := fmt.Sprintf("VPC subnet %s has %d active reserved IP(s) from external resources — "+
+				"subnet preserved. Delete external resources and the subnet manually in the IBM Cloud console.", subnetID, count)
+			logger.Info(msg, "udn", udn.GetName())
+			r.event(udn, "Warning", "SubnetInUse", msg)
+		} else {
+			if err := network.DeleteVPCSubnet(ctx, r.VPC, udn); err != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
 		}
 	}
 
@@ -170,6 +171,13 @@ func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, udn client.Obj
 	return ctrl.Result{}, nil
 }
 
+// event emits a K8s event if the recorder is available.
+func (r *Reconciler) event(obj runtime.Object, eventType, reason, messageFmt string, args ...interface{}) {
+	if r.Recorder != nil {
+		r.Recorder.Eventf(obj, eventType, reason, messageFmt, args...)
+	}
+}
+
 // reconcileDeleteLayer2 handles Layer2 UDN deletion: just remove finalizer.
 func (r *Reconciler) reconcileDeleteLayer2(ctx context.Context, udn client.Object) (ctrl.Result, error) {
 	if err := finalizers.EnsureRemoved(ctx, r.Client, udn, finalizers.UDNCleanup); err != nil {
@@ -180,6 +188,7 @@ func (r *Reconciler) reconcileDeleteLayer2(ctx context.Context, udn client.Objec
 
 // SetupWithManager registers the UDN reconciler with the controller manager.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor("udn-controller")
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(udnGVK)
 	return ctrl.NewControllerManagedBy(mgr).

@@ -85,6 +85,19 @@ func EnsureVPCSubnet(ctx context.Context, k8sClient client.Client, vpcClient vpc
 	if listErr == nil {
 		for i := range existing {
 			if existing[i].Name == subnetName {
+				if existing[i].CIDR != cidr {
+					errMsg := fmt.Sprintf("existing VPC subnet %s (%s) has CIDR %s but annotation specifies %s",
+						subnetName, existing[i].ID, existing[i].CIDR, cidr)
+					logger.Error(nil, "CIDR mismatch on subnet adoption", "subnetID", existing[i].ID, "existingCIDR", existing[i].CIDR, "expectedCIDR", cidr)
+					annots[annotations.SubnetStatus] = "error"
+					annots[annotations.SubnetError] = errMsg
+					obj.SetAnnotations(annots)
+					if updateErr := k8sClient.Update(ctx, obj); updateErr != nil {
+						logger.Error(updateErr, "Failed to update error annotation")
+					}
+					operatormetrics.ReconcileOpsTotal.WithLabelValues(metricsLabel, "adopt_subnet", "error").Inc()
+					return false, fmt.Errorf("%s", errMsg)
+				}
 				logger.Info("Found existing VPC subnet by name, adopting", "subnetID", existing[i].ID, "name", subnetName)
 				annots[annotations.SubnetID] = existing[i].ID
 				annots[annotations.SubnetName] = subnetName
@@ -318,6 +331,7 @@ func SubnetHasActiveVNIs(ctx context.Context, vpcClient vpc.Client, subnetID str
 }
 
 // DeleteVLANAttachments removes all VLAN attachments tracked in the object's annotations.
+// Already-deleted attachments (404) are tolerated — this handles out-of-band deletion via IBM Cloud console.
 func DeleteVLANAttachments(ctx context.Context, k8sClient client.Client, vpcClient vpc.Client, obj client.Object) error {
 	logger := log.FromContext(ctx)
 	annots := obj.GetAnnotations()
@@ -344,6 +358,10 @@ func DeleteVLANAttachments(ctx context.Context, k8sClient client.Client, vpcClie
 			continue
 		}
 		if err := vpcClient.DeleteVLANAttachment(ctx, bmServerID, attachmentID); err != nil {
+			if isNotFoundError(err) {
+				logger.Info("VLAN attachment already deleted (out-of-band)", "attachmentID", attachmentID, "node", nodeName)
+				continue
+			}
 			logger.Error(err, "Failed to delete VLAN attachment", "attachmentID", attachmentID)
 			return err
 		}
@@ -353,6 +371,7 @@ func DeleteVLANAttachments(ctx context.Context, k8sClient client.Client, vpcClie
 }
 
 // DeleteVPCSubnet removes the VPC subnet tracked in the object's annotations.
+// Already-deleted subnets (404) are tolerated — this handles out-of-band deletion via IBM Cloud console.
 func DeleteVPCSubnet(ctx context.Context, vpcClient vpc.Client, obj client.Object) error {
 	logger := log.FromContext(ctx)
 	annots := obj.GetAnnotations()
@@ -366,11 +385,20 @@ func DeleteVPCSubnet(ctx context.Context, vpcClient vpc.Client, obj client.Objec
 	}
 
 	if err := vpcClient.DeleteSubnet(ctx, subnetID); err != nil {
+		if isNotFoundError(err) {
+			logger.Info("VPC subnet already deleted (out-of-band)", "subnetID", subnetID)
+			return nil
+		}
 		logger.Error(err, "Failed to delete VPC subnet", "subnetID", subnetID)
 		return err
 	}
 	logger.Info("Deleted VPC subnet", "subnetID", subnetID)
 	return nil
+}
+
+// isNotFoundError checks if a VPC API error indicates the resource was not found.
+func isNotFoundError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not found")
 }
 
 // resolveNodeBMServerID looks up a node by name and extracts its BM server ID.

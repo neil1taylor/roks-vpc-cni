@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -34,6 +35,7 @@ type Reconciler struct {
 	VPC        vpc.Client
 	ClusterID  string
 	NNCPConfig network.NNCPConfig
+	Recorder   record.EventRecorder
 }
 
 // Reconcile handles CUDN create/update/delete events.
@@ -134,14 +136,18 @@ func (r *Reconciler) reconcileLayer2(ctx context.Context, cudn client.Object) (c
 }
 
 // reconcileDeleteLocalNet handles LocalNet CUDN deletion: delete VLAN attachments, delete VPC subnet, remove finalizer.
-// If VNIs still exist on the subnet (orphaned or from active VMs), the VPC subnet is left in place
-// and the user must clean it up manually. The CUDN K8s object is still deleted.
+// VLAN attachments are always deleted (we created them). The VPC subnet is only deleted if no external
+// resources (e.g. VSIs created via IBM Cloud UI/CLI) are using it.
 func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, cudn client.Object) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	annots := cudn.GetAnnotations()
 
-	// Check if VNIs still exist on this subnet
-	skipVPCCleanup := false
+	// Always delete VLAN attachments — we created them and they don't depend on subnet emptiness
+	if err := network.DeleteVLANAttachments(ctx, r.Client, r.VPC, cudn); err != nil {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// Delete VPC subnet only if no external resources are using it
 	if subnetID := annots[annotations.SubnetID]; subnetID != "" {
 		hasVNIs, count, err := network.SubnetHasActiveVNIs(ctx, r.VPC, subnetID)
 		if err != nil {
@@ -149,22 +155,14 @@ func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, cudn client.Ob
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		if hasVNIs {
-			logger.Error(nil, "VPC subnet has active VNIs — skipping VPC resource cleanup. "+
-				"Delete the VNIs and subnet manually in the IBM Cloud console.",
-				"cudn", cudn.GetName(), "subnetID", subnetID, "activeVNIs", count)
-			skipVPCCleanup = true
-		}
-	}
-
-	if !skipVPCCleanup {
-		// Delete VLAN attachments
-		if err := network.DeleteVLANAttachments(ctx, r.Client, r.VPC, cudn); err != nil {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-
-		// Delete VPC subnet
-		if err := network.DeleteVPCSubnet(ctx, r.VPC, cudn); err != nil {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			msg := fmt.Sprintf("VPC subnet %s has %d active reserved IP(s) from external resources — "+
+				"subnet preserved. Delete external resources and the subnet manually in the IBM Cloud console.", subnetID, count)
+			logger.Info(msg, "cudn", cudn.GetName())
+			r.event(cudn, "Warning", "SubnetInUse", msg)
+		} else {
+			if err := network.DeleteVPCSubnet(ctx, r.VPC, cudn); err != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
 		}
 	}
 
@@ -179,6 +177,13 @@ func (r *Reconciler) reconcileDeleteLocalNet(ctx context.Context, cudn client.Ob
 	return ctrl.Result{}, nil
 }
 
+// event emits a K8s event if the recorder is available.
+func (r *Reconciler) event(obj runtime.Object, eventType, reason, messageFmt string, args ...interface{}) {
+	if r.Recorder != nil {
+		r.Recorder.Eventf(obj, eventType, reason, messageFmt, args...)
+	}
+}
+
 // reconcileDeleteLayer2 handles Layer2 CUDN deletion: just remove finalizer.
 func (r *Reconciler) reconcileDeleteLayer2(ctx context.Context, cudn client.Object) (ctrl.Result, error) {
 	if err := finalizers.EnsureRemoved(ctx, r.Client, cudn, finalizers.CUDNCleanup); err != nil {
@@ -190,6 +195,7 @@ func (r *Reconciler) reconcileDeleteLayer2(ctx context.Context, cudn client.Obje
 // SetupWithManager registers the CUDN reconciler with the controller manager.
 // Uses unstructured watch to avoid importing OVN-Kubernetes types.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor("cudn-controller")
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(cudnGVK)
 	return ctrl.NewControllerManagedBy(mgr).

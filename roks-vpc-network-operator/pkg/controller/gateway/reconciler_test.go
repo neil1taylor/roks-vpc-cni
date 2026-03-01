@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -21,6 +23,20 @@ func newTestScheme() *runtime.Scheme {
 	_ = clientgoscheme.AddToScheme(s)
 	_ = v1alpha1.AddToScheme(s)
 	return s
+}
+
+func makeCUDN(name, subnetID string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "k8s.ovn.org",
+		Version: "v1",
+		Kind:    "ClusterUserDefinedNetwork",
+	})
+	obj.SetName(name)
+	obj.SetAnnotations(map[string]string{
+		"vpc.roks.ibm.com/subnet-id": subnetID,
+	})
+	return obj
 }
 
 func TestReconcileNormal_CreateGateway(t *testing.T) {
@@ -45,9 +61,11 @@ func TestReconcileNormal_CreateGateway(t *testing.T) {
 		},
 	}
 
+	uplinkCUDN := makeCUDN("uplink-net", "subnet-uplink-123")
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gw).
+		WithObjects(gw, uplinkCUDN).
 		WithStatusSubresource(gw).
 		Build()
 
@@ -55,6 +73,9 @@ func TestReconcileNormal_CreateGateway(t *testing.T) {
 	mockVPC.CreateVNIFn = func(ctx context.Context, opts vpc.CreateVNIOptions) (*vpc.VNI, error) {
 		if opts.Name != "roks-cluster-abc-gw-test-gw" {
 			t.Errorf("expected VNI name 'roks-cluster-abc-gw-test-gw', got %q", opts.Name)
+		}
+		if opts.SubnetID != "subnet-uplink-123" {
+			t.Errorf("expected SubnetID 'subnet-uplink-123', got %q", opts.SubnetID)
 		}
 		return &vpc.VNI{
 			ID:   "vni-gw-123",
@@ -223,9 +244,11 @@ func TestReconcileNormal_VPCError(t *testing.T) {
 		},
 	}
 
+	uplinkCUDN := makeCUDN("uplink-net", "subnet-uplink-123")
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gw).
+		WithObjects(gw, uplinkCUDN).
 		WithStatusSubresource(gw).
 		Build()
 
