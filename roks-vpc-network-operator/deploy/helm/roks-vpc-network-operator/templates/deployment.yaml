@@ -47,6 +47,8 @@ spec:
           value: {{ .Values.vpc.id | quote }}
         - name: CLUSTER_MODE
           value: "unmanaged"  # Always VPC API until ROKS platform API ships
+        - name: ROUTER_POD_IMAGE
+          value: {{ ((.Values.routerPod).image) | default "quay.io/fedora/fedora:40" | quote }}
         - name: NNCP_ENABLED
           value: {{ .Values.nncp.enabled | quote }}
         - name: NNCP_BRIDGE_NAME

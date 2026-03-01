@@ -343,6 +343,9 @@ spec:
               reservedIP:
                 description: ReservedIP is the reserved IP address on the uplink VNI.
                 type: string
+              floatingIPID:
+                description: FloatingIPID is the VPC floating IP resource ID.
+                type: string
               floatingIP:
                 description: FloatingIP is the public floating IP address assigned to the gateway.
                 type: string

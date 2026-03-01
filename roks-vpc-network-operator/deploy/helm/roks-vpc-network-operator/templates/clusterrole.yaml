@@ -61,6 +61,17 @@ rules:
   - patch
   - update
   - watch
+# Pods for router pod lifecycle
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
 # Kubernetes core resources needed for operator
 - apiGroups:
   - ""

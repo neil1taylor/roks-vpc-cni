@@ -2,8 +2,10 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -29,8 +31,17 @@ func TestReconcileNormal_CreateRouter(t *testing.T) {
 
 	gw := &v1alpha1.VPCGateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone: "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{
+				Network: "uplink-net",
+			},
+		},
 		Status: v1alpha1.VPCGatewayStatus{
 			Phase:          "Ready",
+			VNIID:          "vni-gw-123",
+			MACAddress:     "fa:16:3e:aa:bb:cc",
+			ReservedIP:     "10.240.1.5",
 			TransitNetwork: "gw-test-transit",
 		},
 	}
@@ -66,8 +77,9 @@ func TestReconcileNormal_CreateRouter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if result.RequeueAfter != 0 {
-		t.Errorf("expected no requeue, got %v", result.RequeueAfter)
+	// Pod was just created, not Running yet — should requeue
+	if result.RequeueAfter == 0 {
+		t.Errorf("expected requeue after pod creation, got 0")
 	}
 
 	// Verify the updated router status
@@ -121,12 +133,12 @@ func TestReconcileNormal_CreateRouter(t *testing.T) {
 		t.Errorf("expected advertisedRoutes[1] = '10.200.0.0/24', got %q", updated.Status.AdvertisedRoutes[1])
 	}
 
-	// Conditions should include TransitConnected, RoutesConfigured, PodReady
+	// Conditions: TransitConnected and RoutesConfigured should be True
 	conditionMap := make(map[string]metav1.Condition)
 	for _, c := range updated.Status.Conditions {
 		conditionMap[c.Type] = c
 	}
-	for _, cType := range []string{"TransitConnected", "RoutesConfigured", "PodReady"} {
+	for _, cType := range []string{"TransitConnected", "RoutesConfigured"} {
 		c, ok := conditionMap[cType]
 		if !ok {
 			t.Errorf("expected condition %q to be present", cType)
@@ -135,6 +147,55 @@ func TestReconcileNormal_CreateRouter(t *testing.T) {
 		if c.Status != metav1.ConditionTrue {
 			t.Errorf("expected condition %q status = True, got %v", cType, c.Status)
 		}
+	}
+	// PodReady should be False (pod just created, not Running)
+	if podCond, ok := conditionMap["PodReady"]; ok {
+		if podCond.Status != metav1.ConditionFalse {
+			t.Errorf("expected PodReady status = False (pod just created), got %v", podCond.Status)
+		}
+	} else {
+		t.Error("expected PodReady condition to be present")
+	}
+
+	// Verify the router pod was created
+	pod := &corev1.Pod{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "router-test-pod", Namespace: "default"}, pod); err != nil {
+		t.Fatalf("Expected router pod to be created: %v", err)
+	}
+
+	// Verify pod labels
+	if pod.Labels["vpc.roks.ibm.com/router"] != "router-test" {
+		t.Errorf("expected router label = 'router-test', got %q", pod.Labels["vpc.roks.ibm.com/router"])
+	}
+
+	// Verify Multus annotation contains uplink with MAC and workload networks
+	multusAnnotation := pod.Annotations["k8s.v1.cni.cncf.io/networks"]
+	var attachments []multusNetworkAttachment
+	if err := json.Unmarshal([]byte(multusAnnotation), &attachments); err != nil {
+		t.Fatalf("Failed to parse Multus annotation: %v", err)
+	}
+	if len(attachments) != 3 { // uplink + 2 workloads
+		t.Fatalf("expected 3 Multus attachments, got %d", len(attachments))
+	}
+	if attachments[0].Interface != "uplink" || attachments[0].MAC != "fa:16:3e:aa:bb:cc" {
+		t.Errorf("expected uplink with MAC fa:16:3e:aa:bb:cc, got interface=%q mac=%q",
+			attachments[0].Interface, attachments[0].MAC)
+	}
+	if attachments[1].Name != "l2-app" || attachments[1].Interface != "net0" {
+		t.Errorf("expected net0 = l2-app, got %q/%q", attachments[1].Name, attachments[1].Interface)
+	}
+	if attachments[2].Name != "l2-db" || attachments[2].Interface != "net1" {
+		t.Errorf("expected net1 = l2-db, got %q/%q", attachments[2].Name, attachments[2].Interface)
+	}
+
+	// Verify the container is privileged
+	if !*pod.Spec.Containers[0].SecurityContext.Privileged {
+		t.Error("expected router container to be privileged")
+	}
+
+	// Verify owner reference
+	if len(pod.OwnerReferences) != 1 || pod.OwnerReferences[0].Name != "router-test" {
+		t.Errorf("expected owner reference to router-test, got %v", pod.OwnerReferences)
 	}
 }
 
@@ -248,7 +309,7 @@ func TestReconcileNormal_GatewayNotFound(t *testing.T) {
 }
 
 // TestReconcileDelete tests that when a VPCRouter has a DeletionTimestamp set,
-// the reconciler removes the finalizer.
+// the reconciler deletes the router pod and removes the finalizer.
 func TestReconcileDelete(t *testing.T) {
 	scheme := newTestScheme()
 
@@ -268,9 +329,34 @@ func TestReconcileDelete(t *testing.T) {
 		},
 	}
 
+	// Create an existing router pod that should be deleted
+	isTrue := true
+	existingPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "router-delete-pod",
+			Namespace: "default",
+			Labels: map[string]string{
+				"vpc.roks.ibm.com/router": "router-delete",
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "vpc.roks.ibm.com/v1alpha1",
+					Kind:       "VPCRouter",
+					Name:       "router-delete",
+					Controller: &isTrue,
+				},
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "router", Image: "quay.io/fedora/fedora:40"},
+			},
+		},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(router).
+		WithObjects(router, existingPod).
 		WithStatusSubresource(router).
 		Build()
 
@@ -288,6 +374,15 @@ func TestReconcileDelete(t *testing.T) {
 	}
 	if result.Requeue {
 		t.Error("should not requeue after successful delete")
+	}
+
+	// Verify the router pod was deleted
+	pod := &corev1.Pod{}
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "router-delete-pod", Namespace: "default"}, pod)
+	if err == nil {
+		t.Error("expected router pod to be deleted")
+	} else if !errors.IsNotFound(err) {
+		t.Fatalf("unexpected error checking for deleted pod: %v", err)
 	}
 
 	// Verify finalizer was removed.
@@ -335,4 +430,183 @@ func TestReconcile_NotFound(t *testing.T) {
 	if result.Requeue {
 		t.Error("should not requeue for not-found resource")
 	}
+}
+
+// TestBuildRouterPod_NoNAT tests that when the gateway has no NAT rules,
+// the router pod has no NFTABLES_CONFIG env var (pure routing, no MASQUERADE).
+func TestBuildRouterPod_NoNAT(t *testing.T) {
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-nonat", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+		},
+	}
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone: "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+			// No NAT configured — VPC routes handle return traffic
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	pod := buildRouterPod(router, gw)
+
+	// Should NOT have NFTABLES_CONFIG env var
+	for _, env := range pod.Spec.Containers[0].Env {
+		if env.Name == "NFTABLES_CONFIG" {
+			t.Error("expected no NFTABLES_CONFIG when gateway has no NAT rules")
+		}
+	}
+
+	// Script should contain ip_forward but not masquerade
+	script := pod.Spec.Containers[0].Command[2]
+	if !containsString(script, "ip_forward") {
+		t.Error("expected init script to enable IP forwarding")
+	}
+}
+
+// TestBuildRouterPod_WithExplicitNAT tests that when the gateway has explicit
+// SNAT rules, the NFTABLES_CONFIG env var is present.
+func TestBuildRouterPod_WithExplicitNAT(t *testing.T) {
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-nat", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+		},
+	}
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+			NAT: &v1alpha1.GatewayNAT{
+				SNAT: []v1alpha1.SNATRule{
+					{Source: "10.100.0.0/24", Priority: 100},
+				},
+			},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	pod := buildRouterPod(router, gw)
+
+	// Should have NFTABLES_CONFIG env var with SNAT rule
+	found := false
+	for _, env := range pod.Spec.Containers[0].Env {
+		if env.Name == "NFTABLES_CONFIG" {
+			found = true
+			if !containsString(env.Value, "snat") {
+				t.Errorf("expected NFTABLES_CONFIG to contain snat rule, got %q", env.Value)
+			}
+			if !containsString(env.Value, "10.240.1.5") {
+				t.Errorf("expected SNAT to use VNI IP 10.240.1.5, got %q", env.Value)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected NFTABLES_CONFIG env var when gateway has explicit SNAT rules")
+	}
+}
+
+// TestBuildRouterPod_WithDHCP tests that DHCP_ENABLED is set correctly.
+func TestBuildRouterPod_WithDHCP(t *testing.T) {
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-dhcp", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+			DHCP: &v1alpha1.RouterDHCP{Enabled: true},
+		},
+	}
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	pod := buildRouterPod(router, gw)
+
+	for _, env := range pod.Spec.Containers[0].Env {
+		if env.Name == "DHCP_ENABLED" {
+			if env.Value != "true" {
+				t.Errorf("expected DHCP_ENABLED = 'true', got %q", env.Value)
+			}
+			return
+		}
+	}
+	t.Error("expected DHCP_ENABLED env var to be present")
+}
+
+// TestComputeSubnetGateway tests the subnet gateway derivation helper.
+func TestComputeSubnetGateway(t *testing.T) {
+	tests := []struct {
+		ip   string
+		want string
+	}{
+		{"10.240.1.5", "10.240.1.1"},
+		{"192.168.0.100", "192.168.0.1"},
+		{"invalid", ""},
+	}
+	for _, tc := range tests {
+		got := computeSubnetGateway(tc.ip)
+		if got != tc.want {
+			t.Errorf("computeSubnetGateway(%q) = %q, want %q", tc.ip, got, tc.want)
+		}
+	}
+}
+
+// TestComputeDHCPRange tests the DHCP range derivation helper.
+func TestComputeDHCPRange(t *testing.T) {
+	tests := []struct {
+		address string
+		want    string
+	}{
+		{"10.100.0.1/24", "10.100.0.10,10.100.0.254,255.255.255.0,12h"},
+		{"192.168.1.1/24", "192.168.1.10,192.168.1.254,255.255.255.0,12h"},
+		{"10.100.0.1", ""}, // no prefix
+	}
+	for _, tc := range tests {
+		got := computeDHCPRange(tc.address)
+		if got != tc.want {
+			t.Errorf("computeDHCPRange(%q) = %q, want %q", tc.address, got, tc.want)
+		}
+	}
+}
+
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

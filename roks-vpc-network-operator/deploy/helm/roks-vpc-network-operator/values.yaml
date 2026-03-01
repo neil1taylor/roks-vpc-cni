@@ -63,6 +63,10 @@ nncp:
   secondaryNIC: "bond1"
   nodeSelector: "node-role.kubernetes.io/worker="
 
+# Router pod image
+routerPod:
+  image: "quay.io/fedora/fedora:40"
+
 # BFF service
 bff:
   enabled: true

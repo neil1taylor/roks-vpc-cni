@@ -543,6 +543,36 @@ func TruncateVPCName(name string) string {
 	return name[:55] + "-" + suffix
 }
 
+// PickBMServer returns the BM server ID of any bare metal node in the cluster.
+// Since allow_to_float: true is set on VLAN attachments, it doesn't matter which
+// BM server is chosen. Tries providerID first, then falls back to VPC API
+// hostname resolution for unmanaged clusters.
+func PickBMServer(ctx context.Context, k8sClient client.Client, vpcClient vpc.Client, vpcID string) (string, error) {
+	nodeList := &corev1.NodeList{}
+	if err := k8sClient.List(ctx, nodeList); err != nil {
+		return "", fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	// Try providerID first (ROKS clusters)
+	for i := range nodeList.Items {
+		bmServerID := ExtractBMServerID(nodeList.Items[i].Spec.ProviderID)
+		if bmServerID != "" {
+			return bmServerID, nil
+		}
+	}
+
+	// Fallback: resolve via VPC API hostname lookup (unmanaged BM clusters)
+	bmServerMap := buildBMServerMap(ctx, vpcClient, vpcID)
+	for i := range nodeList.Items {
+		bmServerID := resolveBMServerIDByHostname(nodeList.Items[i].Name, bmServerMap)
+		if bmServerID != "" {
+			return bmServerID, nil
+		}
+	}
+
+	return "", fmt.Errorf("no bare metal server found in cluster")
+}
+
 // resolveBMServerIDByHostname matches a K8s node name against the VPC BM server
 // name map. It tries exact match first, then matches the hostname prefix (the
 // part before the first dot) against the BM server name.

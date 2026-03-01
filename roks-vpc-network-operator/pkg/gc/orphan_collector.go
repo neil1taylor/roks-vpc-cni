@@ -24,6 +24,12 @@ var vmGVK = schema.GroupVersionKind{
 	Kind:    "VirtualMachine",
 }
 
+var gatewayGVK = schema.GroupVersionKind{
+	Group:   "vpc.roks.ibm.com",
+	Version: "v1alpha1",
+	Kind:    "VPCGateway",
+}
+
 // OrphanCollector periodically scans for VPC resources that were created by the
 // operator but no longer have a corresponding Kubernetes object.
 type OrphanCollector struct {
@@ -138,42 +144,60 @@ func (gc *OrphanCollector) collect(ctx context.Context, gracePeriod time.Duratio
 	return nil
 }
 
-// buildReferencedVNISet scans all VMs with network-interfaces annotations
-// and returns a set of VNI IDs that are actively referenced.
+// buildReferencedVNISet scans all VMs and VPCGateways and returns a set of
+// VNI IDs that are actively referenced and must not be garbage collected.
 func (gc *OrphanCollector) buildReferencedVNISet(ctx context.Context) map[string]bool {
 	result := map[string]bool{}
 
+	// 1. VNIs referenced by VirtualMachine annotations
 	vmList := &unstructured.UnstructuredList{}
 	vmList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   vmGVK.Group,
 		Version: vmGVK.Version,
 		Kind:    "VirtualMachineList",
 	})
-	if err := gc.K8sClient.List(ctx, vmList); err != nil {
-		return result
-	}
+	if err := gc.K8sClient.List(ctx, vmList); err == nil {
+		for _, vm := range vmList.Items {
+			annots := vm.GetAnnotations()
+			if annots == nil {
+				continue
+			}
 
-	for _, vm := range vmList.Items {
-		annots := vm.GetAnnotations()
-		if annots == nil {
-			continue
-		}
-
-		// Check multi-network annotation
-		if raw := annots[annotations.NetworkInterfaces]; raw != "" {
-			var interfaces []network.VMNetworkInterface
-			if err := json.Unmarshal([]byte(raw), &interfaces); err == nil {
-				for _, iface := range interfaces {
-					if iface.VNIID != "" {
-						result[iface.VNIID] = true
+			// Check multi-network annotation
+			if raw := annots[annotations.NetworkInterfaces]; raw != "" {
+				var interfaces []network.VMNetworkInterface
+				if err := json.Unmarshal([]byte(raw), &interfaces); err == nil {
+					for _, iface := range interfaces {
+						if iface.VNIID != "" {
+							result[iface.VNIID] = true
+						}
 					}
 				}
 			}
-		}
 
-		// Also check legacy annotation
-		if vniID := annots[annotations.VNIID]; vniID != "" {
-			result[vniID] = true
+			// Also check legacy annotation
+			if vniID := annots[annotations.VNIID]; vniID != "" {
+				result[vniID] = true
+			}
+		}
+	}
+
+	// 2. VNIs referenced by VPCGateway status (uplink VNIs)
+	gwList := &unstructured.UnstructuredList{}
+	gwList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   gatewayGVK.Group,
+		Version: gatewayGVK.Version,
+		Kind:    "VPCGatewayList",
+	})
+	if err := gc.K8sClient.List(ctx, gwList); err == nil {
+		for _, gw := range gwList.Items {
+			status, ok := gw.Object["status"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if vniID, ok := status["vniID"].(string); ok && vniID != "" {
+				result[vniID] = true
+			}
 		}
 	}
 

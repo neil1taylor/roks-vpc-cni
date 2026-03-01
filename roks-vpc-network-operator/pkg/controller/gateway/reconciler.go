@@ -140,7 +140,25 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, gw *v1alpha1.VPCGatewa
 		Message: fmt.Sprintf("Configured %d VPC route(s)", len(routeIDs)),
 	})
 
-	// Step 4: Ensure Public Address Range (if enabled)
+	// Step 4: Ensure Floating IP (if enabled)
+	if gw.Spec.FloatingIP != nil && gw.Spec.FloatingIP.Enabled {
+		if err := r.ensureFloatingIP(ctx, gw); err != nil {
+			logger.Error(err, "Failed to ensure floating IP")
+			operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "create_fip", "error").Inc()
+			r.emitEvent(gw, "Warning", "FIPConfigFailed", "Failed to configure floating IP: %v", err)
+			r.setFailedStatus(ctx, gw, "FIPConfigFailed", fmt.Sprintf("Failed to configure floating IP: %v", err))
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "create_fip", "success").Inc()
+		meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
+			Type:    "FloatingIPReady",
+			Status:  metav1.ConditionTrue,
+			Reason:  "Configured",
+			Message: fmt.Sprintf("Floating IP %s (%s) bound to VNI", gw.Status.FloatingIPID, gw.Status.FloatingIP),
+		})
+	}
+
+	// Step 5: Ensure Public Address Range (if enabled)
 	if gw.Spec.PublicAddressRange != nil && gw.Spec.PublicAddressRange.Enabled {
 		if err := r.ensurePAR(ctx, gw); err != nil {
 			logger.Error(err, "Failed to ensure PAR")
@@ -192,7 +210,37 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gw *v1alpha1.VPCGatewa
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Step 2: Delete VPC routes
+	// Step 2: Delete Floating IP
+	if gw.Status.FloatingIPID != "" {
+		isExternalFIP := gw.Spec.FloatingIP != nil && gw.Spec.FloatingIP.ID != ""
+		if !isExternalFIP {
+			if err := r.VPC.DeleteFloatingIP(ctx, gw.Status.FloatingIPID); err != nil {
+				if isVPCNotFound(err) {
+					logger.Info("Floating IP already deleted", "fipID", gw.Status.FloatingIPID)
+				} else {
+					logger.Error(err, "Failed to delete floating IP", "fipID", gw.Status.FloatingIPID)
+					operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "delete_fip", "error").Inc()
+					r.emitEvent(gw, "Warning", "DeleteFIPFailed", "Failed to delete floating IP %s: %v", gw.Status.FloatingIPID, err)
+					return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+				}
+			} else {
+				logger.Info("Deleted floating IP", "fipID", gw.Status.FloatingIPID, "address", gw.Status.FloatingIP)
+			}
+			operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcgateway", "delete_fip", "success").Inc()
+			r.emitEvent(gw, "Normal", "FIPDeleted", "Deleted floating IP %s (%s)", gw.Status.FloatingIPID, gw.Status.FloatingIP)
+		} else {
+			// Unbind externally-managed FIP from the VNI but don't delete it
+			if _, err := r.VPC.UpdateFloatingIP(ctx, gw.Status.FloatingIPID, vpc.UpdateFloatingIPOptions{}); err != nil {
+				if !isVPCNotFound(err) {
+					logger.Error(err, "Failed to unbind floating IP", "fipID", gw.Status.FloatingIPID)
+				}
+			}
+			logger.Info("Unbound external floating IP", "fipID", gw.Status.FloatingIPID)
+			r.emitEvent(gw, "Normal", "FIPUnbound", "Unbound external floating IP %s", gw.Status.FloatingIPID)
+		}
+	}
+
+	// Step 3: Delete VPC routes
 	if len(gw.Status.VPCRouteIDs) > 0 {
 		rtID, err := r.getDefaultRoutingTableID(ctx)
 		if err != nil {
@@ -218,7 +266,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gw *v1alpha1.VPCGatewa
 		r.emitEvent(gw, "Normal", "RoutesDeleted", "Deleted %d VPC route(s)", len(gw.Status.VPCRouteIDs))
 	}
 
-	// Step 3: Delete VLAN attachment (auto-deletes the inline VNI)
+	// Step 4: Delete VLAN attachment (auto-deletes the inline VNI)
 	if gw.Status.AttachmentID != "" && gw.Status.BMServerID != "" {
 		if err := r.VPC.DeleteVLANAttachment(ctx, gw.Status.BMServerID, gw.Status.AttachmentID); err != nil {
 			if isVPCNotFound(err) {
@@ -245,7 +293,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gw *v1alpha1.VPCGatewa
 		logger.Info("Deleted legacy uplink VNI", "vniID", gw.Status.VNIID)
 	}
 
-	// Step 4: Remove finalizer
+	// Step 5: Remove finalizer
 	if err := finalizers.EnsureRemoved(ctx, r.Client, gw, finalizers.GatewayCleanup); err != nil {
 		logger.Error(err, "Failed to remove finalizer")
 		return ctrl.Result{}, err
@@ -378,6 +426,63 @@ func (r *Reconciler) ensureVPCRoutes(ctx context.Context, gw *v1alpha1.VPCGatewa
 	}
 
 	return routeIDs, nil
+}
+
+// ensureFloatingIP creates or adopts a floating IP and binds it to the gateway's VNI.
+func (r *Reconciler) ensureFloatingIP(ctx context.Context, gw *v1alpha1.VPCGateway) error {
+	logger := log.FromContext(ctx)
+	fipSpec := gw.Spec.FloatingIP
+
+	if gw.Status.FloatingIPID != "" {
+		// Drift detection: verify FIP still exists
+		existing, err := r.VPC.GetFloatingIP(ctx, gw.Status.FloatingIPID)
+		if err != nil && isVPCNotFound(err) {
+			logger.Info("Floating IP no longer exists, will recreate", "fipID", gw.Status.FloatingIPID)
+			r.emitEvent(gw, "Warning", "FIPDrift", "Floating IP %s no longer exists", gw.Status.FloatingIPID)
+			gw.Status.FloatingIPID = ""
+			gw.Status.FloatingIP = ""
+			return r.ensureFloatingIP(ctx, gw)
+		} else if err != nil {
+			return fmt.Errorf("GetFloatingIP(%s): %w", gw.Status.FloatingIPID, err)
+		}
+		// Backfill address if missing
+		if gw.Status.FloatingIP == "" {
+			gw.Status.FloatingIP = existing.Address
+		}
+		return nil
+	}
+
+	if fipSpec.ID != "" {
+		// Adopt externally-managed FIP — bind it to our VNI
+		fip, err := r.VPC.UpdateFloatingIP(ctx, fipSpec.ID, vpc.UpdateFloatingIPOptions{
+			TargetID: gw.Status.VNIID,
+		})
+		if err != nil {
+			return fmt.Errorf("UpdateFloatingIP(%s, bind to %s): %w", fipSpec.ID, gw.Status.VNIID, err)
+		}
+		gw.Status.FloatingIPID = fip.ID
+		gw.Status.FloatingIP = fip.Address
+		logger.Info("Adopted external floating IP", "fipID", fip.ID, "address", fip.Address)
+		r.emitEvent(gw, "Normal", "FIPAdopted", "Adopted external floating IP %s (%s)", fip.ID, fip.Address)
+		return nil
+	}
+
+	// Create new FIP bound to the gateway's VNI
+	fipName := network.TruncateVPCName(fmt.Sprintf("roks-%s-gw-%s-fip", r.ClusterID, gw.Name))
+	fip, err := r.VPC.CreateFloatingIP(ctx, vpc.CreateFloatingIPOptions{
+		Name:  fipName,
+		Zone:  gw.Spec.Zone,
+		VNIID: gw.Status.VNIID,
+	})
+	if err != nil {
+		return fmt.Errorf("CreateFloatingIP(%s): %w", fipName, err)
+	}
+
+	gw.Status.FloatingIPID = fip.ID
+	gw.Status.FloatingIP = fip.Address
+	logger.Info("Created floating IP", "fipID", fip.ID, "address", fip.Address)
+	r.emitEvent(gw, "Normal", "FIPCreated", "Created floating IP %s (%s) bound to VNI %s", fip.ID, fip.Address, gw.Status.VNIID)
+	return nil
 }
 
 // ensurePAR creates/adopts the Public Address Range, ingress routing table,

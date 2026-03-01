@@ -2,11 +2,13 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -94,7 +96,16 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 			fmt.Sprintf("VPCGateway %q is not Ready (phase: %s)", router.Spec.Gateway, gw.Status.Phase))
 	}
 
-	// Step 4: Auto-resolve transit network from gateway status
+	// Step 4: Ensure router pod exists
+	podReady, err := r.ensureRouterPod(ctx, router, gw)
+	if err != nil {
+		logger.Error(err, "Failed to ensure router pod")
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcrouter", "ensure_pod", "error").Inc()
+		r.emitEvent(router, "Warning", "PodFailed", "Failed to ensure router pod: %v", err)
+		return r.setFailedStatus(ctx, router, fmt.Sprintf("Failed to ensure router pod: %v", err))
+	}
+
+	// Step 4b: Auto-resolve transit network from gateway status
 	transitNetwork := ""
 	if router.Spec.Transit != nil && router.Spec.Transit.Network != "" {
 		transitNetwork = router.Spec.Transit.Network
@@ -154,11 +165,19 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		Message:            fmt.Sprintf("Advertising %d routes", len(advertisedRoutes)),
 		LastTransitionTime: now,
 	})
+	podCondStatus := metav1.ConditionTrue
+	podCondReason := "PodRunning"
+	podCondMessage := "Router pod is running"
+	if !podReady {
+		podCondStatus = metav1.ConditionFalse
+		podCondReason = "PodNotReady"
+		podCondMessage = "Router pod is not yet running"
+	}
 	meta.SetStatusCondition(&router.Status.Conditions, metav1.Condition{
 		Type:               "PodReady",
-		Status:             metav1.ConditionTrue,
-		Reason:             "RouterConfigured",
-		Message:            "Router pod configuration is ready",
+		Status:             podCondStatus,
+		Reason:             podCondReason,
+		Message:            podCondMessage,
 		LastTransitionTime: now,
 	})
 
@@ -173,14 +192,114 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 
 	logger.Info("Successfully reconciled VPCRouter",
 		"name", router.Name, "phase", router.Status.Phase,
-		"networks", len(router.Spec.Networks))
+		"networks", len(router.Spec.Networks), "podReady", podReady)
+
+	// Requeue to check pod readiness if not yet running
+	if !podReady {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
-// reconcileDelete handles VPCRouter deletion by removing the finalizer.
+// ensureRouterPod creates or validates the router pod.
+// Returns true if the pod is Running, false otherwise.
+func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) (bool, error) {
+	logger := log.FromContext(ctx)
+	podName := routerPodName(router)
+
+	// Check if pod already exists
+	existing := &corev1.Pod{}
+	err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: router.Namespace}, existing)
+	if err == nil {
+		// Pod exists — check if it needs recreation
+		if r.podNeedsRecreation(existing, router, gw) {
+			logger.Info("Router pod spec changed, recreating", "pod", podName)
+			if delErr := r.Delete(ctx, existing); delErr != nil && !errors.IsNotFound(delErr) {
+				return false, fmt.Errorf("delete stale pod %s: %w", podName, delErr)
+			}
+			r.emitEvent(router, "Normal", "PodDeleted", "Deleted stale router pod %s for recreation", podName)
+			// Fall through to create
+		} else {
+			// Pod exists and is current — check if it's running
+			isRunning := existing.Status.Phase == corev1.PodRunning
+			return isRunning, nil
+		}
+	} else if !errors.IsNotFound(err) {
+		return false, fmt.Errorf("get pod %s: %w", podName, err)
+	}
+
+	// Create the pod
+	pod := buildRouterPod(router, gw)
+	if err := r.Create(ctx, pod); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return false, nil // race — will reconcile again
+		}
+		return false, fmt.Errorf("create pod %s: %w", podName, err)
+	}
+
+	logger.Info("Created router pod", "pod", podName)
+	operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcrouter", "create_pod", "success").Inc()
+	r.emitEvent(router, "Normal", "PodCreated", "Created router pod %s", podName)
+	return false, nil // not running yet — just created
+}
+
+// podNeedsRecreation checks if the existing pod's Multus annotations differ
+// from what would be generated for the current router/gateway spec.
+func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) bool {
+	desired := buildRouterPod(router, gw)
+
+	// Compare Multus annotations
+	existingMultus := existing.Annotations["k8s.v1.cni.cncf.io/networks"]
+	desiredMultus := desired.Annotations["k8s.v1.cni.cncf.io/networks"]
+	if existingMultus != desiredMultus {
+		return true
+	}
+
+	// Compare image
+	if len(existing.Spec.Containers) > 0 && len(desired.Spec.Containers) > 0 {
+		if existing.Spec.Containers[0].Image != desired.Spec.Containers[0].Image {
+			return true
+		}
+	}
+
+	// Compare env vars (NAT config, DHCP, firewall may have changed)
+	existingEnv := envToMap(existing.Spec.Containers[0].Env)
+	desiredEnv := envToMap(desired.Spec.Containers[0].Env)
+	existingJSON, _ := json.Marshal(existingEnv)
+	desiredJSON, _ := json.Marshal(desiredEnv)
+	if string(existingJSON) != string(desiredJSON) {
+		return true
+	}
+
+	return false
+}
+
+// envToMap converts a slice of EnvVar to a map for comparison.
+func envToMap(envs []corev1.EnvVar) map[string]string {
+	m := make(map[string]string, len(envs))
+	for _, e := range envs {
+		m[e.Name] = e.Value
+	}
+	return m
+}
+
+// reconcileDelete handles VPCRouter deletion by cleaning up the pod and removing the finalizer.
 func (r *Reconciler) reconcileDelete(ctx context.Context, router *v1alpha1.VPCRouter) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Reconciling VPCRouter deletion", "name", router.Name)
+
+	// Explicitly delete the router pod for faster cleanup (OwnerReference would
+	// eventually GC it, but explicit deletion is faster).
+	podName := routerPodName(router)
+	pod := &corev1.Pod{}
+	if err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: router.Namespace}, pod); err == nil {
+		if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
+			logger.Error(err, "Failed to delete router pod", "pod", podName)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		logger.Info("Deleted router pod", "pod", podName)
+		r.emitEvent(router, "Normal", "PodDeleted", "Deleted router pod %s", podName)
+	}
 
 	if err := finalizers.EnsureRemoved(ctx, r.Client, router, finalizers.RouterCleanup); err != nil {
 		logger.Error(err, "Failed to remove finalizer")
@@ -240,5 +359,6 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("vpcrouter-controller")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.VPCRouter{}).
+		Owns(&corev1.Pod{}).
 		Complete(r)
 }

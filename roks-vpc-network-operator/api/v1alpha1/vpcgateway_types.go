@@ -301,6 +301,9 @@ type VPCGatewayStatus struct {
 	// ReservedIP is the reserved IP address on the uplink VNI.
 	ReservedIP string `json:"reservedIP,omitempty"`
 
+	// FloatingIPID is the VPC floating IP resource ID.
+	FloatingIPID string `json:"floatingIPID,omitempty"`
+
 	// FloatingIP is the public floating IP address assigned to the gateway.
 	FloatingIP string `json:"floatingIP,omitempty"`
 

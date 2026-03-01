@@ -23,6 +23,11 @@ type RouterNetwork struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
+	// Namespace is the namespace where the network-attachment-definition exists.
+	// Required when the router pod runs in a different namespace than the NAD.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
 	// Address is the IP address on this network.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1

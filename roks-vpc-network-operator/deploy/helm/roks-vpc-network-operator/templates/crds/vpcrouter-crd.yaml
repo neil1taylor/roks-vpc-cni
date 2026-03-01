@@ -85,6 +85,9 @@ spec:
                       description: Name is the name of the network (CUDN or UDN).
                       type: string
                       minLength: 1
+                    namespace:
+                      description: Namespace where the network-attachment-definition exists.
+                      type: string
                     address:
                       description: Address is the IP address on this network.
                       type: string

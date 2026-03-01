@@ -144,13 +144,23 @@ const VPCDashboardPage: React.FC = () => {
           <GridItem span={3}>
             <Card isCompact>
               <CardTitle>Gateways</CardTitle>
-              <CardBody>{renderCount(gateways?.length, gwLoading)}</CardBody>
+              <CardBody>
+                {renderCount(gateways?.length, gwLoading)}
+                <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                  Connect routers to the VPC fabric
+                </div>
+              </CardBody>
             </Card>
           </GridItem>
           <GridItem span={3}>
             <Card isCompact>
               <CardTitle>Routers</CardTitle>
-              <CardBody>{renderCount(routers?.length, rtLoading)}</CardBody>
+              <CardBody>
+                {renderCount(routers?.length, rtLoading)}
+                <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                  Connect Layer2 segments to other Layer2 segments, and optionally via an uplink to a gateway which connects to the VPC fabric
+                </div>
+              </CardBody>
             </Card>
           </GridItem>
         </Grid>

@@ -8,22 +8,27 @@ import (
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 )
 
-// CreateVNI creates a floating Virtual Network Interface for a VM.
+// CreateVNI creates a floating Virtual Network Interface.
 // CRITICAL settings:
 //   - auto_delete: false
 //   - allow_ip_spoofing: true
-//   - enable_infrastructure_nat: true (VPC handles NAT/routing for the VNI)
+//   - enable_infrastructure_nat: configurable (default true; gateway VNIs use false)
 func (c *vpcClient) CreateVNI(ctx context.Context, opts CreateVNIOptions) (*VNI, error) {
 	if err := c.limiter.Acquire(ctx); err != nil {
 		return nil, err
 	}
 	defer c.limiter.Release()
 
+	enableInfraNat := true
+	if opts.EnableInfrastructureNat != nil {
+		enableInfraNat = *opts.EnableInfrastructureNat
+	}
+
 	createOpts := &vpcv1.CreateVirtualNetworkInterfaceOptions{
 		Name:                    &opts.Name,
 		Subnet:                  &vpcv1.SubnetIdentityByID{ID: &opts.SubnetID},
 		AllowIPSpoofing:         core.BoolPtr(true),
-		EnableInfrastructureNat: core.BoolPtr(true),
+		EnableInfrastructureNat: core.BoolPtr(enableInfraNat),
 		AutoDelete:              core.BoolPtr(false),
 		PrimaryIP: &vpcv1.VirtualNetworkInterfacePrimaryIPPrototype{
 			AutoDelete: core.BoolPtr(true),
