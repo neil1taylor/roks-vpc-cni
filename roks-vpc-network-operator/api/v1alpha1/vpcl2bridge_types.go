@@ -229,6 +229,7 @@ type VPCL2BridgeStatus struct {
 // +kubebuilder:printcolumn:name="Network",type=string,JSONPath=`.spec.networkRef.name`
 // +kubebuilder:printcolumn:name="Remote",type=string,JSONPath=`.spec.remote.endpoint`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Sync",type=string,JSONPath=`.status.syncStatus`
 // +kubebuilder:printcolumn:name="Tunnel IP",type=string,JSONPath=`.status.tunnelEndpoint`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
