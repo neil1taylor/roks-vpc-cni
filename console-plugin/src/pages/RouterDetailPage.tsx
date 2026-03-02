@@ -35,9 +35,10 @@ import { apiClient } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
 import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import { EditReservationsModal } from '../components/EditReservationsModal';
+import { EditIDSModal } from '../components/EditIDSModal';
 import { formatTimestamp } from '../utils/formatters';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
-import { RouterNetworkDHCP, DHCPReservation } from '../api/types';
+import { RouterNetworkDHCP, DHCPReservation, RouterIDS } from '../api/types';
 import RouterHealthCard from '../components/charts/RouterHealthCard';
 import ThroughputChart from '../components/charts/ThroughputChart';
 import ConntrackGauge from '../components/charts/ConntrackGauge';
@@ -130,6 +131,8 @@ const RouterDetailPage: React.FC = () => {
                 dhcpEnabledCount={dhcpEnabledCount}
                 totalNetworks={totalNetworks}
                 networksWithOverrides={networksWithOverrides}
+                routerName={name || ''}
+                routerNamespace={router.namespace}
               />
             )}
 
@@ -174,16 +177,20 @@ const RouterDetailPage: React.FC = () => {
 // ── Overview Tab ──
 
 interface OverviewTabProps {
-  router: { name: string; namespace: string; gateway: string; phase: string; transitIP?: string; advertisedRoutes?: string[]; idsMode?: string; metricsEnabled?: boolean; syncStatus: string; createdAt?: string; dhcp?: { enabled: boolean; leaseTime?: string; dns?: { nameservers?: string[]; searchDomains?: string[]; localDomain?: string }; options?: { mtu?: number; ntpServers?: string[] } } };
+  router: { name: string; namespace: string; gateway: string; phase: string; transitIP?: string; advertisedRoutes?: string[]; idsMode?: string; ids?: RouterIDS; metricsEnabled?: boolean; syncStatus: string; createdAt?: string; dhcp?: { enabled: boolean; leaseTime?: string; dns?: { nameservers?: string[]; searchDomains?: string[]; localDomain?: string }; options?: { mtu?: number; ntpServers?: string[] } } };
   gatewayDetail: { zone: string; phase: string } | null;
   hasDHCP: boolean;
   hasMetrics: boolean;
   dhcpEnabledCount: number;
   totalNetworks: number;
   networksWithOverrides: { name: string; dhcp?: RouterNetworkDHCP }[];
+  routerName: string;
+  routerNamespace: string;
 }
 
-const OverviewTab: React.FC<OverviewTabProps> = ({ router, gatewayDetail, hasDHCP, hasMetrics, dhcpEnabledCount, totalNetworks, networksWithOverrides }) => {
+const OverviewTab: React.FC<OverviewTabProps> = ({ router, gatewayDetail, hasDHCP, hasMetrics, dhcpEnabledCount, totalNetworks, networksWithOverrides, routerName, routerNamespace }) => {
+  const [editIDSOpen, setEditIDSOpen] = useState(false);
+
   const { data: health, loading: healthLoading } = useRouterHealth(
     hasMetrics ? router.name : '',
     hasMetrics ? router.namespace : undefined,
@@ -246,7 +253,13 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ router, gatewayDetail, hasDHC
                   <Label isCompact color={router.idsMode === 'ips' ? 'orange' : 'blue'}>
                     {router.idsMode.toUpperCase()}
                   </Label>
-                ) : '-'}
+                ) : (
+                  <>
+                    <Label isCompact color="grey">Disabled</Label>
+                    {' '}
+                    <Button variant="link" isInline size="sm" onClick={() => setEditIDSOpen(true)}>Enable</Button>
+                  </>
+                )}
               </DescriptionListDescription>
             </DescriptionListGroup>
             <DescriptionListGroup>
@@ -280,6 +293,57 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ router, gatewayDetail, hasDHC
           </DescriptionList>
         </CardBody>
       </Card>
+
+      {router.ids?.enabled && (
+        <Card style={{ marginBottom: '24px' }}>
+          <CardTitle>
+            <Split>
+              <SplitItem isFilled>IDS/IPS Configuration</SplitItem>
+              <SplitItem>
+                <Button variant="secondary" size="sm" onClick={() => setEditIDSOpen(true)}>
+                  Edit IDS/IPS
+                </Button>
+              </SplitItem>
+            </Split>
+          </CardTitle>
+          <CardBody>
+            <DescriptionList isHorizontal>
+              <DescriptionListGroup>
+                <DescriptionListTerm>Mode</DescriptionListTerm>
+                <DescriptionListDescription>
+                  <Label isCompact color={router.ids.mode === 'ips' ? 'orange' : 'blue'}>
+                    {router.ids.mode === 'ips' ? 'IPS — Inline Blocking' : 'IDS — Passive Monitoring'}
+                  </Label>
+                </DescriptionListDescription>
+              </DescriptionListGroup>
+              <DescriptionListGroup>
+                <DescriptionListTerm>Interfaces</DescriptionListTerm>
+                <DescriptionListDescription>{router.ids.interfaces || 'all'}</DescriptionListDescription>
+              </DescriptionListGroup>
+              {router.ids.syslogTarget && (
+                <DescriptionListGroup>
+                  <DescriptionListTerm>Syslog Target</DescriptionListTerm>
+                  <DescriptionListDescription><code>{router.ids.syslogTarget}</code></DescriptionListDescription>
+                </DescriptionListGroup>
+              )}
+              {router.ids.customRules && (
+                <DescriptionListGroup>
+                  <DescriptionListTerm>Custom Rules</DescriptionListTerm>
+                  <DescriptionListDescription>
+                    {router.ids.customRules.split('\n').filter(Boolean).length} rule(s)
+                  </DescriptionListDescription>
+                </DescriptionListGroup>
+              )}
+              {router.ids.image && (
+                <DescriptionListGroup>
+                  <DescriptionListTerm>Image</DescriptionListTerm>
+                  <DescriptionListDescription><code>{router.ids.image}</code></DescriptionListDescription>
+                </DescriptionListGroup>
+              )}
+            </DescriptionList>
+          </CardBody>
+        </Card>
+      )}
 
       {hasDHCP && (
         <Card>
@@ -334,6 +398,17 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ router, gatewayDetail, hasDHC
           </CardBody>
         </Card>
       )}
+
+      <EditIDSModal
+        isOpen={editIDSOpen}
+        onClose={(updated) => {
+          setEditIDSOpen(false);
+          if (updated) window.location.reload();
+        }}
+        routerName={routerName}
+        routerNamespace={routerNamespace}
+        currentIDS={router.ids}
+      />
     </>
   );
 };

@@ -293,6 +293,15 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 	metricsHandler := NewRouterMetricsHandler(thanosClient)
 	mux.HandleFunc("/api/v1/routers/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		// Check if this is an IDS sub-route
+		if strings.HasSuffix(path, "/ids") || strings.Contains(path, "/ids?") {
+			if r.Method == http.MethodPatch {
+				authMiddleware(rtHandler.UpdateIDS).ServeHTTP(w, r)
+			} else {
+				WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		}
 		// Check if this is a leases sub-route
 		if strings.HasSuffix(path, "/leases") || strings.Contains(path, "/leases?") {
 			authMiddleware(rtHandler.GetLeases).ServeHTTP(w, r)

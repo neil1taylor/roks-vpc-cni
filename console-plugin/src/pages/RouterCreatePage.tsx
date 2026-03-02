@@ -73,6 +73,12 @@ const RouterCreatePage: React.FC = () => {
   const [dhcpSearchDomains, setDhcpSearchDomains] = useState('');
   const [dhcpLocalDomain, setDhcpLocalDomain] = useState('');
 
+  // IDS/IPS state
+  const [idsEnabled, setIdsEnabled] = useState(false);
+  const [idsMode, setIdsMode] = useState('ids');
+  const [idsInterfaces, setIdsInterfaces] = useState('all');
+  const [idsSyslog, setIdsSyslog] = useState('');
+
   const { gateways, loading: gatewaysLoading } = useGateways();
   const { networks: networkDefs, loading: networksLoading } = useNetworkDefinitions();
   const localNetNetworks = networkDefs?.filter((n) => n.topology === 'LocalNet') || [];
@@ -209,6 +215,15 @@ const RouterCreatePage: React.FC = () => {
                 localDomain: dhcpLocalDomain || undefined,
               }
             : undefined,
+      };
+    }
+
+    if (idsEnabled) {
+      req.ids = {
+        enabled: true,
+        mode: idsMode,
+        interfaces: idsInterfaces || undefined,
+        syslogTarget: idsSyslog || undefined,
       };
     }
 
@@ -502,6 +517,61 @@ const RouterCreatePage: React.FC = () => {
                         onChange={(_e, v) => setDhcpLocalDomain(v)}
                         placeholder="local.lan"
                       />
+                    </FormGroup>
+                  </div>
+                </ExpandableSection>
+              )}
+
+              <FormGroup fieldId="rt-ids-toggle">
+                <Switch
+                  id="rt-ids-toggle"
+                  label="IDS/IPS Enabled"
+                  labelOff="IDS/IPS Disabled"
+                  isChecked={idsEnabled}
+                  onChange={(_e, checked) => setIdsEnabled(checked)}
+                />
+                <FormHelperText>
+                  <HelperText><HelperTextItem>Deploy a Suricata sidecar for network intrusion detection/prevention</HelperTextItem></HelperText>
+                </FormHelperText>
+              </FormGroup>
+
+              {idsEnabled && (
+                <ExpandableSection toggleText="IDS/IPS Settings" isIndented>
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                    <FormGroup label="Mode" fieldId="ids-mode" style={{ minWidth: '200px' }}>
+                      <FormSelect
+                        id="ids-mode"
+                        value={idsMode}
+                        onChange={(_e, v) => setIdsMode(v)}
+                      >
+                        <FormSelectOption value="ids" label="IDS — Passive Monitoring" />
+                        <FormSelectOption value="ips" label="IPS — Inline Blocking" />
+                      </FormSelect>
+                      <FormHelperText>
+                        <HelperText><HelperTextItem>IDS passively monitors traffic. IPS inspects and blocks inline.</HelperTextItem></HelperText>
+                      </FormHelperText>
+                    </FormGroup>
+                    <FormGroup label="Interfaces" fieldId="ids-interfaces" style={{ minWidth: '200px' }}>
+                      <FormSelect
+                        id="ids-interfaces"
+                        value={idsInterfaces}
+                        onChange={(_e, v) => setIdsInterfaces(v)}
+                      >
+                        <FormSelectOption value="all" label="All interfaces" />
+                        <FormSelectOption value="uplink" label="Uplink only" />
+                        <FormSelectOption value="workload" label="Workload only" />
+                      </FormSelect>
+                    </FormGroup>
+                    <FormGroup label="Syslog Target" fieldId="ids-syslog" style={{ flex: 1, minWidth: '200px' }}>
+                      <TextInput
+                        id="ids-syslog"
+                        value={idsSyslog}
+                        onChange={(_e, v) => setIdsSyslog(v)}
+                        placeholder="syslog-host:514"
+                      />
+                      <FormHelperText>
+                        <HelperText><HelperTextItem>Optional syslog destination for alerts (host:port)</HelperTextItem></HelperText>
+                      </FormHelperText>
                     </FormGroup>
                   </div>
                 </ExpandableSection>

@@ -488,6 +488,9 @@ func unstructuredToRouter(obj *unstructured.Unstructured) model.RouterResponse {
 	rt.IDSMode, _, _ = unstructured.NestedString(obj.Object, "status", "idsMode")
 	rt.MetricsEnabled, _, _ = unstructured.NestedBool(obj.Object, "status", "metricsEnabled")
 
+	// Extract IDS config from spec
+	rt.IDS = extractIDS(obj)
+
 	// Extract global DHCP from spec
 	rt.DHCP = extractGlobalDHCP(obj)
 
@@ -748,6 +751,10 @@ func buildRouterUnstructured(req model.RouterRequest) *unstructured.Unstructured
 		spec["dhcp"] = buildGlobalDHCPMap(req.DHCP)
 	}
 
+	if req.IDS != nil {
+		spec["ids"] = buildIDSMap(req.IDS)
+	}
+
 	obj.Object["spec"] = spec
 
 	return obj
@@ -862,4 +869,155 @@ func buildOptionsMap(opts *model.DHCPOptionsResp) map[string]interface{} {
 		m["custom"] = cs
 	}
 	return m
+}
+
+// ── IDS/IPS Functions ──
+
+// extractIDS reads spec.ids and returns a RouterIDSResp.
+func extractIDS(obj *unstructured.Unstructured) *model.RouterIDSResp {
+	idsMap, found, _ := unstructured.NestedMap(obj.Object, "spec", "ids")
+	if !found || idsMap == nil {
+		return nil
+	}
+
+	resp := &model.RouterIDSResp{}
+	if v, ok := idsMap["enabled"].(bool); ok {
+		resp.Enabled = v
+	}
+	if v, ok := idsMap["mode"].(string); ok {
+		resp.Mode = v
+	}
+	if v, ok := idsMap["interfaces"].(string); ok {
+		resp.Interfaces = v
+	}
+	if v, ok := idsMap["customRules"].(string); ok {
+		resp.CustomRules = v
+	}
+	if v, ok := idsMap["syslogTarget"].(string); ok {
+		resp.SyslogTarget = v
+	}
+	if v, ok := idsMap["image"].(string); ok {
+		resp.Image = v
+	}
+	if v, ok := idsMap["nfqueueNum"].(int64); ok {
+		i := int32(v)
+		resp.NFQueueNum = &i
+	} else if v, ok := idsMap["nfqueueNum"].(float64); ok {
+		i := int32(v)
+		resp.NFQueueNum = &i
+	}
+
+	return resp
+}
+
+// buildIDSMap builds the spec.ids map from a create request.
+func buildIDSMap(req *model.RouterIDSReq) map[string]interface{} {
+	m := map[string]interface{}{
+		"enabled": req.Enabled,
+		"mode":    req.Mode,
+	}
+	if req.Interfaces != "" {
+		m["interfaces"] = req.Interfaces
+	}
+	if req.CustomRules != "" {
+		m["customRules"] = req.CustomRules
+	}
+	if req.SyslogTarget != "" {
+		m["syslogTarget"] = req.SyslogTarget
+	}
+	return m
+}
+
+// buildIDSMapFromUpdate builds the spec.ids map from an update request.
+func buildIDSMapFromUpdate(req model.UpdateIDSReq) map[string]interface{} {
+	if !req.Enabled {
+		return map[string]interface{}{
+			"enabled": false,
+		}
+	}
+	m := map[string]interface{}{
+		"enabled": true,
+		"mode":    req.Mode,
+	}
+	if req.Interfaces != "" {
+		m["interfaces"] = req.Interfaces
+	}
+	if req.CustomRules != "" {
+		m["customRules"] = req.CustomRules
+	}
+	if req.SyslogTarget != "" {
+		m["syslogTarget"] = req.SyslogTarget
+	}
+	return m
+}
+
+// UpdateIDS handles PATCH /api/v1/routers/:name/ids
+func (h *RouterHandler) UpdateIDS(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	trimmed := strings.TrimPrefix(path, "/api/v1/routers/")
+	parts := strings.SplitN(trimmed, "/", 2)
+	name := parts[0]
+	if name == "" {
+		WriteError(w, http.StatusBadRequest, "missing router name", "MISSING_NAME")
+		return
+	}
+
+	userInfo := auth.GetUserFromContext(r.Context())
+	if userInfo == nil || userInfo.Name == "" {
+		WriteError(w, http.StatusUnauthorized, "unauthorized", "UNAUTHORIZED")
+		return
+	}
+
+	allowed, err := h.rbac.CheckAccess(r.Context(), userInfo.Name, userInfo.Groups, "update", "vpcrouters", "")
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "authorization check failed", "AUTHZ_CHECK_FAILED")
+		return
+	}
+	if !allowed {
+		WriteError(w, http.StatusForbidden, "forbidden", "FORBIDDEN")
+		return
+	}
+
+	var req model.UpdateIDSReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid request body", "INVALID_REQUEST")
+		return
+	}
+
+	if h.dynClient == nil {
+		WriteError(w, http.StatusServiceUnavailable, "dynamic client not configured", "CLIENT_NOT_CONFIGURED")
+		return
+	}
+
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = h.findRouterNamespace(r, name)
+		if ns == "" {
+			WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
+			return
+		}
+	}
+
+	obj, err := h.dynClient.Resource(vpcRouterGVR).Namespace(ns).Get(r.Context(), name, metav1.GetOptions{})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to get VPCRouter", "name", name, "error", err)
+		WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
+		return
+	}
+
+	idsMap := buildIDSMapFromUpdate(req)
+	if err := unstructured.SetNestedField(obj.Object, idsMap, "spec", "ids"); err != nil {
+		slog.ErrorContext(r.Context(), "failed to set spec.ids", "error", err)
+		WriteError(w, http.StatusInternalServerError, "failed to update router", "UPDATE_FAILED")
+		return
+	}
+
+	updated, err := h.dynClient.Resource(vpcRouterGVR).Namespace(ns).Update(r.Context(), obj, metav1.UpdateOptions{})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to update VPCRouter", "name", name, "error", err)
+		WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update router: %v", err), "UPDATE_FAILED")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, unstructuredToRouter(updated))
 }
