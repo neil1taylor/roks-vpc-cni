@@ -28,9 +28,9 @@ Integrate WireGuard-based mesh networking for use cases beyond single-VPC connec
 
 ## Router Pod Performance Improvements
 
-**Status**: Under consideration
+**Status**: Tier 1 implemented, Tier 2-3 under consideration
 
-The current VPCRouter pod uses a Fedora container running a bash init script with kernel nftables forwarding over Multus veth interfaces. This is functional but has throughput limitations for high-bandwidth workloads.
+The VPCRouter pod uses a Fedora container running a bash init script with kernel nftables forwarding over Multus veth interfaces. Tier 1 (resource limits, CPU pinning, node scheduling) is implemented via `spec.pod`. Higher tiers target throughput beyond ~15 Gbps.
 
 ### Current Architecture
 
@@ -40,26 +40,14 @@ Traffic path: **VM → OVN overlay → Multus veth → router pod (nftables) →
 |--------|--------------|--------|
 | **Data path** | Veth pairs (Multus CNI) | ~5-10% overhead vs native bridge |
 | **Forwarding engine** | Kernel nftables | Single-threaded per flow, no fast-path |
-| **Resource limits** | None set | Competes with all pods on the node |
-| **CPU affinity** | None | Kernel scheduler decides, no pinning |
+| **Resource limits** | Configurable via `spec.pod.resources` | ✅ Guaranteed CPU/memory |
+| **CPU affinity** | Configurable via `spec.pod.runtimeClassName` | ✅ CPU Manager static policy |
+| **Node scheduling** | Configurable via `spec.pod.nodeSelector` + `tolerations` | ✅ Target specific nodes |
 | **NIC mode** | OVN LocalNet (software) | No SR-IOV passthrough |
 | **Container image** | `fedora:40` + bash init | Not a purpose-built forwarding binary |
 | **Acceleration** | None | No DPDK, XDP, or eBPF fast-path |
 
-### Estimated Throughput
-
-- **Small packets (64B):** ~200-500 Kpps
-- **Large packets / bulk transfer:** ~5-15 Gbps (depends on BM NIC and available CPU)
-- **With NAT rules:** ~10-30% additional overhead per rule chain
-
-### Proposed Improvements
-
-**Tier 1 — Low effort, immediate gains** ✅ Implemented
-
-- **Resource requests and limits** — `spec.pod.resources` (CPU/memory requests and limits)
-- **CPU pinning** — `spec.pod.runtimeClassName` (e.g., `performance` for CPU Manager static policy)
-- **Node affinity** — `spec.pod.nodeSelector` + `spec.pod.tolerations` for targeting specific nodes
-- **Priority class** — `spec.pod.priorityClassName` for scheduling priority
+### Remaining Improvements
 
 **Tier 2 — Medium effort, significant gains**
 
@@ -73,38 +61,17 @@ Traffic path: **VM → OVN overlay → Multus veth → router pod (nftables) →
 - **DPDK userspace forwarding** — Run VPP (fd.io) or a custom DPDK application inside the router pod for full userspace packet processing. Requires hugepages, dedicated cores, and SR-IOV VFs. Achieves 40-100 Gbps on modern NICs.
 - **FRRouting replacement** — Replace the bash init script with FRRouting (FRR) for dynamic routing protocol support (BGP, OSPF) alongside high-performance forwarding via its built-in dataplane.
 
-### Resource Configuration Sketch
-
-```yaml
-# VPCRouter CRD extension
-spec:
-  pod:
-    resources:
-      requests:
-        cpu: "2"
-        memory: "1Gi"
-      limits:
-        cpu: "4"
-        memory: "2Gi"
-    runtimeClassName: performance  # CPU Manager static policy
-    nodeSelector:
-      node-role.kubernetes.io/worker: ""
-      feature.node.kubernetes.io/network-sriov.capable: "true"
-```
-
 ### When to Invest
 
-For most KubeVirt VM workloads (tens of VMs, moderate traffic), the current approach is sufficient. Performance optimization becomes important for:
+For most KubeVirt VM workloads (tens of VMs, moderate traffic), Tier 1 is sufficient. Higher tiers become important for:
 
 - **NFV workloads** — Network functions requiring line-rate packet processing
 - **Storage replication** — iSCSI/NFS between VMs across subnets
-- **Bulk data transfer** — Analytics, ML training data movement between many VMs
 - **High VM density** — 100+ VMs routing through a single router pod
 - **Latency-sensitive** — Financial, gaming, or real-time communication workloads
 
 ### Implementation Notes
 
-- Tier 1 changes are additive — extend `buildRouterPod()` in `pkg/controller/router/pod.go` to set resource fields from `spec.pod.resources`
 - XDP programs can coexist with nftables — use XDP for fast-path forwarding, nftables for complex NAT/firewall
 - SR-IOV requires the OpenShift SR-IOV Network Operator to be installed on the cluster
 - DPDK requires hugepages configuration via MachineConfig and node tuning
@@ -112,61 +79,26 @@ For most KubeVirt VM workloads (tens of VMs, moderate traffic), the current appr
 
 ---
 
-## Enhanced DHCP Management
+## DHCP Enhancements
 
-**Status**: Under consideration
+**Status**: Core features implemented, advanced features under consideration
 
-The current VPCRouter DHCP implementation is minimal — a single `Enabled` bool that starts dnsmasq with auto-computed ranges and hardcoded 12h leases. This section captures enhancements to make DHCP production-grade.
+Per-network DHCP configuration, custom ranges, static reservations, DNS settings, DHCP options (router, MTU, NTP, custom), and configurable lease times are all implemented. The remaining enhancements are:
 
-### Current State
+### Remaining Enhancements
 
-- `RouterDHCP` struct: `{ Enabled: bool }` — global on/off only
-- Range: auto-computed from network CIDR (network+10 to broadcast-1)
-- Lease time: hardcoded 12h
-- No DNS, no static reservations, no per-network control
+**Lease persistence**
+- Lease file persistence across pod restarts (currently lost on pod recreation)
+- Needs a volume mount or ConfigMap-based storage
 
-### Proposed Enhancements
-
-**Per-network DHCP configuration**
-- Move DHCP config from `spec.dhcp` to `spec.networks[].dhcp` so each workload network can have independent settings
-- Allow enabling DHCP on some networks but not others
-
-**Custom address ranges**
-- `rangeStart` / `rangeEnd` overrides (currently auto-computed)
-- Exclude ranges for reserved IPs (e.g., gateways, load balancers)
-
-**Static reservations**
-- MAC-to-IP mappings for VMs that need stable addresses
-- Integration with VPC reserved IPs so DHCP assignments match VPC state
-- Could auto-populate from VNI MAC/IP data already tracked by the operator
-
-**DNS configuration**
-- Custom nameservers (currently none — VMs fall back to defaults)
-- Search domains
-- Local DNS for VM hostnames within the network (dnsmasq supports this natively)
-
-**DHCP options**
-- Gateway / router option (option 3)
-- MTU (option 26) — important for VLAN-encapsulated networks
-- NTP servers (option 42)
-- Custom options passthrough
-
-**Lease management**
-- Configurable lease time (currently hardcoded 12h)
-- Lease status reporting in `VPCRouterStatus`
-- Lease file persistence across pod restarts (currently lost)
+**Auto-populated reservations**
+- Auto-sync static reservations from VNI CRD status (MAC + reserved IP)
+- Would eliminate manual MAC→IP mapping for operator-managed VMs
 
 **IPv6 support**
 - Router Advertisement (RA) for SLAAC
 - DHCPv6 for stateful IPv6 assignment
 - Dual-stack configuration per network
-
-### Implementation Notes
-
-- All enhancements use dnsmasq flags — no additional software needed
-- Per-network config requires extending `RouterNetwork` struct in `vpcrouter_types.go`
-- Static reservations could be auto-synced from VNI CRD status (MAC + reserved IP)
-- Lease persistence needs a volume mount or ConfigMap-based storage
 
 ## DNS Filtering and Secure DNS
 
