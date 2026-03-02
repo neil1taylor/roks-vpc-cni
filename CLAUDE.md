@@ -77,7 +77,7 @@ Ten reconciliation loops + one mutating webhook + orphan GC:
 - **`pkg/vpc/`** — VPC API client. `Client` interface (composition of per-resource sub-interfaces) is the primary mock boundary for tests. Includes channel-based rate limiter (10 concurrent).
 - **`pkg/roks/`** — ROKS platform API client (stub, awaiting API availability).
 - **`pkg/annotations/`** — All `vpc.roks.ibm.com/*` annotation key constants.
-- **`pkg/finalizers/`** — Finalizer CRUD helpers. Finalizer names: `vpc.roks.ibm.com/cudn-cleanup`, `vpc.roks.ibm.com/vm-cleanup`, `vpc.roks.ibm.com/udn-cleanup`, `vpc.roks.ibm.com/gateway-cleanup`, `vpc.roks.ibm.com/router-cleanup`.
+- **`pkg/finalizers/`** — Finalizer CRUD helpers. Finalizer names: `vpc.roks.ibm.com/cudn-cleanup`, `vpc.roks.ibm.com/vm-cleanup`, `vpc.roks.ibm.com/udn-cleanup`, `vpc.roks.ibm.com/gateway-cleanup`, `vpc.roks.ibm.com/router-cleanup`, `vpc.roks.ibm.com/l2bridge-cleanup`.
 - **`api/v1alpha1/`** — CRD type definitions with DeepCopy.
 
 ### BFF Service
@@ -86,7 +86,7 @@ Go HTTP server (`cmd/bff/`) that aggregates VPC API + K8s API data for the conso
 
 ### Console Plugin (TypeScript/React)
 
-OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-plugin-sdk-webpack`). PatternFly 5 components. 22 pages under `/vpc-networking/*` (Dashboard, Subnets, VNIs, VLAN Attachments, Floating IPs, Security Groups, Network ACLs, Routes, Topology, Networks, Gateways, Routers — each with list, detail, and create pages). Plugin metadata in `console-extensions.json`, exposed modules in `package.json`.
+OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-plugin-sdk-webpack`). PatternFly 5 components. 26 routes under `/vpc-networking/*` covering Dashboard, Subnets, VNIs, VLAN Attachments, Floating IPs, PARs, Security Groups, Network ACLs, Routes, Topology, Networks, Gateways, Routers, L2 Bridges, and Observability — each resource type has list, detail, and create pages. Plugin metadata in `console-extensions.json`, exposed modules in `package.json`.
 
 ## Implementation Conventions
 

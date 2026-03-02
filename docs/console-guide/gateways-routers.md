@@ -115,13 +115,38 @@ A form for creating a new VPCRouter:
 
 **Path:** `/vpc-networking/routers/:name`
 
-Displays router details in two cards:
+The router detail page uses a tabbed layout with up to 4 tabs:
 
-**Overview** — Name, Namespace, Gateway (with inline zone badge and phase status from the gateway), Phase, Transit IP, Advertised Routes, IDS/IPS (color-coded label: blue for IDS, orange for IPS), Functions, Sync Status, Created
+**Overview tab** — Router health card (when metrics enabled), followed by a details card showing Name, Namespace, Gateway (with inline zone badge and phase status), Phase, Transit IP, Advertised Routes, IDS/IPS (color-coded label: blue for IDS, orange for IPS), Metrics (Enabled/Disabled label), DHCP, Sync Status, Created. Below: DHCP Configuration card with global defaults and per-network overrides.
 
-**Connected Networks** — Table showing each network's name, address, and connection status (Connected/Disconnected labels).
+**Monitoring tab** (only visible when `spec.metrics.enabled: true`) — Time range selector (5m/15m/1h/6h/24h), health summary card with uptime and process status, conntrack utilization gauge, DHCP pool utilization gauges (one per network), and per-interface throughput area charts (RX/TX bytes/sec). All data auto-refreshes every 15 seconds.
+
+**Networks tab** — Table showing each network's name, address, connection status, DHCP state, pool range, and reservation count.
+
+**NFT Rules tab** (only visible when `spec.metrics.enabled: true`) — Sortable table of nftables rule hit counters showing table, chain, rule comment, packet count, and byte count.
 
 The **Delete Router** button opens a confirmation modal requiring the router name.
+
+---
+
+## Observability
+
+**Path:** `/vpc-networking/observability`
+
+The Observability page provides a multi-router monitoring view for all metrics-enabled routers.
+
+**Features:**
+- **Router selector** dropdown — Switch between metrics-enabled routers
+- **Time range selector** — 5m, 15m, 1h, 6h, 24h
+- **Health summary** — Router status, uptime, per-interface throughput rates, process status (dnsmasq, suricata, etc.)
+- **Conntrack gauge** — Connection tracking table utilization with color thresholds (green < 60%, yellow < 80%, red > 80%)
+- **DHCP pool gauges** — Per-network lease utilization donut charts
+- **Interface throughput charts** — Per-interface RX/TX area charts with time series data
+- **NFT rule counters** — Sortable table of firewall and NAT rule hit counts
+
+When no routers have metrics enabled, the page shows an empty state with instructions to set `spec.metrics.enabled: true` on a VPCRouter.
+
+All metrics data is polled every 15 seconds from the BFF, which queries OpenShift Prometheus via Thanos.
 
 ---
 

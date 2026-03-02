@@ -180,6 +180,154 @@ histogram_quantile(0.99, rate(controller_runtime_webhook_latency_seconds_bucket[
 
 ---
 
+## Router Pod Metrics
+
+When `spec.metrics.enabled: true` is set on a VPCRouter, a metrics exporter sidecar is injected into the router pod. It exposes Prometheus metrics on port `9100` at `/metrics`, scraped by a `PodMonitor`.
+
+### Interface Counters
+
+| Metric | Type | Labels | Source |
+|--------|------|--------|--------|
+| `router_interface_rx_bytes_total` | Counter | `interface` | `/proc/net/dev` |
+| `router_interface_tx_bytes_total` | Counter | `interface` | `/proc/net/dev` |
+| `router_interface_rx_packets_total` | Counter | `interface` | `/proc/net/dev` |
+| `router_interface_tx_packets_total` | Counter | `interface` | `/proc/net/dev` |
+| `router_interface_rx_errors_total` | Counter | `interface` | `/proc/net/dev` |
+| `router_interface_tx_errors_total` | Counter | `interface` | `/proc/net/dev` |
+| `router_interface_rx_drops_total` | Counter | `interface` | `/proc/net/dev` |
+| `router_interface_tx_drops_total` | Counter | `interface` | `/proc/net/dev` |
+
+**Example queries:**
+```promql
+# Per-interface throughput (bytes/sec)
+rate(router_interface_rx_bytes_total{interface="net1"}[5m])
+
+# Total drops across all interfaces
+sum(rate(router_interface_rx_drops_total[5m]) + rate(router_interface_tx_drops_total[5m]))
+```
+
+### NFT Rule Counters
+
+| Metric | Type | Labels | Source |
+|--------|------|--------|--------|
+| `router_nft_rule_packets_total` | Counter | `table`, `chain`, `comment` | `nft -j list ruleset` |
+| `router_nft_rule_bytes_total` | Counter | `table`, `chain`, `comment` | `nft -j list ruleset` |
+
+Requires the `counter` keyword on nftables rules (automatically added by the operator for NAT, firewall, and IPS rules).
+
+**Example queries:**
+```promql
+# SNAT rule hit rate
+rate(router_nft_rule_packets_total{chain="postrouting", comment=~".*snat.*"}[5m])
+
+# Total bytes through firewall rules
+sum(rate(router_nft_rule_bytes_total{table="filter"}[5m]))
+```
+
+### Connection Tracking
+
+| Metric | Type | Labels | Source |
+|--------|------|--------|--------|
+| `router_conntrack_entries` | Gauge | — | `/proc/sys/net/netfilter/nf_conntrack_count` |
+| `router_conntrack_max` | Gauge | — | `/proc/sys/net/netfilter/nf_conntrack_max` |
+
+**Example queries:**
+```promql
+# Conntrack utilization percentage
+router_conntrack_entries / router_conntrack_max * 100
+
+# Alert when conntrack table is 80% full
+router_conntrack_entries / router_conntrack_max > 0.8
+```
+
+### DHCP
+
+| Metric | Type | Labels | Source |
+|--------|------|--------|--------|
+| `router_dhcp_active_leases` | Gauge | `interface` | dnsmasq lease files |
+| `router_dhcp_pool_size` | Gauge | `interface` | `DHCP_POOL_*` env vars |
+
+**Example queries:**
+```promql
+# DHCP pool utilization per network
+router_dhcp_active_leases / router_dhcp_pool_size * 100
+
+# Networks with high DHCP utilization
+router_dhcp_active_leases / router_dhcp_pool_size > 0.9
+```
+
+### Process Health
+
+| Metric | Type | Labels | Source |
+|--------|------|--------|--------|
+| `router_process_running` | Gauge | `process` | `/proc` scan |
+| `router_uptime_seconds` | Gauge | — | Process start time |
+
+The `process` label values include `dnsmasq`, `suricata`, and `dhclient`.
+
+**Example queries:**
+```promql
+# Check all expected processes are running
+router_process_running == 0
+
+# Router uptime
+router_uptime_seconds / 3600  # in hours
+```
+
+### Router PodMonitor
+
+The Helm chart creates a `PodMonitor` to scrape router pod metrics:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: vpc-router-metrics
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vpc-router
+      app.kubernetes.io/component: router-pod
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+  namespaceSelector:
+    any: true
+```
+
+### Router Alerting Examples
+
+```yaml
+alert: RouterConntrackNearFull
+expr: router_conntrack_entries / router_conntrack_max > 0.8
+for: 5m
+labels:
+  severity: warning
+annotations:
+  summary: "Router conntrack table above 80%"
+
+---
+alert: RouterDHCPPoolExhausted
+expr: router_dhcp_active_leases / router_dhcp_pool_size > 0.95
+for: 10m
+labels:
+  severity: critical
+annotations:
+  summary: "DHCP pool nearly exhausted"
+
+---
+alert: RouterProcessDown
+expr: router_process_running == 0
+for: 2m
+labels:
+  severity: critical
+annotations:
+  summary: "Critical process not running on router pod"
+```
+
+---
+
 ## Scrape Configuration
 
 The operator exposes metrics on port `8080` at `/metrics`. To scrape with Prometheus on OpenShift, create a `ServiceMonitor`:

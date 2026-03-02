@@ -26,7 +26,7 @@ oc get pods -n roks-vpc-network-operator -l app=vpc-network-console-plugin
 
 ## Navigation
 
-The plugin adds a single sidebar entry — **IBM VPC Networking** — which opens a tabbed interface with 13 pages:
+The plugin adds a single sidebar entry — **IBM VPC Networking** — which opens a tabbed interface with 14 pages:
 
 | Tab | Path | Description |
 |-----|------|-------------|
@@ -42,6 +42,7 @@ The plugin adds a single sidebar entry — **IBM VPC Networking** — which open
 | [Routes](managing-resources.md#routes) | `/vpc-networking/routes` | VPC routing tables and routes |
 | [Gateways](gateways-routers.md#gateways) | `/vpc-networking/gateways` | VPCGateway resources for VPC uplink |
 | [Routers](gateways-routers.md#routers) | `/vpc-networking/routers` | VPCRouter resources for network-to-gateway routing |
+| [Observability](gateways-routers.md#observability) | `/vpc-networking/observability` | Live router metrics: throughput, conntrack, DHCP pools, NFT counters |
 | [Topology](topology.md) | `/vpc-networking/topology` | Visual graph of VPC resource relationships |
 
 ---

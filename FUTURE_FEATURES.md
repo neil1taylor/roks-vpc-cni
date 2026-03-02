@@ -450,7 +450,7 @@ spec:
 
 ## Network Observability Platform
 
-**Status**: Under consideration
+**Status**: Phase 1 implemented, Phases 2-4 under consideration
 
 Build a comprehensive network monitoring, analytics, and alerting stack comparable to VMware NSX's built-in observability — traceflow, flow monitoring, micro-segmentation analytics, health dashboards, and latency analysis.
 
@@ -460,11 +460,11 @@ Build a comprehensive network monitoring, analytics, and alerting stack comparab
 |-------------|--------------|-------------------|
 | **Traceflow** (synthetic packet path tracing) | None | Custom CRD + eBPF or `traceroute`/`nping` in router pod |
 | **Flow Monitoring** (top talkers, app stats) | None (see Traffic Analysis section) | VPC Flow Logs + ntopng + Prometheus |
-| **Live Traffic Analysis** (per-interface stats) | None | eBPF (Pixie) or `/proc/net` polling in router pod |
-| **Micro-segmentation Analytics** (rule hits, unused rules) | None | nftables counters + Prometheus export |
+| **Live Traffic Analysis** (per-interface stats) | **Implemented** (metrics exporter sidecar) | `/proc/net/dev` polling in router pod sidecar → Prometheus |
+| **Micro-segmentation Analytics** (rule hits, unused rules) | **Implemented** (nftables `counter` keyword) | nftables counters → metrics exporter → Prometheus |
 | **Network Topology** (interactive, status overlays) | Basic (TopologyViewer, resource relationships only) | Enhanced topology with health status, traffic flow overlays |
 | **Latency Monitoring** (per-hop latency) | None | Synthetic probes between router pods (Goldpinger-style) |
-| **Health Dashboard** (component health, alarms) | Basic (VPC Dashboard, reconciler events) | Unified health view with SLA tracking |
+| **Health Dashboard** (component health, alarms) | **Implemented** (Observability page + RouterHealthCard) | Unified health view with SLA tracking |
 | **Port Mirroring** | None (see Traffic Analysis section) | tc mirror in router pod |
 | **Correlation Engine** (cross-component event correlation) | None | Event aggregation service in BFF |
 | **IPFIX/sFlow Export** | None | Router pod sFlow agent → collector |
@@ -654,27 +654,32 @@ spec:
 
 ### Implementation Roadmap
 
-**Phase 1 — Metrics foundation** (low effort, high value)
-- Extend `pkg/metrics/` with router pod interface counters and nftables hit counts
-- Export from router pod via Prometheus annotations
-- Enable VPC Flow Logs per operator-managed subnet via VPC API
-- Add Grafana dashboard templates to Helm chart
+**Phase 1 — Metrics foundation** (IMPLEMENTED)
+- Metrics exporter sidecar binary (`cmd/metrics-exporter/`) with 5 collectors: interface throughput, nftables rule counters, conntrack usage, DHCP pool utilization, process health
+- `spec.metrics.enabled: true` on VPCRouter injects the sidecar; `MetricsReady` status condition
+- nftables `counter` keyword on all firewall, NAT, and IPS rules for rule hit tracking
+- PodMonitor for OpenShift Prometheus scraping (15s interval)
+- BFF Thanos Query integration with 5 metrics endpoints (summary, interfaces, conntrack, dhcp, nft)
+- Console plugin Observability page with multi-router selector, time range controls, throughput charts, conntrack/DHCP gauges, NFT counters table
+- RouterDetailPage enhanced with Monitoring tab and NFT Rules tab
+- Dashboard Router Health section for metrics-enabled routers
 
-**Phase 2 — Console plugin enhancements** (medium effort)
+**Phase 2 — Console plugin enhancements** (under consideration)
 - Health status overlays on TopologyViewer
 - Alert timeline panel on VPC Dashboard
-- Per-subnet / per-router detail views with live metrics
+- Per-subnet traffic breakdown views
+- VPC Flow Logs integration (IBM Cloud native feature, no pod changes)
 
-**Phase 3 — Traceflow** (higher effort, high value)
+**Phase 3 — Traceflow** (under consideration)
 - `VPCTraceflow` CRD + reconciler
 - Active probing from router pod with nftables log correlation
 - Results visualization in console plugin (path diagram)
 
-**Phase 4 — Full observability stack** (higher effort)
+**Phase 4 — Full observability stack** (under consideration)
 - Latency mesh probing (Goldpinger sidecar)
-- Micro-segmentation analytics
 - Anomaly detection and correlation engine
 - ntopng integration for DPI (cross-ref with Traffic Analysis section)
+- Grafana dashboard templates in Helm chart
 
 ### Integration Notes
 

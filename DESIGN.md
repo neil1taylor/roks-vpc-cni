@@ -111,6 +111,7 @@ metadata:
     vpc.roks.ibm.com/vlan-id: "100"
     vpc.roks.ibm.com/security-group-ids: "r006-sg1,r006-sg2"
     vpc.roks.ibm.com/acl-id: "r006-acl1"
+    vpc.roks.ibm.com/public-gateway-id: "r006-pgw1"  # optional
 spec:
   topology: LocalNet
 ```
@@ -123,6 +124,7 @@ spec:
 | `vpc.roks.ibm.com/vlan-id` | Yes | VLAN ID for OVN LocalNet and BM VLAN attachments. Must be unique per CUDN. |
 | `vpc.roks.ibm.com/security-group-ids` | Yes | Comma-separated pre-existing security group IDs. Attached to each VM VNI. |
 | `vpc.roks.ibm.com/acl-id` | Yes | Pre-existing network ACL ID. Applied to VPC subnet at creation. |
+| `vpc.roks.ibm.com/public-gateway-id` | No | Pre-existing public gateway ID for outbound internet access. Attached to the VPC subnet at creation. |
 
 ### 4.2 Status Annotations (Operator-written)
 
@@ -289,6 +291,7 @@ The router reconciler watches the referenced VPCGateway. If the gateway's NAT ru
 | `vpc.roks.ibm.com/vm-cleanup` | VirtualMachine | VNI + reserved IP + floating IP |
 | `vpc.roks.ibm.com/gateway-cleanup` | VPCGateway | FIP + PAR + VPC routes + VLAN attachment + VNI |
 | `vpc.roks.ibm.com/router-cleanup` | VPCRouter | Router pod |
+| `vpc.roks.ibm.com/l2bridge-cleanup` | VPCL2Bridge | Bridge pod + network config |
 
 ---
 
@@ -571,9 +574,32 @@ N nodes × M CUDNs = N×M VLAN attachments + 1 VNI per VM. For 20 nodes and 5 CU
 
 ### 11.6 Observability
 
+#### Operator Metrics
+
 - **Kubernetes events** on CUDN and VM objects for all VPC operations (success and failure).
 - **Prometheus metrics:** `vpc_api_calls_total`, `vpc_api_errors_total`, `vpc_api_latency_seconds`, `vni_count`, `subnet_count`, `orphan_gc_deleted_total`.
 - **Structured logging** with VPC resource IDs for correlation with IBM Cloud Activity Tracker.
+
+#### Router Pod Metrics
+
+When `spec.metrics.enabled: true` is set on a VPCRouter, the operator injects a metrics exporter sidecar into the router pod. The sidecar scrapes local system state on each Prometheus request and exposes 16 metrics on port 9100:
+
+- **Interface counters** (8 metrics): rx/tx bytes, packets, errors, drops per interface — sourced from `/proc/net/dev`
+- **NFT rule counters** (2 metrics): packets and bytes per nftables rule — sourced from `nft -j list ruleset`
+- **Connection tracking** (2 metrics): current entries and max — sourced from `/proc/sys/net/netfilter/`
+- **DHCP** (2 metrics): active leases and pool size per network — sourced from dnsmasq lease files
+- **Process health** (2 metrics): running status of dnsmasq/suricata/dhclient + router uptime
+
+A `PodMonitor` scrapes these metrics into OpenShift Prometheus at 15-second intervals. The BFF queries Prometheus via Thanos and exposes aggregated metrics endpoints for the console plugin.
+
+#### Console Observability UI
+
+The console plugin provides three observability surfaces:
+
+1. **Router Detail — Monitoring tab**: Per-router time series charts (interface throughput), conntrack and DHCP pool utilization gauges, process health indicators. Visible when `spec.metrics.enabled: true`.
+2. **Router Detail — NFT Rules tab**: Live nftables rule hit counters with sortable table.
+3. **Observability page** (`/vpc-networking/observability`): Multi-router overview with router selector, time range controls, health summary, and aggregated metrics. Available when any router has metrics enabled.
+4. **Dashboard — Router Health**: Compact status cards for each metrics-enabled router on the VPC Dashboard.
 
 ---
 

@@ -45,13 +45,27 @@ At the top of the dashboard, a banner indicates the cluster mode:
 
 ---
 
+### Router Health
+
+When one or more routers have `spec.metrics.enabled: true`, a **Router Health** section appears below the Network Definitions cards. Each metrics-enabled router gets a compact card showing:
+
+- Router name (links to the router detail page)
+- Phase status icon and label (green for Running, red for error states)
+- Namespace label
+- IDS/IPS mode label (if enabled)
+
+Click any card to navigate to the router's Monitoring tab for detailed metrics.
+
+---
+
 ## Usage
 
 The dashboard is primarily a monitoring tool. Use it to:
 
 1. **Verify installation** — After installing the operator, check that resource counts are populated
 2. **Monitor health** — Identify resources with Failed sync status
-3. **Navigate** — Click through to detailed resource pages
+3. **Monitor routers** — Check router health at a glance via the Router Health section
+4. **Navigate** — Click through to detailed resource pages
 
 ---
 
