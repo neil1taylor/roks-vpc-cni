@@ -212,6 +212,54 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
+      "path": "/vpc-networking/l2-bridges",
+      "component": { "$codeRef": "L2BridgesListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/l2-bridges/create",
+      "component": { "$codeRef": "L2BridgeCreatePage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/l2-bridges/:name",
+      "component": { "$codeRef": "L2BridgeDetailPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vpn-gateways",
+      "component": { "$codeRef": "VPNGatewaysListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vpn-gateways/create",
+      "component": { "$codeRef": "VPNGatewayCreatePage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vpn-gateways/:name",
+      "component": { "$codeRef": "VPNGatewayDetailPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
       "path": "/vpc-networking/observability",
       "component": { "$codeRef": "ObservabilityPage" }
     }

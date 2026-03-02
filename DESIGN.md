@@ -61,6 +61,7 @@ Return path: VPC routes to VNI via reserved IP → VLAN attachment delivers to b
 | VM Reconciler | Controller | Watches VMs. Manages VNI lifecycle, reserved IPs, FIPs. Drift detection. |
 | VM Admission Webhook | Mutating Webhook | Intercepts VM CREATE. Creates VNI, injects MAC+IP into spec before persistence. |
 | VPC API Client | Library | Wraps IBM Cloud VPC API with retry, rate limiting, idempotency. |
+| VPCL2Bridge Reconciler | Controller | Watches VPCL2Bridge CRs. Deploys bridge pods (GRETAP+WG / L2VPN / EVPN) for site-to-site L2 tunnels. |
 | Orphan GC | Periodic Job | Finds VPC resources tagged by operator with no K8s object. Deletes orphans. |
 
 ---
@@ -282,7 +283,30 @@ The router reconciler watches the referenced VPCGateway. If the gateway's NAT ru
 1. Delete router pod.
 2. Remove finalizer.
 
-### 6.7 Finalizer Summary
+### 6.7 VPCL2Bridge Reconciler
+
+**Watches:** `VPCL2Bridge` CRD
+**Also watches:** Referenced `VPCGateway` (for tunnel endpoint floating IP)
+**Trigger:** Create, Update, Delete events on VPCL2Bridge; spec/status changes on referenced VPCGateway
+
+#### 6.7.1 Creation Flow
+
+1. Validate spec (bridge type, remote endpoint, referenced gateway).
+2. Add finalizer `vpc.roks.ibm.com/l2bridge-cleanup`.
+3. Look up referenced VPCGateway to obtain the tunnel endpoint floating IP.
+4. Build bridge pod manifest based on `spec.type`:
+   - **GRETAP+WireGuard** — Encrypted L2 tunnel using GRETAP over WireGuard.
+   - **L2VPN** — NSX-style autonomous edge L2VPN bridge.
+   - **EVPN-VXLAN** — FRR-based BGP EVPN with VXLAN data plane.
+5. Create bridge pod with Multus attachment to the workload network.
+6. Update status (phase, podName, podIP, tunnel endpoint).
+
+#### 6.7.2 Deletion Flow
+
+1. Delete bridge pod.
+2. Remove finalizer.
+
+### 6.8 Finalizer Summary
 
 | Finalizer | Applied to | Cleans up |
 |-----------|-----------|-----------|

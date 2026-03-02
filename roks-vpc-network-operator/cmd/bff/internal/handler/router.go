@@ -340,6 +340,52 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 		}
 	})
 
+	// VPCVPNGateway routes
+	vpnHandler := NewVPNGatewayHandler(dynClient, rbacChecker)
+	mux.HandleFunc("/api/v1/vpn-gateways", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(vpnHandler.ListVPNGateways).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(vpnHandler.CreateVPNGateway).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+	mux.HandleFunc("/api/v1/vpn-gateways/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(vpnHandler.GetVPNGateway).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(vpnHandler.DeleteVPNGateway).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+
+	// VPCL2Bridge routes
+	l2bHandler := NewL2BridgeHandler(dynClient, rbacChecker)
+	mux.HandleFunc("/api/v1/l2bridges", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(l2bHandler.ListL2Bridges).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(l2bHandler.CreateL2Bridge).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+	mux.HandleFunc("/api/v1/l2bridges/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(l2bHandler.GetL2Bridge).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(l2bHandler.DeleteL2Bridge).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+
 	// Cluster info endpoint — tells the console plugin what mode the cluster is in
 	// This allows the frontend to show/hide features based on ROKS vs unmanaged
 	mux.HandleFunc("/api/v1/cluster-info", func(w http.ResponseWriter, r *http.Request) {

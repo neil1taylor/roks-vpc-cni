@@ -545,6 +545,16 @@ export interface RouterNetworkDHCP {
   options?: DHCPOptionsConfig;
 }
 
+export interface RouterIDS {
+  enabled: boolean;
+  mode: string;
+  interfaces?: string;
+  customRules?: string;
+  syslogTarget?: string;
+  image?: string;
+  nfqueueNum?: number;
+}
+
 export interface Router {
   name: string;
   namespace: string;
@@ -555,6 +565,7 @@ export interface Router {
   advertisedRoutes?: string[];
   functions?: string[];
   idsMode?: string;
+  ids?: RouterIDS;
   metricsEnabled?: boolean;
   dhcp?: RouterDHCPConfig;
   syncStatus: string;
@@ -588,6 +599,13 @@ export interface CreateRouterRequest {
     leaseTime?: string;
     dns?: DHCPDNSConfig;
     options?: DHCPOptionsConfig;
+  };
+  ids?: {
+    enabled: boolean;
+    mode: string;
+    interfaces?: string;
+    customRules?: string;
+    syslogTarget?: string;
   };
 }
 
@@ -675,4 +693,127 @@ export interface NFTRuleMetrics {
   comment: string;
   packets: number;
   bytes: number;
+}
+
+// ── VPCL2Bridge ──
+
+export interface L2Bridge {
+  name: string;
+  namespace: string;
+  type: 'gretap-wireguard' | 'l2vpn' | 'evpn-vxlan';
+  gatewayRef: string;
+  networkRef: {
+    name: string;
+    kind: string;
+    namespace?: string;
+  };
+  remoteEndpoint: string;
+  phase: string;
+  tunnelEndpoint?: string;
+  remoteMACsLearned: number;
+  localMACsAdvertised: number;
+  bytesIn: number;
+  bytesOut: number;
+  lastHandshake?: string;
+  tunnelMTU: number;
+  mssClamp: boolean;
+  podName?: string;
+  syncStatus: string;
+  createdAt?: string;
+}
+
+export interface CreateL2BridgeRequest {
+  name: string;
+  namespace?: string;
+  type: string;
+  gatewayRef: string;
+  networkRef: {
+    name: string;
+    kind: string;
+    namespace?: string;
+  };
+  remoteEndpoint: string;
+  wireguard?: {
+    privateKeySecretName: string;
+    privateKeySecretKey: string;
+    peerPublicKey: string;
+    listenPort?: number;
+    tunnelAddressLocal: string;
+    tunnelAddressRemote: string;
+  };
+  l2vpn?: {
+    nsxManagerHost: string;
+    l2vpnServiceID: string;
+    credentialsSecretName: string;
+    credentialsSecretKey: string;
+    edgeImage?: string;
+  };
+  evpn?: {
+    asn: number;
+    peerASN: number;
+    vni: number;
+    routeReflector?: string;
+    frrImage?: string;
+  };
+  tunnelMTU?: number;
+  mssClamp?: boolean;
+}
+
+// ── VPCVPNGateway ──
+
+export interface VPNTunnelStatus {
+  name: string;
+  status: string;
+  lastHandshake?: string;
+  bytesIn: number;
+  bytesOut: number;
+}
+
+export interface VPNGateway {
+  name: string;
+  namespace: string;
+  protocol: 'wireguard' | 'ipsec';
+  gatewayRef: string;
+  phase: string;
+  tunnelEndpoint?: string;
+  activeTunnels: number;
+  totalTunnels: number;
+  connectedClients: number;
+  tunnels?: VPNTunnelStatus[];
+  advertisedRoutes?: string[];
+  tunnelMTU?: number;
+  mssClamp?: boolean;
+  podName?: string;
+  syncStatus: string;
+  message?: string;
+  createdAt?: string;
+}
+
+export interface CreateVPNGatewayRequest {
+  name: string;
+  namespace?: string;
+  protocol: string;
+  gatewayRef: string;
+  wireGuard?: {
+    privateKeySecret: string;
+    privateKeySecretKey: string;
+    listenPort?: number;
+  };
+  ipsec?: {
+    image?: string;
+  };
+  tunnels: {
+    name: string;
+    remoteEndpoint: string;
+    remoteNetworks: string[];
+    peerPublicKey?: string;
+    tunnelAddressLocal?: string;
+    tunnelAddressRemote?: string;
+    presharedKeySecret?: string;
+    presharedKeySecretKey?: string;
+  }[];
+  mtu?: {
+    tunnelMTU?: number;
+    mssClamp?: boolean;
+  };
 }

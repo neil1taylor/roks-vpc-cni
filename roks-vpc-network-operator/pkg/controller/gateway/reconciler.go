@@ -412,6 +412,20 @@ func (r *Reconciler) collectDesiredRoutes(ctx context.Context, gw *v1alpha1.VPCG
 		}
 	}
 
+	// Advertised routes from VPN gateways
+	var vpnGateways v1alpha1.VPCVPNGatewayList
+	if err := r.Client.List(ctx, &vpnGateways, client.InNamespace(gw.Namespace)); err != nil {
+		logger.Error(err, "Failed to list VPCVPNGateways for route collection")
+	} else {
+		for _, vpn := range vpnGateways.Items {
+			if vpn.Spec.GatewayRef == gw.Name {
+				for _, route := range vpn.Status.AdvertisedRoutes {
+					seen[route] = true
+				}
+			}
+		}
+	}
+
 	result := make([]string, 0, len(seen))
 	for cidr := range seen {
 		result = append(result, cidr)
@@ -810,6 +824,20 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 					NamespacedName: types.NamespacedName{
 						Name:      rt.Spec.Gateway,
 						Namespace: rt.Namespace,
+					},
+				}}
+			},
+		)).
+		Watches(&v1alpha1.VPCVPNGateway{}, handler.EnqueueRequestsFromMapFunc(
+			func(ctx context.Context, obj client.Object) []reconcile.Request {
+				vpn, ok := obj.(*v1alpha1.VPCVPNGateway)
+				if !ok || vpn.Spec.GatewayRef == "" {
+					return nil
+				}
+				return []reconcile.Request{{
+					NamespacedName: types.NamespacedName{
+						Name:      vpn.Spec.GatewayRef,
+						Namespace: vpn.Namespace,
 					},
 				}}
 			},

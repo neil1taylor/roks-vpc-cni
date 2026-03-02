@@ -39,6 +39,11 @@ import {
   NFTRuleMetrics,
   DHCPLease,
   DHCPReservation,
+  RouterIDS,
+  L2Bridge,
+  CreateL2BridgeRequest,
+  VPNGateway,
+  CreateVPNGatewayRequest,
   ApiResponse,
   ApiError,
 } from './types';
@@ -491,6 +496,15 @@ class VPCNetworkClient {
     } as unknown as Record<string, unknown>);
   }
 
+  async updateRouterIDS(
+    name: string,
+    namespace: string,
+    ids: Omit<RouterIDS, 'image' | 'nfqueueNum'>,
+  ): Promise<ApiResponse<Router>> {
+    const params = `?namespace=${encodeURIComponent(namespace)}`;
+    return this.request<Router>('PATCH', `/routers/${name}/ids${params}`, ids as unknown as Record<string, unknown>);
+  }
+
   // PAR (Public Address Range) Operations
   async listPARs(): Promise<ApiResponse<PublicAddressRange[]>> {
     return this.request<PublicAddressRange[]>('GET', '/pars');
@@ -559,6 +573,44 @@ class VPCNetworkClient {
   ): Promise<ApiResponse<NFTRuleMetrics[]>> {
     const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
     return this.request<NFTRuleMetrics[]>('GET', `/routers/${name}/metrics/nft${params}`);
+  }
+
+  // L2 Bridge Operations
+  async listL2Bridges(): Promise<ApiResponse<L2Bridge[]>> {
+    return this.request<L2Bridge[]>('GET', '/l2bridges');
+  }
+
+  async getL2Bridge(name: string, namespace?: string): Promise<ApiResponse<L2Bridge>> {
+    const params = namespace ? `?ns=${encodeURIComponent(namespace)}` : '';
+    return this.request<L2Bridge>('GET', `/l2bridges/${encodeURIComponent(name)}${params}`);
+  }
+
+  async createL2Bridge(req: CreateL2BridgeRequest): Promise<ApiResponse<L2Bridge>> {
+    return this.request<L2Bridge>('POST', '/l2bridges', req as unknown as Record<string, unknown>);
+  }
+
+  async deleteL2Bridge(name: string, namespace?: string): Promise<ApiResponse<void>> {
+    const params = namespace ? `?ns=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>('DELETE', `/l2bridges/${encodeURIComponent(name)}${params}`);
+  }
+
+  // VPN Gateway Operations
+  async listVPNGateways(): Promise<ApiResponse<VPNGateway[]>> {
+    return this.request<VPNGateway[]>('GET', '/vpn-gateways');
+  }
+
+  async getVPNGateway(name: string, namespace?: string): Promise<ApiResponse<VPNGateway>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<VPNGateway>('GET', `/vpn-gateways/${encodeURIComponent(name)}${params}`);
+  }
+
+  async createVPNGateway(req: CreateVPNGatewayRequest): Promise<ApiResponse<VPNGateway>> {
+    return this.request<VPNGateway>('POST', '/vpn-gateways', req as unknown as Record<string, unknown>);
+  }
+
+  async deleteVPNGateway(name: string, namespace?: string): Promise<ApiResponse<void>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>('DELETE', `/vpn-gateways/${encodeURIComponent(name)}${params}`);
   }
 }
 

@@ -33,6 +33,12 @@
       "RoutersListPage": "./src/plugin-routers.ts",
       "RouterCreatePage": "./src/pages/RouterCreatePage",
       "RouterDetailPage": "./src/pages/RouterDetailPage",
+      "L2BridgesListPage": "./src/pages/L2BridgesListPage",
+      "L2BridgeCreatePage": "./src/pages/L2BridgeCreatePage",
+      "L2BridgeDetailPage": "./src/pages/L2BridgeDetailPage",
+      "VPNGatewaysListPage": "./src/pages/VPNGatewaysListPage",
+      "VPNGatewayCreatePage": "./src/pages/VPNGatewayCreatePage",
+      "VPNGatewayDetailPage": "./src/pages/VPNGatewayDetailPage",
       "ObservabilityPage": "./src/pages/ObservabilityPage"
     },
     "dependencies": {

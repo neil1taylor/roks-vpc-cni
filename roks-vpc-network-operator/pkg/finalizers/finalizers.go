@@ -29,9 +29,13 @@ const (
 	// ConfigMaps are cleaned up on deletion.
 	RouterCleanup = "vpc.roks.ibm.com/router-cleanup"
 
-	// L2BridgeCleanup is added to L2Bridges to ensure network configuration
-	// and resources are cleaned up on deletion.
+	// L2BridgeCleanup is added to VPCL2Bridges to ensure network configuration,
+	// bridge pod, and resources are cleaned up on deletion.
 	L2BridgeCleanup = "vpc.roks.ibm.com/l2bridge-cleanup"
+
+	// VPNGatewayCleanup is added to VPCVPNGateways to ensure the VPN pod
+	// is cleaned up on deletion.
+	VPNGatewayCleanup = "vpc.roks.ibm.com/vpngateway-cleanup"
 )
 
 // Add adds the given finalizer to the object if not already present.

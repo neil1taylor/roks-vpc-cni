@@ -29,6 +29,8 @@ import {
   useGateways,
   useRouters,
   usePARs,
+  useL2Bridges,
+  useVPNGateways,
 } from '../api/hooks';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 import { Router } from '../api/types';
@@ -56,6 +58,8 @@ const VPCDashboardPage: React.FC = () => {
   const { floatingIps: k8sFIPs, loading: k8sFIPLoading } = useK8sFloatingIPs();
   const { gateways, loading: gwLoading } = useGateways();
   const { routers, loading: rtLoading } = useRouters();
+  const { l2bridges, loading: l2bLoading } = useL2Bridges();
+  const { vpnGateways, loading: vpnLoading } = useVPNGateways();
   const { networks, loading: networksLoading } = useNetworkDefinitions();
 
   const renderCount = (count: number | undefined, loading: boolean) => {
@@ -171,6 +175,61 @@ const VPCDashboardPage: React.FC = () => {
                 {renderCount(routers?.length, rtLoading)}
                 <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
                   Connect Layer2 segments to other Layer2 segments, and optionally via an uplink to a gateway which connects to the VPC fabric
+                </div>
+              </CardBody>
+            </Card>
+          </GridItem>
+          <GridItem span={3}>
+            <Card isCompact>
+              <CardTitle>VPN Gateways</CardTitle>
+              <CardBody>
+                {renderCount(vpnGateways?.length, vpnLoading)}
+                {!vpnLoading && vpnGateways && vpnGateways.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                      <strong>Active tunnels:</strong>{' '}
+                      {vpnGateways.reduce((sum, gw) => sum + gw.activeTunnels, 0)}/{vpnGateways.reduce((sum, gw) => sum + gw.totalTunnels, 0)}
+                    </div>
+                    <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                      <strong>By protocol:</strong>{' '}
+                      {['wireguard', 'ipsec'].map((proto) => {
+                        const count = vpnGateways.filter((gw) => gw.protocol === proto).length;
+                        return count > 0 ? `${proto}: ${count}` : null;
+                      }).filter(Boolean).join(' · ')}
+                    </div>
+                  </>
+                )}
+                <div style={{ marginTop: 'var(--pf-v5-global--spacer--sm)' }}>
+                  <a href="/vpc-networking/vpn-gateways">View all VPN Gateways →</a>
+                </div>
+              </CardBody>
+            </Card>
+          </GridItem>
+          <GridItem span={3}>
+            <Card isCompact>
+              <CardTitle>L2 Bridges</CardTitle>
+              <CardBody>
+                {renderCount(l2bridges?.length, l2bLoading)}
+                {!l2bLoading && l2bridges && l2bridges.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                      <strong>By phase:</strong>{' '}
+                      {['Established', 'Provisioning', 'Pending', 'Error'].map((phase) => {
+                        const count = l2bridges.filter((b) => b.phase === phase).length;
+                        return count > 0 ? `${phase}: ${count}` : null;
+                      }).filter(Boolean).join(' · ')}
+                    </div>
+                    <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                      <strong>By type:</strong>{' '}
+                      {['gretap-wireguard', 'l2vpn', 'evpn-vxlan'].map((type) => {
+                        const count = l2bridges.filter((b) => b.type === type).length;
+                        return count > 0 ? `${type}: ${count}` : null;
+                      }).filter(Boolean).join(' · ')}
+                    </div>
+                  </>
+                )}
+                <div style={{ marginTop: 'var(--pf-v5-global--spacer--sm)' }}>
+                  <a href="/vpc-networking/l2-bridges">View all L2 Bridges →</a>
                 </div>
               </CardBody>
             </Card>

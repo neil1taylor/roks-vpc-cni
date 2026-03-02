@@ -51,7 +51,7 @@ npm run ts-check    # TypeScript type checking (tsc --noEmit)
 
 ### Operator (Go, controller-runtime)
 
-Ten reconciliation loops + one mutating webhook + orphan GC:
+Twelve reconciliation loops + one mutating webhook + orphan GC:
 
 | Component | Path | Watches | Purpose |
 |-----------|------|---------|---------|
@@ -65,10 +65,12 @@ Ten reconciliation loops + one mutating webhook + orphan GC:
 | FloatingIP Reconciler | `pkg/controller/floatingip/` | `FloatingIP` CRD | Full FIP lifecycle via VPC API |
 | VPCGateway Reconciler | `pkg/controller/gateway/` | `VPCGateway` CRD | VPC uplink VNI, FIP, PAR, VPC routes |
 | VPCRouter Reconciler | `pkg/controller/router/` | `VPCRouter` CRD | Router pod with IP forwarding, NAT, DHCP, Suricata IDS/IPS sidecar |
+| VPCL2Bridge Reconciler | `pkg/controller/l2bridge/` | `VPCL2Bridge` CRD | L2 bridge pod lifecycle for NSX-T/OVN tunneling |
+| VPCVPNGateway Reconciler | `pkg/controller/vpngateway/` | `VPCVPNGateway` CRD | VPN pod lifecycle (WireGuard/IPsec), tunnel management |
 | VM Webhook | `pkg/webhook/` | `VirtualMachine` CREATE | Creates VNI, injects MAC+IP into VM spec |
 | Orphan GC | `pkg/gc/` | Periodic (10 min) | Deletes orphaned VPC resources: VNIs, FIPs, PARs, VPC routes (15 min grace) |
 
-**CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip), `VPCGateway` (vgw), `VPCRouter` (vrt)
+**CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip), `VPCGateway` (vgw), `VPCRouter` (vrt), `VPCL2Bridge` (vlb), `VPCVPNGateway` (vvg)
 
 **Dual cluster mode** (`CLUSTER_MODE` env var): `"roks"` uses ROKS platform API for VNI/VLAN (stub until API exists); `"unmanaged"` (default) uses VPC API directly.
 
@@ -77,7 +79,7 @@ Ten reconciliation loops + one mutating webhook + orphan GC:
 - **`pkg/vpc/`** — VPC API client. `Client` interface (composition of per-resource sub-interfaces) is the primary mock boundary for tests. Includes channel-based rate limiter (10 concurrent).
 - **`pkg/roks/`** — ROKS platform API client (stub, awaiting API availability).
 - **`pkg/annotations/`** — All `vpc.roks.ibm.com/*` annotation key constants.
-- **`pkg/finalizers/`** — Finalizer CRUD helpers. Finalizer names: `vpc.roks.ibm.com/cudn-cleanup`, `vpc.roks.ibm.com/vm-cleanup`, `vpc.roks.ibm.com/udn-cleanup`, `vpc.roks.ibm.com/gateway-cleanup`, `vpc.roks.ibm.com/router-cleanup`, `vpc.roks.ibm.com/l2bridge-cleanup`.
+- **`pkg/finalizers/`** — Finalizer CRUD helpers. Finalizer names: `vpc.roks.ibm.com/cudn-cleanup`, `vpc.roks.ibm.com/vm-cleanup`, `vpc.roks.ibm.com/udn-cleanup`, `vpc.roks.ibm.com/gateway-cleanup`, `vpc.roks.ibm.com/router-cleanup`, `vpc.roks.ibm.com/l2bridge-cleanup`, `vpc.roks.ibm.com/vpngateway-cleanup`.
 - **`api/v1alpha1/`** — CRD type definitions with DeepCopy.
 
 ### BFF Service
