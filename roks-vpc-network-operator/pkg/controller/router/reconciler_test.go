@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1320,6 +1321,141 @@ func TestPodNeedsRecreation_DHCPConfigChanged(t *testing.T) {
 	r := &Reconciler{}
 	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
 		t.Error("expected pod recreation when DHCP lease time changes")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pod Spec Drift Detection Tests
+// ---------------------------------------------------------------------------
+
+func newDriftTestGW() *v1alpha1.VPCGateway {
+	return &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+}
+
+func newDriftTestRouter() *v1alpha1.VPCRouter {
+	return &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-drift", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			Networks: []v1alpha1.RouterNetwork{{Name: "app", Address: "10.100.0.1/24"}},
+		},
+	}
+}
+
+// TestPodNeedsRecreation_ResourcesChanged tests that changing CPU requests triggers recreation.
+func TestPodNeedsRecreation_ResourcesChanged(t *testing.T) {
+	gw := newDriftTestGW()
+
+	oldRouter := newDriftTestRouter()
+	oldRouter.Spec.Pod = &v1alpha1.RouterPodSpec{
+		Resources: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		},
+	}
+	existingPod := buildRouterPod(oldRouter, gw)
+
+	newRouter := newDriftTestRouter()
+	newRouter.Spec.Pod = &v1alpha1.RouterPodSpec{
+		Resources: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")},
+		},
+	}
+
+	r := &Reconciler{}
+	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+		t.Error("expected pod recreation when CPU request changes")
+	}
+}
+
+// TestPodNeedsRecreation_NodeSelectorChanged tests that adding a nodeSelector triggers recreation.
+func TestPodNeedsRecreation_NodeSelectorChanged(t *testing.T) {
+	gw := newDriftTestGW()
+
+	oldRouter := newDriftTestRouter()
+	existingPod := buildRouterPod(oldRouter, gw)
+
+	newRouter := newDriftTestRouter()
+	newRouter.Spec.Pod = &v1alpha1.RouterPodSpec{
+		NodeSelector: map[string]string{"node-role.kubernetes.io/worker": ""},
+	}
+
+	r := &Reconciler{}
+	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+		t.Error("expected pod recreation when nodeSelector is added")
+	}
+}
+
+// TestPodNeedsRecreation_RuntimeClassNameChanged tests that setting runtimeClassName triggers recreation.
+func TestPodNeedsRecreation_RuntimeClassNameChanged(t *testing.T) {
+	gw := newDriftTestGW()
+
+	oldRouter := newDriftTestRouter()
+	existingPod := buildRouterPod(oldRouter, gw)
+
+	rc := "performance"
+	newRouter := newDriftTestRouter()
+	newRouter.Spec.Pod = &v1alpha1.RouterPodSpec{
+		RuntimeClassName: &rc,
+	}
+
+	r := &Reconciler{}
+	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+		t.Error("expected pod recreation when runtimeClassName is set")
+	}
+}
+
+// TestPodNeedsRecreation_PriorityClassNameChanged tests that changing priorityClassName triggers recreation.
+func TestPodNeedsRecreation_PriorityClassNameChanged(t *testing.T) {
+	gw := newDriftTestGW()
+
+	oldRouter := newDriftTestRouter()
+	existingPod := buildRouterPod(oldRouter, gw)
+
+	newRouter := newDriftTestRouter()
+	newRouter.Spec.Pod = &v1alpha1.RouterPodSpec{
+		PriorityClassName: "system-node-critical",
+	}
+
+	r := &Reconciler{}
+	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+		t.Error("expected pod recreation when priorityClassName is set")
+	}
+}
+
+// TestPodNeedsRecreation_NoPodSpecChanges tests that identical pod specs do not trigger recreation.
+func TestPodNeedsRecreation_NoPodSpecChanges(t *testing.T) {
+	gw := newDriftTestGW()
+
+	rc := "performance"
+	router := newDriftTestRouter()
+	router.Spec.Pod = &v1alpha1.RouterPodSpec{
+		Resources: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")},
+		},
+		NodeSelector:      map[string]string{"zone": "eu-de-1"},
+		RuntimeClassName:  &rc,
+		PriorityClassName: "high",
+		Tolerations: []corev1.Toleration{
+			{Key: "dedicated", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+		},
+	}
+
+	existingPod := buildRouterPod(router, gw)
+
+	r := &Reconciler{}
+	if r.podNeedsRecreation(existingPod, router, gw) {
+		t.Error("expected no pod recreation when pod spec is identical")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"reflect"
 	"strings"
 	"time"
 
@@ -353,7 +354,37 @@ func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.V
 		}
 	}
 
+	// Compare router container resources
+	if !reflect.DeepEqual(existing.Spec.Containers[0].Resources, desired.Spec.Containers[0].Resources) {
+		return true
+	}
+
+	// Compare pod-level scheduling fields
+	if !reflect.DeepEqual(existing.Spec.NodeSelector, desired.Spec.NodeSelector) {
+		return true
+	}
+	if !reflect.DeepEqual(existing.Spec.Tolerations, desired.Spec.Tolerations) {
+		return true
+	}
+	if !equalStringPtr(existing.Spec.RuntimeClassName, desired.Spec.RuntimeClassName) {
+		return true
+	}
+	if existing.Spec.PriorityClassName != desired.Spec.PriorityClassName {
+		return true
+	}
+
 	return false
+}
+
+// equalStringPtr compares two *string values for equality.
+func equalStringPtr(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }
 
 // envToMap converts a slice of EnvVar to a map for comparison.

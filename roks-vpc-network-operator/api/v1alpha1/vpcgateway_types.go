@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -11,6 +12,26 @@ type RouterPodSpec struct {
 	// Image is the container image to use for the gateway/router pod.
 	// +optional
 	Image string `json:"image,omitempty"`
+
+	// Resources defines CPU and memory requests/limits for the router container.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// NodeSelector constrains the router pod to nodes matching these labels.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Tolerations allows the router pod to schedule on tainted nodes.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// RuntimeClassName specifies the RuntimeClass for CPU pinning or other runtime features.
+	// +optional
+	RuntimeClassName *string `json:"runtimeClassName,omitempty"`
+
+	// PriorityClassName specifies the priority class for pod scheduling priority.
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
 }
 
 // GatewayFirewall defines firewall configuration for a gateway or router.

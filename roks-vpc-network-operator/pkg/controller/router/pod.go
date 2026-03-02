@@ -124,6 +124,25 @@ func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) *corev1
 		},
 	}
 
+	// Apply pod-level scheduling and resource overrides from spec.pod
+	if router.Spec.Pod != nil {
+		if router.Spec.Pod.Resources != nil {
+			pod.Spec.Containers[0].Resources = *router.Spec.Pod.Resources
+		}
+		if len(router.Spec.Pod.NodeSelector) > 0 {
+			pod.Spec.NodeSelector = router.Spec.Pod.NodeSelector
+		}
+		if len(router.Spec.Pod.Tolerations) > 0 {
+			pod.Spec.Tolerations = router.Spec.Pod.Tolerations
+		}
+		if router.Spec.Pod.RuntimeClassName != nil {
+			pod.Spec.RuntimeClassName = router.Spec.Pod.RuntimeClassName
+		}
+		if router.Spec.Pod.PriorityClassName != "" {
+			pod.Spec.PriorityClassName = router.Spec.Pod.PriorityClassName
+		}
+	}
+
 	// Append Suricata sidecar container and volumes when IDS/IPS is enabled
 	if router.Spec.IDS != nil && router.Spec.IDS.Enabled {
 		pod.Spec.Containers = append(pod.Spec.Containers, buildSuricataContainer(router))

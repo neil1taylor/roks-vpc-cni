@@ -54,11 +54,12 @@ Traffic path: **VM → OVN overlay → Multus veth → router pod (nftables) →
 
 ### Proposed Improvements
 
-**Tier 1 — Low effort, immediate gains**
+**Tier 1 — Low effort, immediate gains** ✅ Implemented
 
-- **Resource requests and limits** — Guarantee CPU/memory for the forwarding pod. Prevents starvation under node pressure.
-- **CPU pinning** — Use `runtimeClassName` or Kubernetes CPU Manager (`static` policy) to pin the router pod to dedicated cores. Eliminates context-switch overhead.
-- **Node affinity** — Schedule router pods on nodes with the most available bandwidth (bare metal workers with 25/100G NICs).
+- **Resource requests and limits** — `spec.pod.resources` (CPU/memory requests and limits)
+- **CPU pinning** — `spec.pod.runtimeClassName` (e.g., `performance` for CPU Manager static policy)
+- **Node affinity** — `spec.pod.nodeSelector` + `spec.pod.tolerations` for targeting specific nodes
+- **Priority class** — `spec.pod.priorityClassName` for scheduling priority
 
 **Tier 2 — Medium effort, significant gains**
 
