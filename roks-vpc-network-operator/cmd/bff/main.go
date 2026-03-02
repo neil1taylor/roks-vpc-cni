@@ -108,7 +108,7 @@ func main() {
 		Mode:   clusterMode,
 		Region: os.Getenv("VPC_REGION"),
 		VPCID:  vpcID,
-	})
+	}, k8sConfig)
 
 	listenAddr := os.Getenv("BFF_LISTEN_ADDR")
 	if listenAddr == "" {

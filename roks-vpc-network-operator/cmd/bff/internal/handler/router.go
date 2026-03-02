@@ -10,6 +10,7 @@ import (
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 // SetupRoutes registers all HTTP handlers with the mux
@@ -33,7 +34,11 @@ func SetupRoutesWithK8s(mux *http.ServeMux, vpcClient vpc.ExtendedClient, rbacCh
 }
 
 // SetupRoutesWithClusterInfo registers all HTTP handlers with cluster mode awareness
-func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient, rbacChecker *auth.RBACChecker, k8sClient kubernetes.Interface, dynClient dynamic.Interface, clusterInfo ClusterInfo) {
+func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient, rbacChecker *auth.RBACChecker, k8sClient kubernetes.Interface, dynClient dynamic.Interface, clusterInfo ClusterInfo, restConfigs ...*rest.Config) {
+	var restConfig *rest.Config
+	if len(restConfigs) > 0 {
+		restConfig = restConfigs[0]
+	}
 
 	// Initialize Thanos client from environment (nil if THANOS_URL not set)
 	thanosClient := thanos.NewClientFromEnv()
@@ -274,7 +279,7 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 	})
 
 	// VPCRouter routes
-	rtHandler := NewRouterHandler(dynClient, rbacChecker)
+	rtHandler := NewRouterHandler(dynClient, k8sClient, restConfig, rbacChecker)
 	mux.HandleFunc("/api/v1/routers", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -288,6 +293,20 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 	metricsHandler := NewRouterMetricsHandler(thanosClient)
 	mux.HandleFunc("/api/v1/routers/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		// Check if this is a leases sub-route
+		if strings.HasSuffix(path, "/leases") || strings.Contains(path, "/leases?") {
+			authMiddleware(rtHandler.GetLeases).ServeHTTP(w, r)
+			return
+		}
+		// Check if this is a reservations sub-route
+		if strings.HasSuffix(path, "/reservations") || strings.Contains(path, "/reservations?") {
+			if r.Method == http.MethodPatch {
+				authMiddleware(rtHandler.UpdateReservations).ServeHTTP(w, r)
+			} else {
+				WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		}
 		// Check if this is a metrics sub-route
 		if metricsHandler != nil && strings.Contains(path, "/metrics/") {
 			parts := strings.SplitN(path, "/metrics/", 2)

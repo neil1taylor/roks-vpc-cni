@@ -28,6 +28,7 @@ import {
   ConntrackTimeSeries,
   DHCPPoolMetrics,
   NFTRuleMetrics,
+  DHCPLease,
   ApiResponse,
   ApiError,
 } from './types';
@@ -459,6 +460,17 @@ export function useRouter(name: string, namespace?: string) {
     [name, namespace],
   );
   return { router, loading, error };
+}
+
+// Router DHCP Lease Hook (polling)
+const LEASE_POLL_INTERVAL = 15000;
+
+export function useRouterLeases(name: string, namespace?: string) {
+  return useBFFDataPolling<DHCPLease[]>(
+    () => name ? apiClient.getRouterLeases(name, namespace) : Promise.resolve({ data: [] }),
+    LEASE_POLL_INTERVAL,
+    [name, namespace],
+  );
 }
 
 // PAR (Public Address Range) Hooks

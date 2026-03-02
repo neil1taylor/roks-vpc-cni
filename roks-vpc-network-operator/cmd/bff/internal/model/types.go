@@ -580,3 +580,20 @@ type CreatePARRequest struct {
 	Zone         string `json:"zone"`
 	PrefixLength int    `json:"prefixLength"`
 }
+
+// ── DHCP Lease & Reservation Management ──
+
+// DHCPLeaseResp represents an active DHCP lease from dnsmasq.
+type DHCPLeaseResp struct {
+	ExpiresAt int64  `json:"expiresAt"`
+	MAC       string `json:"mac"`
+	IP        string `json:"ip"`
+	Hostname  string `json:"hostname"`
+	ClientID  string `json:"clientId,omitempty"`
+}
+
+// UpdateReservationsReq represents a request to update DHCP reservations for a network.
+type UpdateReservationsReq struct {
+	Network      string                `json:"network"`
+	Reservations []DHCPReservationResp `json:"reservations"`
+}

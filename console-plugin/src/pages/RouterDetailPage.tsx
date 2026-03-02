@@ -30,13 +30,14 @@ import {
 } from '@patternfly/react-core';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
 import { Link, useNavigate } from 'react-router-dom-v5-compat';
-import { useRouter, useGateway, useRouterHealth, useRouterInterfaces, useRouterConntrack, useRouterDHCP, useRouterNFT } from '../api/hooks';
+import { useRouter, useGateway, useRouterHealth, useRouterInterfaces, useRouterConntrack, useRouterDHCP, useRouterNFT, useRouterLeases } from '../api/hooks';
 import { apiClient } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
 import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
+import { EditReservationsModal } from '../components/EditReservationsModal';
 import { formatTimestamp } from '../utils/formatters';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
-import { RouterNetworkDHCP } from '../api/types';
+import { RouterNetworkDHCP, DHCPReservation } from '../api/types';
 import RouterHealthCard from '../components/charts/RouterHealthCard';
 import ThroughputChart from '../components/charts/ThroughputChart';
 import ConntrackGauge from '../components/charts/ConntrackGauge';
@@ -143,7 +144,7 @@ const RouterDetailPage: React.FC = () => {
             )}
 
             {activeTab === 'networks' && (
-              <NetworksTab router={router} hasDHCP={!!hasDHCP} />
+              <NetworksTab router={router} hasDHCP={!!hasDHCP} routerName={name || ''} routerNamespace={router.namespace} />
             )}
 
             {activeTab === 'nft' && hasMetrics && (
@@ -404,64 +405,151 @@ const MonitoringTab: React.FC<MonitoringTabProps> = ({ name, namespace, range, s
 interface NetworksTabProps {
   router: { networks: { name: string; address: string; connected: boolean; dhcp?: RouterNetworkDHCP }[]; dhcp?: { enabled: boolean } };
   hasDHCP: boolean;
+  routerName: string;
+  routerNamespace: string;
 }
 
-const NetworksTab: React.FC<NetworksTabProps> = ({ router, hasDHCP }) => (
-  <Card>
-    <CardTitle>Connected Networks</CardTitle>
-    <CardBody>
-      {router.networks && router.networks.length > 0 ? (
-        <Table aria-label="Connected networks" variant="compact">
-          <Thead>
-            <Tr>
-              <Th>Name</Th>
-              <Th>Address</Th>
-              <Th>Connected</Th>
-              {hasDHCP && <Th>DHCP</Th>}
-              {hasDHCP && <Th>Pool Range</Th>}
-              {hasDHCP && <Th>Reservations</Th>}
-            </Tr>
-          </Thead>
-          <Tbody>
-            {router.networks.map((net) => (
-              <Tr key={net.name}>
-                <Td>{net.name}</Td>
-                <Td>{net.address}</Td>
-                <Td>
-                  <Label color={net.connected ? 'green' : 'red'}>
-                    {net.connected ? 'Connected' : 'Disconnected'}
-                  </Label>
-                </Td>
-                {hasDHCP && (
-                  <Td>
-                    <Label isCompact color={net.dhcp?.enabled ? 'green' : 'grey'}>
-                      {net.dhcp?.enabled ? 'Enabled' : 'Disabled'}
-                    </Label>
-                    {net.dhcp?.hasOverride && (
-                      <>{' '}<Label isCompact color="blue">Override</Label></>
+const NetworksTab: React.FC<NetworksTabProps> = ({ router, hasDHCP, routerName, routerNamespace }) => {
+  const { data: leases, loading: leasesLoading } = useRouterLeases(hasDHCP ? routerName : '', routerNamespace);
+  const [editNetwork, setEditNetwork] = useState<{ name: string; reservations: DHCPReservation[] } | null>(null);
+
+  const handleEditClose = () => {
+    setEditNetwork(null);
+  };
+
+  return (
+    <>
+      <Card style={{ marginBottom: '24px' }}>
+        <CardTitle>Connected Networks</CardTitle>
+        <CardBody>
+          {router.networks && router.networks.length > 0 ? (
+            <Table aria-label="Connected networks" variant="compact">
+              <Thead>
+                <Tr>
+                  <Th>Name</Th>
+                  <Th>Address</Th>
+                  <Th>Connected</Th>
+                  {hasDHCP && <Th>DHCP</Th>}
+                  {hasDHCP && <Th>Pool Range</Th>}
+                  {hasDHCP && <Th>Reservations</Th>}
+                  {hasDHCP && <Th />}
+                </Tr>
+              </Thead>
+              <Tbody>
+                {router.networks.map((net) => (
+                  <Tr key={net.name}>
+                    <Td>{net.name}</Td>
+                    <Td>{net.address}</Td>
+                    <Td>
+                      <Label color={net.connected ? 'green' : 'red'}>
+                        {net.connected ? 'Connected' : 'Disconnected'}
+                      </Label>
+                    </Td>
+                    {hasDHCP && (
+                      <Td>
+                        <Label isCompact color={net.dhcp?.enabled ? 'green' : 'grey'}>
+                          {net.dhcp?.enabled ? 'Enabled' : 'Disabled'}
+                        </Label>
+                        {net.dhcp?.hasOverride && (
+                          <>{' '}<Label isCompact color="blue">Override</Label></>
+                        )}
+                      </Td>
                     )}
-                  </Td>
-                )}
-                {hasDHCP && (
-                  <Td>
-                    {net.dhcp?.poolStart && net.dhcp?.poolEnd
-                      ? `${net.dhcp.poolStart} – ${net.dhcp.poolEnd}`
-                      : '–'}
-                  </Td>
-                )}
-                {hasDHCP && (
-                  <Td>{net.dhcp?.reservationCount ?? 0}</Td>
-                )}
-              </Tr>
-            ))}
-          </Tbody>
-        </Table>
-      ) : (
-        <span>No networks connected</span>
+                    {hasDHCP && (
+                      <Td>
+                        {net.dhcp?.poolStart && net.dhcp?.poolEnd
+                          ? `${net.dhcp.poolStart} – ${net.dhcp.poolEnd}`
+                          : '–'}
+                      </Td>
+                    )}
+                    {hasDHCP && (
+                      <Td>{net.dhcp?.reservationCount ?? 0}</Td>
+                    )}
+                    {hasDHCP && (
+                      <Td>
+                        {net.dhcp?.enabled && (
+                          <Button
+                            variant="link"
+                            size="sm"
+                            onClick={() => setEditNetwork({
+                              name: net.name,
+                              reservations: net.dhcp?.reservations || [],
+                            })}
+                          >
+                            Edit Reservations
+                          </Button>
+                        )}
+                      </Td>
+                    )}
+                  </Tr>
+                ))}
+              </Tbody>
+            </Table>
+          ) : (
+            <span>No networks connected</span>
+          )}
+        </CardBody>
+      </Card>
+
+      {hasDHCP && (
+        <Card>
+          <CardTitle>Active DHCP Leases</CardTitle>
+          <CardBody>
+            {leasesLoading ? (
+              <Spinner size="md" />
+            ) : leases && leases.length > 0 ? (
+              <Table aria-label="Active DHCP leases" variant="compact">
+                <Thead>
+                  <Tr>
+                    <Th>IP</Th>
+                    <Th>MAC</Th>
+                    <Th>Hostname</Th>
+                    <Th>Expires</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {leases.map((lease, i) => (
+                    <Tr key={i}>
+                      <Td><code>{lease.ip}</code></Td>
+                      <Td><code>{lease.mac}</code></Td>
+                      <Td>{lease.hostname || '–'}</Td>
+                      <Td>{formatLeaseExpiry(lease.expiresAt)}</Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </Table>
+            ) : (
+              <EmptyState>
+                <EmptyStateBody>No active DHCP leases</EmptyStateBody>
+              </EmptyState>
+            )}
+          </CardBody>
+        </Card>
       )}
-    </CardBody>
-  </Card>
-);
+
+      {editNetwork && (
+        <EditReservationsModal
+          isOpen={!!editNetwork}
+          onClose={handleEditClose}
+          routerName={routerName}
+          routerNamespace={routerNamespace}
+          networkName={editNetwork.name}
+          currentReservations={editNetwork.reservations}
+        />
+      )}
+    </>
+  );
+};
+
+function formatLeaseExpiry(epochSeconds: number): string {
+  const now = Date.now() / 1000;
+  const remaining = epochSeconds - now;
+  if (remaining <= 0) return 'Expired';
+  const hours = Math.floor(remaining / 3600);
+  const minutes = Math.floor((remaining % 3600) / 60);
+  if (hours > 0) return `in ${hours}h ${minutes}m`;
+  return `in ${minutes}m`;
+}
 
 // ── NFT Tab ──
 

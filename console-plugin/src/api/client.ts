@@ -37,6 +37,8 @@ import {
   ConntrackTimeSeries,
   DHCPPoolMetrics,
   NFTRuleMetrics,
+  DHCPLease,
+  DHCPReservation,
   ApiResponse,
   ApiError,
 } from './types';
@@ -469,6 +471,24 @@ class VPCNetworkClient {
   async deleteRouter(name: string, namespace?: string): Promise<ApiResponse<void>> {
     const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
     return this.request<void>('DELETE', `/routers/${name}${params}`);
+  }
+
+  async getRouterLeases(name: string, namespace?: string): Promise<ApiResponse<DHCPLease[]>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<DHCPLease[]>('GET', `/routers/${name}/leases${params}`);
+  }
+
+  async updateRouterReservations(
+    name: string,
+    namespace: string,
+    network: string,
+    reservations: DHCPReservation[],
+  ): Promise<ApiResponse<Router>> {
+    const params = `?namespace=${encodeURIComponent(namespace)}`;
+    return this.request<Router>('PATCH', `/routers/${name}/reservations${params}`, {
+      network,
+      reservations,
+    } as unknown as Record<string, unknown>);
   }
 
   // PAR (Public Address Range) Operations

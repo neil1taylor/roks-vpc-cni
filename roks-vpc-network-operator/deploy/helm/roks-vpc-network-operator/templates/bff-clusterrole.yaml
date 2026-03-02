@@ -68,4 +68,18 @@ rules:
   - infrastructures
   verbs:
   - get
+# Pod access for DHCP lease reading (exec into router pods)
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
 {{- end }}

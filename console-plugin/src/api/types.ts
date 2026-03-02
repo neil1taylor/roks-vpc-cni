@@ -591,6 +591,16 @@ export interface CreateRouterRequest {
   };
 }
 
+// ── DHCP Lease ──
+
+export interface DHCPLease {
+  expiresAt: number;
+  mac: string;
+  ip: string;
+  hostname: string;
+  clientId?: string;
+}
+
 // ── Public Address Range (PAR) ──
 
 export interface PublicAddressRange {

@@ -1,18 +1,26 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/IBM/roks-vpc-network-operator/cmd/bff/internal/auth"
 	"github.com/IBM/roks-vpc-network-operator/cmd/bff/internal/model"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 var vpcRouterGVR = schema.GroupVersionResource{
@@ -23,15 +31,19 @@ var vpcRouterGVR = schema.GroupVersionResource{
 
 // RouterHandler handles VPCRouter API operations.
 type RouterHandler struct {
-	dynClient dynamic.Interface
-	rbac      *auth.RBACChecker
+	dynClient  dynamic.Interface
+	k8sClient  kubernetes.Interface
+	restConfig *rest.Config
+	rbac       *auth.RBACChecker
 }
 
 // NewRouterHandler creates a new router handler.
-func NewRouterHandler(dynClient dynamic.Interface, rbac *auth.RBACChecker) *RouterHandler {
+func NewRouterHandler(dynClient dynamic.Interface, k8sClient kubernetes.Interface, restConfig *rest.Config, rbac *auth.RBACChecker) *RouterHandler {
 	return &RouterHandler{
-		dynClient: dynClient,
-		rbac:      rbac,
+		dynClient:  dynClient,
+		k8sClient:  k8sClient,
+		restConfig: restConfig,
+		rbac:       rbac,
 	}
 }
 
@@ -199,6 +211,263 @@ func (h *RouterHandler) DeleteRouter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// GetLeases handles GET /api/v1/routers/:name/leases
+func (h *RouterHandler) GetLeases(w http.ResponseWriter, r *http.Request) {
+	// Extract router name from path: /api/v1/routers/<name>/leases
+	path := r.URL.Path
+	trimmed := strings.TrimPrefix(path, "/api/v1/routers/")
+	parts := strings.SplitN(trimmed, "/", 2)
+	name := parts[0]
+	if name == "" {
+		WriteError(w, http.StatusBadRequest, "missing router name", "MISSING_NAME")
+		return
+	}
+
+	if h.k8sClient == nil || h.restConfig == nil {
+		WriteError(w, http.StatusServiceUnavailable, "kubernetes client not configured", "CLIENT_NOT_CONFIGURED")
+		return
+	}
+
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		// Find namespace by listing routers
+		ns = h.findRouterNamespace(r, name)
+		if ns == "" {
+			WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
+			return
+		}
+	}
+
+	// Find router pod by label
+	podList, err := h.k8sClient.CoreV1().Pods(ns).List(r.Context(), metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("vpc.roks.ibm.com/router=%s", name),
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to list router pods", "name", name, "error", err)
+		WriteError(w, http.StatusInternalServerError, "failed to find router pod", "POD_LIST_FAILED")
+		return
+	}
+	if len(podList.Items) == 0 {
+		WriteJSON(w, http.StatusOK, []model.DHCPLeaseResp{})
+		return
+	}
+
+	pod := podList.Items[0]
+	if pod.Status.Phase != corev1.PodRunning {
+		WriteJSON(w, http.StatusOK, []model.DHCPLeaseResp{})
+		return
+	}
+
+	// Exec into pod to read lease file
+	req := h.k8sClient.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(pod.Name).
+		Namespace(pod.Namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: "router",
+			Command:   []string{"cat", "/var/lib/misc/dnsmasq.leases"},
+			Stdout:    true,
+			Stderr:    true,
+		}, scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(h.restConfig, "POST", req.URL())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to create exec", "error", err)
+		WriteError(w, http.StatusInternalServerError, "failed to exec into router pod", "EXEC_FAILED")
+		return
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = exec.StreamWithContext(r.Context(), remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if err != nil {
+		// File may not exist yet (no leases)
+		slog.DebugContext(r.Context(), "exec failed (may be no leases)", "error", err, "stderr", stderr.String())
+		WriteJSON(w, http.StatusOK, []model.DHCPLeaseResp{})
+		return
+	}
+
+	leases := parseDnsmasqLeases(stdout.String())
+	WriteJSON(w, http.StatusOK, leases)
+}
+
+// UpdateReservations handles PATCH /api/v1/routers/:name/reservations
+func (h *RouterHandler) UpdateReservations(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	trimmed := strings.TrimPrefix(path, "/api/v1/routers/")
+	parts := strings.SplitN(trimmed, "/", 2)
+	name := parts[0]
+	if name == "" {
+		WriteError(w, http.StatusBadRequest, "missing router name", "MISSING_NAME")
+		return
+	}
+
+	userInfo := auth.GetUserFromContext(r.Context())
+	if userInfo == nil || userInfo.Name == "" {
+		WriteError(w, http.StatusUnauthorized, "unauthorized", "UNAUTHORIZED")
+		return
+	}
+
+	allowed, err := h.rbac.CheckAccess(r.Context(), userInfo.Name, userInfo.Groups, "update", "vpcrouters", "")
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "authorization check failed", "AUTHZ_CHECK_FAILED")
+		return
+	}
+	if !allowed {
+		WriteError(w, http.StatusForbidden, "forbidden", "FORBIDDEN")
+		return
+	}
+
+	var req model.UpdateReservationsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid request body", "INVALID_REQUEST")
+		return
+	}
+	if req.Network == "" {
+		WriteError(w, http.StatusBadRequest, "network name is required", "MISSING_NETWORK")
+		return
+	}
+
+	if h.dynClient == nil {
+		WriteError(w, http.StatusServiceUnavailable, "dynamic client not configured", "CLIENT_NOT_CONFIGURED")
+		return
+	}
+
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = h.findRouterNamespace(r, name)
+		if ns == "" {
+			WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
+			return
+		}
+	}
+
+	// Get the current router
+	obj, err := h.dynClient.Resource(vpcRouterGVR).Namespace(ns).Get(r.Context(), name, metav1.GetOptions{})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to get VPCRouter", "name", name, "error", err)
+		WriteError(w, http.StatusNotFound, "router not found", "NOT_FOUND")
+		return
+	}
+
+	// Find or create the network entry in spec.networks
+	specNets, _, _ := unstructured.NestedSlice(obj.Object, "spec", "networks")
+
+	networkFound := false
+	for i, item := range specNets {
+		if m, ok := item.(map[string]interface{}); ok {
+			if netName, _ := m["name"].(string); netName == req.Network {
+				networkFound = true
+				// Get or create dhcp map
+				dhcpMap, _ := m["dhcp"].(map[string]interface{})
+				if dhcpMap == nil {
+					dhcpMap = map[string]interface{}{}
+				}
+				// Build reservations array
+				dhcpMap["reservations"] = buildReservationsList(req.Reservations)
+				m["dhcp"] = dhcpMap
+				specNets[i] = m
+				break
+			}
+		}
+	}
+
+	if !networkFound {
+		WriteError(w, http.StatusBadRequest, fmt.Sprintf("network %q not found in router spec", req.Network), "NETWORK_NOT_FOUND")
+		return
+	}
+
+	if err := unstructured.SetNestedSlice(obj.Object, specNets, "spec", "networks"); err != nil {
+		slog.ErrorContext(r.Context(), "failed to set spec.networks", "error", err)
+		WriteError(w, http.StatusInternalServerError, "failed to update router", "UPDATE_FAILED")
+		return
+	}
+
+	updated, err := h.dynClient.Resource(vpcRouterGVR).Namespace(ns).Update(r.Context(), obj, metav1.UpdateOptions{})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to update VPCRouter", "name", name, "error", err)
+		WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update router: %v", err), "UPDATE_FAILED")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, unstructuredToRouter(updated))
+}
+
+// findRouterNamespace locates the namespace for a named router via cross-namespace list.
+func (h *RouterHandler) findRouterNamespace(r *http.Request, name string) string {
+	if h.dynClient == nil {
+		return ""
+	}
+	list, err := h.dynClient.Resource(vpcRouterGVR).Namespace("").List(r.Context(), metav1.ListOptions{})
+	if err != nil {
+		return ""
+	}
+	for _, item := range list.Items {
+		if item.GetName() == name {
+			return item.GetNamespace()
+		}
+	}
+	return ""
+}
+
+// parseDnsmasqLeases parses dnsmasq lease file content into DHCPLeaseResp slice.
+// Format: <expiry_epoch> <mac> <ip> <hostname> <client_id>
+func parseDnsmasqLeases(content string) []model.DHCPLeaseResp {
+	var leases []model.DHCPLeaseResp
+	for _, line := range strings.Split(strings.TrimSpace(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+
+		expiry, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil {
+			continue
+		}
+
+		lease := model.DHCPLeaseResp{
+			ExpiresAt: expiry,
+			MAC:       fields[1],
+			IP:        fields[2],
+			Hostname:  fields[3],
+		}
+		if lease.Hostname == "*" {
+			lease.Hostname = ""
+		}
+		if len(fields) >= 5 && fields[4] != "*" {
+			lease.ClientID = fields[4]
+		}
+		leases = append(leases, lease)
+	}
+	if leases == nil {
+		leases = []model.DHCPLeaseResp{}
+	}
+	return leases
+}
+
+// buildReservationsList converts a slice of DHCPReservationResp to unstructured format.
+func buildReservationsList(reservations []model.DHCPReservationResp) []interface{} {
+	result := make([]interface{}, 0, len(reservations))
+	for _, r := range reservations {
+		rm := map[string]interface{}{
+			"mac": r.MAC,
+			"ip":  r.IP,
+		}
+		if r.Hostname != "" {
+			rm["hostname"] = r.Hostname
+		}
+		result = append(result, rm)
+	}
+	return result
 }
 
 // unstructuredToRouter maps an unstructured VPCRouter to the response model.
