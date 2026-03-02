@@ -30,7 +30,7 @@ On deletion, finalizers clean up all VPC resources.
 
 ## Architecture
 
-Ten reconciliation loops + one mutating webhook + orphan GC:
+Eleven reconciliation loops + one mutating webhook + orphan GC:
 
 ### Network Reconcilers
 - **CUDN Reconciler** (`pkg/controller/cudn/reconciler.go`) — watches `ClusterUserDefinedNetwork` with LocalNet topology. Creates VPC subnet + VLAN attachments on all BM nodes.
@@ -46,6 +46,7 @@ Ten reconciliation loops + one mutating webhook + orphan GC:
 - **VNI** (`pkg/controller/vni/`) — dual-mode: VPC API (unmanaged) or ROKS API (roks)
 - **VLANAttachment** (`pkg/controller/vlanattachment/`) — dual-mode like VNI
 - **FloatingIP** (`pkg/controller/floatingip/`) — full FIP lifecycle via VPC API
+- **VPCL2Bridge** (`pkg/controller/l2bridge/reconciler.go`) — manages L2 bridge pods (GRETAP+WireGuard, NSX L2VPN, EVPN-VXLAN) for tunneling between NSX-T and OVN-K networks. References VPCGateway for tunnel endpoint FIP.
 
 ### Gateway + Router Reconcilers
 - **VPCGateway** (`pkg/controller/gateway/reconciler.go`) — creates uplink VNI via VLAN attachment, manages FIP, PAR, VPC routes. Also watches VPCRouter status to auto-collect `advertisedRoutes` and create/delete VPC routes. See `api/v1alpha1/vpcgateway_types.go`.
@@ -77,12 +78,13 @@ Wraps `github.com/IBM/vpc-go-sdk`. Each file handles one resource type:
 **All VPC operations must be idempotent.** Use resource tags (cluster ID + namespace + name) to detect existing resources before creating duplicates.
 
 ### Finalizers (`pkg/finalizers/`)
-Five finalizer names:
+Six finalizer names:
 - `vpc.roks.ibm.com/cudn-cleanup` — on CUDNs
 - `vpc.roks.ibm.com/vm-cleanup` — on VMs
 - `vpc.roks.ibm.com/udn-cleanup` — on UDNs
 - `vpc.roks.ibm.com/gateway-cleanup` — on VPCGateways (cleans up FIP, PAR, VPC routes, VLAN attachment)
 - `vpc.roks.ibm.com/router-cleanup` — on VPCRouters (deletes router pod)
+- `vpc.roks.ibm.com/l2bridge-cleanup` — on VPCL2Bridges (deletes L2 bridge pod)
 
 ### Orphan GC (`pkg/gc/orphan_collector.go`)
 Periodic goroutine (every 10 min). Lists VPC resources by cluster tag, cross-references with K8s objects, deletes orphans older than 15 min. Covers VNIs, floating IPs, PARs, and VPC routes.

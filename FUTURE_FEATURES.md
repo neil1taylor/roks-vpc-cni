@@ -669,7 +669,9 @@ spec:
 
 ## NSX-T to OVN-Kubernetes L2 Bridging
 
-**Status**: Under consideration
+**Status**: Implemented (2026-03-02) — See `docs/plans/2026-03-01-vpcl2bridge-design.md`
+
+> **Implementation complete**: VPCL2Bridge CRD, reconciler, BFF endpoints, and console plugin UI (list/detail/create pages + dashboard card). Supports GRETAP+WireGuard, NSX-T L2VPN, and EVPN-VXLAN tunnel types. Branch: `worktree-l2bridge`.
 
 Enable Layer 2 connectivity between VMware NSX-T segments and OpenShift OVN-Kubernetes secondary networks over any IP-reachable fabric. Primary use case: live migration from VMware/NSX-T to OpenShift Virtualization where VMs on both platforms must share a broadcast domain during the transition.
 
