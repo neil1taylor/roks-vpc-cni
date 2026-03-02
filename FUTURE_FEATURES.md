@@ -163,7 +163,9 @@ spec:
 
 ## VPN Gateway
 
-**Status**: Under consideration
+**Status**: Implemented (2026-03-02) — See `docs/tutorials/vpn-gateway.md`
+
+> **Implementation complete**: VPCVPNGateway CRD (`vvg`), reconciler, BFF endpoints, and console plugin UI (list/detail/create pages + dashboard card). Supports WireGuard and IPsec/StrongSwan protocols. Both site-to-site and client-to-site. References VPCGateway for FIP tunnel endpoint. Advertised routes auto-collected by VPCGateway for VPC route creation. Branch: `worktree-l2bridge`.
 
 Provide encrypted site-to-site and client-to-site VPN tunnels for VM networks, managed declaratively through CRDs. Distinct from the mesh networking section — this is traditional hub-and-spoke VPN, not peer-to-peer mesh.
 
