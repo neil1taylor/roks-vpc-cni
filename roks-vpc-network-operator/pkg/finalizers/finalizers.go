@@ -32,6 +32,10 @@ const (
 	// L2BridgeCleanup is added to VPCL2Bridges to ensure the bridge pod
 	// is cleaned up on deletion.
 	L2BridgeCleanup = "vpc.roks.ibm.com/l2bridge-cleanup"
+
+	// VPNGatewayCleanup is added to VPCVPNGateways to ensure the VPN pod
+	// is cleaned up on deletion.
+	VPNGatewayCleanup = "vpc.roks.ibm.com/vpngateway-cleanup"
 )
 
 // Add adds the given finalizer to the object if not already present.
