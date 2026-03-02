@@ -88,7 +88,7 @@ Go HTTP server (`cmd/bff/`) that aggregates VPC API + K8s API data for the conso
 
 ### Console Plugin (TypeScript/React)
 
-OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-plugin-sdk-webpack`). PatternFly 5 components. 26 routes under `/vpc-networking/*` covering Dashboard, Subnets, VNIs, VLAN Attachments, Floating IPs, PARs, Security Groups, Network ACLs, Routes, Topology, Networks, Gateways, Routers, L2 Bridges, and Observability — each resource type has list, detail, and create pages. Plugin metadata in `console-extensions.json`, exposed modules in `package.json`.
+OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-plugin-sdk-webpack`). PatternFly 5 components. 32 routes under `/vpc-networking/*` covering Dashboard, Subnets, VNIs, VLAN Attachments, Floating IPs, PARs, Security Groups, Network ACLs, Routes, Topology, Networks, Gateways, Routers, L2 Bridges, VPN Gateways, and Observability — each resource type has list, detail, and create pages. Plugin metadata in `console-extensions.json`, exposed modules in `package.json`.
 
 ## Implementation Conventions
 
