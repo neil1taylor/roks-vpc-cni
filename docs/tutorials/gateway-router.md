@@ -471,6 +471,34 @@ spec:
     image: "de.icr.io/roks/vpc-router:v1.0.0"   # Custom router image
 ```
 
+### 3.7 Pod resource limits and scheduling
+
+Configure CPU/memory guarantees, node placement, and runtime class for production router pods.
+
+```yaml
+spec:
+  pod:
+    resources:
+      requests:
+        cpu: "2"
+        memory: "1Gi"
+      limits:
+        cpu: "4"
+        memory: "2Gi"
+    runtimeClassName: performance          # CPU Manager static policy
+    priorityClassName: system-node-critical
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
+      feature.node.kubernetes.io/network-sriov.capable: "true"
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: network
+        effect: NoSchedule
+```
+
+All fields are optional and apply to both VPCGateway and VPCRouter `spec.pod`. The router pod is recreated automatically when any field changes.
+
 ---
 
 ## Part 4: VPCRouter

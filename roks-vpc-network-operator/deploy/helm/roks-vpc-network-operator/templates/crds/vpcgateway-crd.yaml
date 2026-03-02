@@ -309,6 +309,54 @@ spec:
                   image:
                     description: Image is the container image to use for the gateway/router pod.
                     type: string
+                  resources:
+                    description: Resources defines CPU and memory requests/limits for the router container.
+                    type: object
+                    properties:
+                      requests:
+                        type: object
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                      limits:
+                        type: object
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                  nodeSelector:
+                    description: NodeSelector constrains the router pod to nodes matching these labels.
+                    type: object
+                    additionalProperties:
+                      type: string
+                  tolerations:
+                    description: Tolerations allows the router pod to schedule on tainted nodes.
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                        operator:
+                          type: string
+                        value:
+                          type: string
+                        effect:
+                          type: string
+                        tolerationSeconds:
+                          type: integer
+                          format: int64
+                  runtimeClassName:
+                    description: RuntimeClassName specifies the RuntimeClass for CPU pinning or other runtime features.
+                    type: string
+                  priorityClassName:
+                    description: PriorityClassName specifies the priority class for pod scheduling priority.
+                    type: string
           status:
             description: VPCGatewayStatus defines the observed state of a VPCGateway.
             type: object
