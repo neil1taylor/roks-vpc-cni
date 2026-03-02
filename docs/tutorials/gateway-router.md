@@ -1422,6 +1422,8 @@ spec:
 
 ## Part 10: IDS/IPS with Suricata
 
+> For a comprehensive standalone guide, see [IDS/IPS with Suricata](ids-ips-suricata.md).
+
 The VPCRouter supports an optional Suricata sidecar container for intrusion detection (IDS) and inline intrusion prevention (IPS). IDS/IPS config lives on the VPCRouter — this is consistent with the firewall pattern where per-router security policies are configured on the router, not the gateway.
 
 ### How it works
