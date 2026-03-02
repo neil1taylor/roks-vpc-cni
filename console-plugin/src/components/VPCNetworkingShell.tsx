@@ -27,6 +27,7 @@ const tabs = [
   { key: 'routes', label: 'Routes', path: '/vpc-networking/routes' },
   { key: 'gateways', label: 'Gateways', path: '/vpc-networking/gateways' },
   { key: 'routers', label: 'Routers', path: '/vpc-networking/routers' },
+  { key: 'observability', label: 'Observability', path: '/vpc-networking/observability' },
   { key: 'topology', label: 'Topology', path: '/vpc-networking/topology' },
 ];
 

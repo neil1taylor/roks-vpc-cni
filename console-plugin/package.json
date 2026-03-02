@@ -32,7 +32,8 @@
       "GatewayDetailPage": "./src/pages/GatewayDetailPage",
       "RoutersListPage": "./src/plugin-routers.ts",
       "RouterCreatePage": "./src/pages/RouterCreatePage",
-      "RouterDetailPage": "./src/pages/RouterDetailPage"
+      "RouterDetailPage": "./src/pages/RouterDetailPage",
+      "ObservabilityPage": "./src/pages/ObservabilityPage"
     },
     "dependencies": {
       "@console/pluginAPI": "*"
@@ -40,6 +41,7 @@
   },
   "dependencies": {
     "@openshift-console/dynamic-plugin-sdk": "4.20.0",
+    "@patternfly/react-charts": "^7.4.9",
     "@patternfly/react-core": "^5.0.0",
     "@patternfly/react-icons": "^5.0.0",
     "@patternfly/react-table": "^5.0.0",

@@ -162,6 +162,22 @@ func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) *corev1
 		)
 	}
 
+	// Append metrics exporter sidecar when metrics are enabled
+	if router.Spec.Metrics != nil && router.Spec.Metrics.Enabled {
+		pod.Spec.Containers = append(pod.Spec.Containers, buildMetricsExporterContainer(router))
+		// Shared volume for dnsmasq lease files
+		pod.Spec.Volumes = append(pod.Spec.Volumes,
+			corev1.Volume{
+				Name:         "dnsmasq-leases",
+				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+			},
+		)
+		// Mount in router container so dnsmasq writes leases there
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
+			corev1.VolumeMount{Name: "dnsmasq-leases", MountPath: "/var/lib/misc"},
+		)
+	}
+
 	return pod
 }
 
@@ -418,7 +434,8 @@ func generateFirewallConfig(fw *v1alpha1.GatewayFirewall) string {
 			}
 		}
 
-		// Action
+		// Counter + Action
+		sb.WriteString("counter ")
 		sb.WriteString(rule.Action)
 		sb.WriteString("\n")
 	}

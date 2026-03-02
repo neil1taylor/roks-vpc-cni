@@ -67,6 +67,13 @@ nncp:
 routerPod:
   image: "quay.io/fedora/fedora:40"
 
+# Metrics exporter sidecar for router pods
+metricsExporter:
+  image: "de.icr.io/roks/vpc-router-metrics-exporter:latest"
+  podMonitor:
+    enabled: true
+    interval: "15s"
+
 # BFF service
 bff:
   enabled: true
@@ -89,6 +96,9 @@ bff:
   metrics:
     serviceMonitor:
       enabled: false
+  thanos:
+    enabled: true
+    url: "https://thanos-querier.openshift-monitoring.svc:9091"
 
 # Console plugin
 consolePlugin:

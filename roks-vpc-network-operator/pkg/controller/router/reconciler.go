@@ -258,6 +258,29 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		meta.RemoveStatusCondition(&router.Status.Conditions, "IDSReady")
 	}
 
+	// Metrics exporter status
+	if router.Spec.Metrics != nil && router.Spec.Metrics.Enabled {
+		router.Status.MetricsEnabled = true
+		metricsCondStatus := metav1.ConditionTrue
+		metricsCondReason := "MetricsConfigured"
+		metricsCondMessage := "Metrics exporter sidecar is configured"
+		if !podReady {
+			metricsCondStatus = metav1.ConditionFalse
+			metricsCondReason = "PodNotReady"
+			metricsCondMessage = "Metrics exporter sidecar waiting for pod"
+		}
+		meta.SetStatusCondition(&router.Status.Conditions, metav1.Condition{
+			Type:               "MetricsReady",
+			Status:             metricsCondStatus,
+			Reason:             metricsCondReason,
+			Message:            metricsCondMessage,
+			LastTransitionTime: now,
+		})
+	} else {
+		router.Status.MetricsEnabled = false
+		meta.RemoveStatusCondition(&router.Status.Conditions, "MetricsReady")
+	}
+
 	if err := r.Status().Update(ctx, router); err != nil {
 		logger.Error(err, "Failed to update VPCRouter status")
 		return ctrl.Result{}, err

@@ -2,8 +2,10 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/IBM/roks-vpc-network-operator/cmd/bff/internal/auth"
+	"github.com/IBM/roks-vpc-network-operator/cmd/bff/internal/thanos"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
 
 	"k8s.io/client-go/dynamic"
@@ -32,6 +34,9 @@ func SetupRoutesWithK8s(mux *http.ServeMux, vpcClient vpc.ExtendedClient, rbacCh
 
 // SetupRoutesWithClusterInfo registers all HTTP handlers with cluster mode awareness
 func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient, rbacChecker *auth.RBACChecker, k8sClient kubernetes.Interface, dynClient dynamic.Interface, clusterInfo ClusterInfo) {
+
+	// Initialize Thanos client from environment (nil if THANOS_URL not set)
+	thanosClient := thanos.NewClientFromEnv()
 
 	// Health check endpoints
 	mux.HandleFunc("/healthz", HealthHandler)
@@ -280,7 +285,32 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
 		}
 	})
+	metricsHandler := NewRouterMetricsHandler(thanosClient)
 	mux.HandleFunc("/api/v1/routers/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		// Check if this is a metrics sub-route
+		if metricsHandler != nil && strings.Contains(path, "/metrics/") {
+			parts := strings.SplitN(path, "/metrics/", 2)
+			if len(parts) >= 2 {
+				endpoint := strings.TrimSuffix(parts[1], "/")
+				switch endpoint {
+				case "summary":
+					authMiddleware(metricsHandler.GetSummary).ServeHTTP(w, r)
+				case "interfaces":
+					authMiddleware(metricsHandler.GetInterfaces).ServeHTTP(w, r)
+				case "conntrack":
+					authMiddleware(metricsHandler.GetConntrack).ServeHTTP(w, r)
+				case "dhcp":
+					authMiddleware(metricsHandler.GetDHCP).ServeHTTP(w, r)
+				case "nft":
+					authMiddleware(metricsHandler.GetNFT).ServeHTTP(w, r)
+				default:
+					WriteError(w, http.StatusNotFound, "unknown metrics endpoint", "NOT_FOUND")
+				}
+				return
+			}
+		}
+		// Standard router CRUD
 		switch r.Method {
 		case http.MethodGet:
 			authMiddleware(rtHandler.GetRouter).ServeHTTP(w, r)
@@ -318,6 +348,7 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 				"routeManagement":          true,
 				"parManagement":            true,
 				"roksAPIAvailable":         roksAPIAvailable,
+				"routerMetrics":            thanosClient != nil,
 			},
 		})
 	})

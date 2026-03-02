@@ -77,10 +77,10 @@ func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string, parCIDR ...s
 				protocol = "tcp"
 			}
 			if rule.ExternalAddress != "" {
-				sb.WriteString(fmt.Sprintf("    ip daddr %s %s dport %d dnat to %s:%d\n",
+				sb.WriteString(fmt.Sprintf("    ip daddr %s %s dport %d counter dnat to %s:%d\n",
 					rule.ExternalAddress, protocol, rule.ExternalPort, rule.InternalAddress, rule.InternalPort))
 			} else {
-				sb.WriteString(fmt.Sprintf("    %s dport %d dnat to %s:%d\n",
+				sb.WriteString(fmt.Sprintf("    %s dport %d counter dnat to %s:%d\n",
 					protocol, rule.ExternalPort, rule.InternalAddress, rule.InternalPort))
 			}
 		}
@@ -102,7 +102,7 @@ func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string, parCIDR ...s
 			})
 
 			for _, rule := range nonatRules {
-				sb.WriteString(fmt.Sprintf("    ip saddr %s ip daddr %s accept\n",
+				sb.WriteString(fmt.Sprintf("    ip saddr %s ip daddr %s counter accept\n",
 					rule.Source, rule.Destination))
 			}
 		}
@@ -120,7 +120,7 @@ func GenerateNftablesConfig(nat *v1alpha1.GatewayNAT, vniIP string, parCIDR ...s
 				if translatedAddr == "" {
 					translatedAddr = defaultSNATAddr
 				}
-				sb.WriteString(fmt.Sprintf("    ip saddr %s snat to %s\n",
+				sb.WriteString(fmt.Sprintf("    ip saddr %s counter snat to %s\n",
 					rule.Source, translatedAddr))
 			}
 		}

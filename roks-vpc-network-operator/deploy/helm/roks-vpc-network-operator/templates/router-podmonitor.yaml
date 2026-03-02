@@ -1,0 +1,22 @@
+{{- if .Values.metricsExporter.podMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ .Release.Name }}-router-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vpc-network-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: router-metrics
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vpc-router
+      app.kubernetes.io/component: router-pod
+  podMetricsEndpoints:
+    - port: metrics
+      interval: {{ .Values.metricsExporter.podMonitor.interval | default "15s" }}
+      path: /metrics
+  namespaceSelector:
+    any: true
+{{- end }}

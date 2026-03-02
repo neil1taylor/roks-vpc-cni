@@ -126,8 +126,8 @@ func TestGenerateNFQueueRules_IPSMode(t *testing.T) {
 	if !strings.Contains(rules, "queue num 3 bypass") {
 		t.Error("expected NFQUEUE with num 3 and bypass flag")
 	}
-	if !strings.Contains(rules, "ct state established,related accept") {
-		t.Error("expected conntrack bypass for established flows")
+	if !strings.Contains(rules, "ct state established,related counter accept") {
+		t.Error("expected conntrack bypass for established flows with counter")
 	}
 }
 

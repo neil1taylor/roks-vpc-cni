@@ -26,7 +26,7 @@ func TestGenerateNftablesConfig_SNATOnly(t *testing.T) {
 	if !strings.Contains(result, "chain postrouting") {
 		t.Error("expected output to contain 'chain postrouting'")
 	}
-	if !strings.Contains(result, "ip saddr 10.100.0.0/24 snat to 10.240.1.5") {
+	if !strings.Contains(result, "ip saddr 10.100.0.0/24 counter snat to 10.240.1.5") {
 		t.Errorf("expected SNAT rule for 10.100.0.0/24 -> 10.240.1.5, got:\n%s", result)
 	}
 }
@@ -49,8 +49,8 @@ func TestGenerateNftablesConfig_DNATRule(t *testing.T) {
 	if !strings.Contains(result, "chain prerouting") {
 		t.Error("expected output to contain 'chain prerouting'")
 	}
-	if !strings.Contains(result, "tcp dport 443 dnat to 10.100.0.10:8443") {
-		t.Errorf("expected DNAT rule 'tcp dport 443 dnat to 10.100.0.10:8443', got:\n%s", result)
+	if !strings.Contains(result, "tcp dport 443 counter dnat to 10.100.0.10:8443") {
+		t.Errorf("expected DNAT rule 'tcp dport 443 counter dnat to 10.100.0.10:8443', got:\n%s", result)
 	}
 }
 
@@ -75,8 +75,8 @@ func TestGenerateNftablesConfig_NoNATExemption(t *testing.T) {
 	result := GenerateNftablesConfig(nat, "10.240.1.5")
 
 	// No-NAT accept rule must appear BEFORE the SNAT rule in postrouting
-	acceptIdx := strings.Index(result, "ip saddr 10.100.0.0/24 ip daddr 10.240.0.0/16 accept")
-	snatIdx := strings.Index(result, "ip saddr 10.100.0.0/24 snat to 10.240.1.5")
+	acceptIdx := strings.Index(result, "ip saddr 10.100.0.0/24 ip daddr 10.240.0.0/16 counter accept")
+	snatIdx := strings.Index(result, "ip saddr 10.100.0.0/24 counter snat to 10.240.1.5")
 
 	if acceptIdx == -1 {
 		t.Errorf("expected NoNAT accept rule, got:\n%s", result)
@@ -103,7 +103,7 @@ func TestGenerateNftablesConfig_AutoTranslation(t *testing.T) {
 	vniIP := "10.240.1.99"
 	result := GenerateNftablesConfig(nat, vniIP)
 
-	expected := "ip saddr 10.100.0.0/24 snat to 10.240.1.99"
+	expected := "ip saddr 10.100.0.0/24 counter snat to 10.240.1.99"
 	if !strings.Contains(result, expected) {
 		t.Errorf("expected auto-translated SNAT rule %q, got:\n%s", expected, result)
 	}
@@ -131,7 +131,7 @@ func TestGenerateNftablesConfig_PARSNATDefault(t *testing.T) {
 
 	result := GenerateNftablesConfig(nat, "10.240.1.99", "150.240.68.0/28")
 
-	expected := "ip saddr 10.100.0.0/24 snat to 150.240.68.0"
+	expected := "ip saddr 10.100.0.0/24 counter snat to 150.240.68.0"
 	if !strings.Contains(result, expected) {
 		t.Errorf("expected PAR-based SNAT rule %q, got:\n%s", expected, result)
 	}
@@ -151,7 +151,7 @@ func TestGenerateNftablesConfig_PARSNATExplicitOverride(t *testing.T) {
 
 	result := GenerateNftablesConfig(nat, "10.240.1.99", "150.240.68.0/28")
 
-	expected := "ip saddr 10.100.0.0/24 snat to 150.240.68.5"
+	expected := "ip saddr 10.100.0.0/24 counter snat to 150.240.68.5"
 	if !strings.Contains(result, expected) {
 		t.Errorf("expected explicit SNAT address to override PAR, got:\n%s", result)
 	}
@@ -170,7 +170,7 @@ func TestGenerateNftablesConfig_PAREmptyFallsBackToVNI(t *testing.T) {
 
 	result := GenerateNftablesConfig(nat, "10.240.1.99", "")
 
-	expected := "ip saddr 10.100.0.0/24 snat to 10.240.1.99"
+	expected := "ip saddr 10.100.0.0/24 counter snat to 10.240.1.99"
 	if !strings.Contains(result, expected) {
 		t.Errorf("expected VNI IP fallback when PAR CIDR is empty, got:\n%s", result)
 	}
@@ -193,7 +193,7 @@ func TestGenerateNftablesConfig_DNATWithExternalAddress(t *testing.T) {
 
 	result := GenerateNftablesConfig(nat, "10.240.1.5")
 
-	expected := "ip daddr 150.240.68.5 tcp dport 443 dnat to 10.100.0.10:8443"
+	expected := "ip daddr 150.240.68.5 tcp dport 443 counter dnat to 10.100.0.10:8443"
 	if !strings.Contains(result, expected) {
 		t.Errorf("expected DNAT with external address match %q, got:\n%s", expected, result)
 	}

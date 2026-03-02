@@ -230,6 +230,22 @@ type RouterIDS struct {
 	NFQueueNum *int32 `json:"nfqueueNum,omitempty"`
 }
 
+// RouterMetrics defines the metrics exporter sidecar configuration.
+type RouterMetrics struct {
+	// Enabled controls whether the metrics exporter sidecar is deployed.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Port is the port the metrics exporter listens on.
+	// +kubebuilder:default=9100
+	// +optional
+	Port *int32 `json:"port,omitempty"`
+
+	// Image overrides the default metrics exporter container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
 // VPCRouterSpec defines the desired state of a VPCRouter.
 type VPCRouterSpec struct {
 	// Gateway is the name of the VPCGateway this router is associated with.
@@ -262,6 +278,10 @@ type VPCRouterSpec struct {
 	// +optional
 	IDS *RouterIDS `json:"ids,omitempty"`
 
+	// Metrics configures the metrics exporter sidecar container.
+	// +optional
+	Metrics *RouterMetrics `json:"metrics,omitempty"`
+
 	// Pod defines pod-level overrides for the router pod.
 	// +optional
 	Pod *RouterPodSpec `json:"pod,omitempty"`
@@ -281,6 +301,9 @@ type VPCRouterStatus struct {
 
 	// IDSMode reports the active IDS/IPS mode ("ids", "ips", or "" if disabled).
 	IDSMode string `json:"idsMode,omitempty"`
+
+	// MetricsEnabled reports whether the metrics exporter sidecar is active.
+	MetricsEnabled bool `json:"metricsEnabled,omitempty"`
 
 	// Networks reports the status of each attached network.
 	// +optional

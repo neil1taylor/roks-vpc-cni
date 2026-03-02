@@ -234,3 +234,35 @@ export function formatPercentage(value?: number, decimals: number = 2): string {
 
   return `${value.toFixed(decimals)}%`;
 }
+
+/**
+ * Format bytes per second to human-readable rate
+ */
+export function formatBytesPerSec(bps?: number): string {
+  if (bps === undefined || bps === null) {
+    return '0 B/s';
+  }
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  let size = Math.abs(bps);
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return unitIndex === 0 ? `${Math.round(size)} ${units[unitIndex]}` : `${size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+/**
+ * Format seconds to human-readable uptime (e.g., "3d 14h 22m")
+ */
+export function formatUptime(seconds?: number): string {
+  if (seconds === undefined || seconds === null || seconds < 0) {
+    return 'N/A';
+  }
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}

@@ -336,6 +336,22 @@ spec:
                     type: integer
                     format: int32
                     default: 0
+              metrics:
+                description: Metrics configures the metrics exporter sidecar container.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether the metrics exporter sidecar is deployed.
+                    type: boolean
+                    default: false
+                  port:
+                    description: Port the metrics exporter listens on.
+                    type: integer
+                    format: int32
+                    default: 9100
+                  image:
+                    description: Image overrides the default metrics exporter container image.
+                    type: string
               pod:
                 description: Pod defines pod-level overrides for the router pod.
                 type: object
@@ -409,6 +425,9 @@ spec:
               idsMode:
                 description: "IDSMode reports the active IDS/IPS mode (ids, ips, or empty if disabled)."
                 type: string
+              metricsEnabled:
+                description: MetricsEnabled reports whether the metrics exporter sidecar is active.
+                type: boolean
               transitIP:
                 description: TransitIP is the router's IP address on the transit network.
                 type: string

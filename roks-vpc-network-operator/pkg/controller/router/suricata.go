@@ -168,8 +168,8 @@ func generateNFQueueRules(ids *v1alpha1.RouterIDS, networks []v1alpha1.RouterNet
 	sb.WriteString("table ip suricata {\n")
 	sb.WriteString("  chain forward_ips {\n")
 	sb.WriteString("    type filter hook forward priority -10; policy accept;\n")
-	sb.WriteString("    ct state established,related accept\n")
-	sb.WriteString(fmt.Sprintf("    queue num %d bypass\n", queueNum))
+	sb.WriteString("    ct state established,related counter accept\n")
+	sb.WriteString(fmt.Sprintf("    counter queue num %d bypass\n", queueNum))
 	sb.WriteString("  }\n")
 	sb.WriteString("}\n")
 

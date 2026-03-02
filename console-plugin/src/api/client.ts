@@ -32,6 +32,11 @@ import {
   CreateRouterRequest,
   PublicAddressRange,
   CreatePARRequest,
+  RouterHealthSummary,
+  InterfaceTimeSeries,
+  ConntrackTimeSeries,
+  DHCPPoolMetrics,
+  NFTRuleMetrics,
   ApiResponse,
   ApiError,
 } from './types';
@@ -481,6 +486,59 @@ class VPCNetworkClient {
 
   async deletePAR(id: string): Promise<ApiResponse<void>> {
     return this.request<void>('DELETE', `/pars/${id}`);
+  }
+
+  // Router Metrics Operations
+  async getRouterHealthSummary(
+    name: string,
+    namespace?: string,
+  ): Promise<ApiResponse<RouterHealthSummary>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<RouterHealthSummary>('GET', `/routers/${name}/metrics/summary${params}`);
+  }
+
+  async getRouterInterfaceMetrics(
+    name: string,
+    namespace?: string,
+    range?: string,
+    step?: string,
+  ): Promise<ApiResponse<InterfaceTimeSeries[]>> {
+    const params = new URLSearchParams();
+    if (namespace) params.set('namespace', namespace);
+    if (range) params.set('range', range);
+    if (step) params.set('step', step);
+    const qs = params.toString();
+    return this.request<InterfaceTimeSeries[]>('GET', `/routers/${name}/metrics/interfaces${qs ? `?${qs}` : ''}`);
+  }
+
+  async getRouterConntrackMetrics(
+    name: string,
+    namespace?: string,
+    range?: string,
+    step?: string,
+  ): Promise<ApiResponse<ConntrackTimeSeries>> {
+    const params = new URLSearchParams();
+    if (namespace) params.set('namespace', namespace);
+    if (range) params.set('range', range);
+    if (step) params.set('step', step);
+    const qs = params.toString();
+    return this.request<ConntrackTimeSeries>('GET', `/routers/${name}/metrics/conntrack${qs ? `?${qs}` : ''}`);
+  }
+
+  async getRouterDHCPMetrics(
+    name: string,
+    namespace?: string,
+  ): Promise<ApiResponse<DHCPPoolMetrics[]>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<DHCPPoolMetrics[]>('GET', `/routers/${name}/metrics/dhcp${params}`);
+  }
+
+  async getRouterNFTMetrics(
+    name: string,
+    namespace?: string,
+  ): Promise<ApiResponse<NFTRuleMetrics[]>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<NFTRuleMetrics[]>('GET', `/routers/${name}/metrics/nft${params}`);
   }
 }
 

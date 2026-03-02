@@ -172,6 +172,80 @@ func TestBuildRouterPod_NilPodSpec(t *testing.T) {
 	}
 }
 
+func TestBuildRouterPod_WithMetricsSidecar(t *testing.T) {
+	router := newTestRouter()
+	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
+	gw := newTestGateway()
+
+	pod := buildRouterPod(router, gw)
+
+	// Should have router + metrics-exporter = 2 containers
+	if len(pod.Spec.Containers) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(pod.Spec.Containers))
+	}
+	if pod.Spec.Containers[1].Name != "metrics-exporter" {
+		t.Errorf("second container name = %q, want 'metrics-exporter'", pod.Spec.Containers[1].Name)
+	}
+
+	// Should have dnsmasq-leases volume
+	foundVolume := false
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == "dnsmasq-leases" {
+			foundVolume = true
+		}
+	}
+	if !foundVolume {
+		t.Error("expected dnsmasq-leases volume")
+	}
+
+	// Router container should have lease volume mount
+	foundMount := false
+	for _, vm := range pod.Spec.Containers[0].VolumeMounts {
+		if vm.Name == "dnsmasq-leases" {
+			foundMount = true
+		}
+	}
+	if !foundMount {
+		t.Error("expected dnsmasq-leases volume mount on router container")
+	}
+}
+
+func TestBuildRouterPod_MetricsAndSuricata(t *testing.T) {
+	router := newTestRouter()
+	router.Spec.IDS = &v1alpha1.RouterIDS{Enabled: true, Mode: "ids"}
+	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
+	gw := newTestGateway()
+
+	pod := buildRouterPod(router, gw)
+
+	// Should have router + suricata + metrics-exporter = 3 containers
+	if len(pod.Spec.Containers) != 3 {
+		t.Fatalf("expected 3 containers, got %d", len(pod.Spec.Containers))
+	}
+	if pod.Spec.Containers[0].Name != "router" {
+		t.Errorf("container[0] = %q, want 'router'", pod.Spec.Containers[0].Name)
+	}
+	if pod.Spec.Containers[1].Name != "suricata" {
+		t.Errorf("container[1] = %q, want 'suricata'", pod.Spec.Containers[1].Name)
+	}
+	if pod.Spec.Containers[2].Name != "metrics-exporter" {
+		t.Errorf("container[2] = %q, want 'metrics-exporter'", pod.Spec.Containers[2].Name)
+	}
+}
+
+func TestBuildRouterPod_MetricsDisabled(t *testing.T) {
+	router := newTestRouter()
+	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: false}
+	gw := newTestGateway()
+
+	pod := buildRouterPod(router, gw)
+
+	// Should have only router container
+	if len(pod.Spec.Containers) != 1 {
+		t.Fatalf("expected 1 container when metrics disabled, got %d", len(pod.Spec.Containers))
+	}
+}
+
 func TestBuildRouterPod_AllPodSpecFields(t *testing.T) {
 	router := newTestRouter()
 	rc := "performance"

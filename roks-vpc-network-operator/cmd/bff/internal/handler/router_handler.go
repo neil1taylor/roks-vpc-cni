@@ -217,6 +217,7 @@ func unstructuredToRouter(obj *unstructured.Unstructured) model.RouterResponse {
 	rt.TransitIP, _, _ = unstructured.NestedString(obj.Object, "status", "transitIP")
 	rt.SyncStatus, _, _ = unstructured.NestedString(obj.Object, "status", "syncStatus")
 	rt.IDSMode, _, _ = unstructured.NestedString(obj.Object, "status", "idsMode")
+	rt.MetricsEnabled, _, _ = unstructured.NestedBool(obj.Object, "status", "metricsEnabled")
 
 	// Extract global DHCP from spec
 	rt.DHCP = extractGlobalDHCP(obj)

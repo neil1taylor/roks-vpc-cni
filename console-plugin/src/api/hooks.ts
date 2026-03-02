@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useK8sWatchResource } from '@openshift-console/dynamic-plugin-sdk';
 import { apiClient } from './client';
 import {
@@ -23,6 +23,11 @@ import {
   ReservedIP,
   PublicGateway,
   NamespaceInfo,
+  RouterHealthSummary,
+  InterfaceTimeSeries,
+  ConntrackTimeSeries,
+  DHCPPoolMetrics,
+  NFTRuleMetrics,
   ApiResponse,
   ApiError,
 } from './types';
@@ -579,4 +584,91 @@ export function useK8sFloatingIPs(namespace?: string): {
     loading: !loaded,
     error: error as Error | undefined,
   };
+}
+
+// ── Polling BFF Data Hook (auto-refresh) ──
+
+function useBFFDataPolling<T>(
+  fetchFn: () => Promise<ApiResponse<T>>,
+  intervalMs: number,
+  dependencies: unknown[] = [],
+): {
+  data: T | null;
+  loading: boolean;
+  error: ApiError | null;
+} {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<ApiError | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    const fetchData = async () => {
+      const response = await fetchFn();
+      if (!mountedRef.current) return;
+      if (response.error) {
+        setError(response.error);
+      } else {
+        setData(response.data || null);
+        setError(null);
+      }
+      setLoading(false);
+    };
+
+    fetchData();
+    const interval = setInterval(fetchData, intervalMs);
+
+    return () => {
+      mountedRef.current = false;
+      clearInterval(interval);
+    };
+  }, dependencies); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return { data, loading, error };
+}
+
+// ── Router Metrics Hooks ──
+
+const METRICS_POLL_INTERVAL = 15000;
+
+export function useRouterHealth(name: string, namespace?: string) {
+  return useBFFDataPolling<RouterHealthSummary>(
+    () => apiClient.getRouterHealthSummary(name, namespace),
+    METRICS_POLL_INTERVAL,
+    [name, namespace],
+  );
+}
+
+export function useRouterInterfaces(name: string, namespace?: string, range = '1h', step = '1m') {
+  return useBFFDataPolling<InterfaceTimeSeries[]>(
+    () => apiClient.getRouterInterfaceMetrics(name, namespace, range, step),
+    METRICS_POLL_INTERVAL,
+    [name, namespace, range, step],
+  );
+}
+
+export function useRouterConntrack(name: string, namespace?: string, range = '1h', step = '1m') {
+  return useBFFDataPolling<ConntrackTimeSeries>(
+    () => apiClient.getRouterConntrackMetrics(name, namespace, range, step),
+    METRICS_POLL_INTERVAL,
+    [name, namespace, range, step],
+  );
+}
+
+export function useRouterDHCP(name: string, namespace?: string) {
+  return useBFFDataPolling<DHCPPoolMetrics[]>(
+    () => apiClient.getRouterDHCPMetrics(name, namespace),
+    METRICS_POLL_INTERVAL,
+    [name, namespace],
+  );
+}
+
+export function useRouterNFT(name: string, namespace?: string) {
+  return useBFFDataPolling<NFTRuleMetrics[]>(
+    () => apiClient.getRouterNFTMetrics(name, namespace),
+    METRICS_POLL_INTERVAL,
+    [name, namespace],
+  );
 }

@@ -458,6 +458,7 @@ type RouterResponse struct {
 	AdvertisedRoutes []string            `json:"advertisedRoutes,omitempty"`
 	PodIP            string              `json:"podIP,omitempty"`
 	IDSMode          string              `json:"idsMode,omitempty"`
+	MetricsEnabled   bool                `json:"metricsEnabled"`
 	DHCP             *RouterDHCPResp     `json:"dhcp,omitempty"`
 	SyncStatus       string              `json:"syncStatus"`
 	CreatedAt        string              `json:"createdAt,omitempty"`

@@ -207,5 +207,13 @@
       "path": "/vpc-networking/routers/:name",
       "component": { "$codeRef": "RouterDetailPage" }
     }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/observability",
+      "component": { "$codeRef": "ObservabilityPage" }
+    }
   }
 ]

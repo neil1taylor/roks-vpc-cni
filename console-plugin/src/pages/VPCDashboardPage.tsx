@@ -10,7 +10,10 @@ import {
   Spinner,
   Text,
   TextVariants,
+  Label,
 } from '@patternfly/react-core';
+import { CheckCircleIcon, ExclamationCircleIcon } from '@patternfly/react-icons';
+import { Link } from 'react-router-dom-v5-compat';
 import {
   useVPCs,
   useSubnets,
@@ -28,6 +31,7 @@ import {
   usePARs,
 } from '../api/hooks';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
+import { Router } from '../api/types';
 
 /**
  * VPC Dashboard Page
@@ -225,6 +229,41 @@ const VPCDashboardPage: React.FC = () => {
           </GridItem>
         </Grid>
       </PageSection>
+
+      {!rtLoading && routers && routers.some((r: Router) => r.metricsEnabled) && (
+        <PageSection>
+          <Title headingLevel="h2" size="lg" style={{ marginBottom: '16px' }}>
+            Router Health
+          </Title>
+          <Grid hasGutter>
+            {routers.filter((r: Router) => r.metricsEnabled).map((r: Router) => (
+              <GridItem span={4} key={`${r.namespace}/${r.name}`}>
+                <Card isCompact isClickable>
+                  <CardTitle>
+                    <Link to={`/vpc-networking/routers/${r.name}?ns=${encodeURIComponent(r.namespace)}`}>
+                      {r.name}
+                    </Link>
+                  </CardTitle>
+                  <CardBody>
+                    {r.phase === 'Running' ? (
+                      <CheckCircleIcon color="var(--pf-v5-global--success-color--100)" />
+                    ) : (
+                      <ExclamationCircleIcon color="var(--pf-v5-global--danger-color--100)" />
+                    )}
+                    {' '}
+                    <Label isCompact color={r.phase === 'Running' ? 'green' : 'red'}>{r.phase}</Label>
+                    {' '}
+                    <Label isCompact color="blue">{r.namespace}</Label>
+                    {r.idsMode && (
+                      <>{' '}<Label isCompact color="purple">{r.idsMode.toUpperCase()}</Label></>
+                    )}
+                  </CardBody>
+                </Card>
+              </GridItem>
+            ))}
+          </Grid>
+        </PageSection>
+      )}
     </VPCNetworkingShell>
   );
 };

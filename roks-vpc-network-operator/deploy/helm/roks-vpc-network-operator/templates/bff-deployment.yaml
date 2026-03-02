@@ -68,6 +68,10 @@ spec:
         - name: CSI_MOUNT_PATH
           value: "{{ .Values.bff.csiMountPath }}"
         {{- end }}
+        {{- if .Values.bff.thanos.enabled }}
+        - name: THANOS_URL
+          value: "{{ .Values.bff.thanos.url }}"
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /healthz

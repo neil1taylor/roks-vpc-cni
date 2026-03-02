@@ -450,6 +450,7 @@ export interface FeatureFlags {
   udnManagement: boolean;
   layer2Support: boolean;
   multiNetworkVMs: boolean;
+  routerMetrics: boolean;
 }
 
 // Permissions
@@ -554,6 +555,7 @@ export interface Router {
   advertisedRoutes?: string[];
   functions?: string[];
   idsMode?: string;
+  metricsEnabled?: boolean;
   dhcp?: RouterDHCPConfig;
   syncStatus: string;
   createdAt?: string;
@@ -606,4 +608,61 @@ export interface CreatePARRequest {
   name: string;
   zone: string;
   prefixLength: number;
+}
+
+// ── Router Metrics Types ──
+
+export interface DataPoint {
+  t: number;
+  v: number;
+}
+
+export interface InterfaceSummary {
+  name: string;
+  rxBps: number;
+  txBps: number;
+  rxErrors: number;
+  txErrors: number;
+  rxDrops: number;
+  txDrops: number;
+}
+
+export interface RouterHealthSummary {
+  status: string;
+  uptimeSeconds: number;
+  interfaces: InterfaceSummary[];
+  conntrackUsage: number;
+  conntrackMax: number;
+  conntrackPercentage: number;
+  dhcpPools: DHCPPoolMetrics[];
+  processes: Record<string, boolean>;
+}
+
+export interface InterfaceTimeSeries {
+  name: string;
+  rxBps: DataPoint[];
+  txBps: DataPoint[];
+  rxPps: DataPoint[];
+  txPps: DataPoint[];
+}
+
+export interface ConntrackTimeSeries {
+  entries: DataPoint[];
+  max: number;
+  percentage: number;
+}
+
+export interface DHCPPoolMetrics {
+  name: string;
+  activeLeases: number;
+  poolSize: number;
+  utilization: number;
+}
+
+export interface NFTRuleMetrics {
+  table: string;
+  chain: string;
+  comment: string;
+  packets: number;
+  bytes: number;
 }
