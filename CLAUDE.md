@@ -64,7 +64,7 @@ Ten reconciliation loops + one mutating webhook + orphan GC:
 | VLANAttachment Reconciler | `pkg/controller/vlanattachment/` | `VLANAttachment` CRD | Dual-mode like VNI |
 | FloatingIP Reconciler | `pkg/controller/floatingip/` | `FloatingIP` CRD | Full FIP lifecycle via VPC API |
 | VPCGateway Reconciler | `pkg/controller/gateway/` | `VPCGateway` CRD | VPC uplink VNI, FIP, PAR, VPC routes |
-| VPCRouter Reconciler | `pkg/controller/router/` | `VPCRouter` CRD | Router pod with IP forwarding, NAT, DHCP |
+| VPCRouter Reconciler | `pkg/controller/router/` | `VPCRouter` CRD | Router pod with IP forwarding, NAT, DHCP, Suricata IDS/IPS sidecar |
 | VM Webhook | `pkg/webhook/` | `VirtualMachine` CREATE | Creates VNI, injects MAC+IP into VM spec |
 | Orphan GC | `pkg/gc/` | Periodic (10 min) | Deletes orphaned VPC resources: VNIs, FIPs, PARs, VPC routes (15 min grace) |
 

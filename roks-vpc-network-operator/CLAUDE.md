@@ -49,7 +49,7 @@ Ten reconciliation loops + one mutating webhook + orphan GC:
 
 ### Gateway + Router Reconcilers
 - **VPCGateway** (`pkg/controller/gateway/reconciler.go`) — creates uplink VNI via VLAN attachment, manages FIP, PAR, VPC routes. Also watches VPCRouter status to auto-collect `advertisedRoutes` and create/delete VPC routes. See `api/v1alpha1/vpcgateway_types.go`.
-- **VPCRouter** (`pkg/controller/router/reconciler.go`) — creates privileged router pod with Multus attachments, IP forwarding, nftables NAT/firewall, optional dnsmasq DHCP. Also watches referenced VPCGateway for NAT/firewall/image/MAC changes and auto-recreates the router pod when they change. Exposes `status.podIP`. See `api/v1alpha1/vpcrouter_types.go`.
+- **VPCRouter** (`pkg/controller/router/reconciler.go`) — creates privileged router pod with Multus attachments, IP forwarding, nftables NAT/firewall, optional dnsmasq DHCP, and optional Suricata IDS/IPS sidecar (`pkg/controller/router/suricata.go`). Also watches referenced VPCGateway for NAT/firewall/image/MAC changes and auto-recreates the router pod when they change (including IDS mode changes). Exposes `status.podIP` and `status.idsMode`. See `api/v1alpha1/vpcrouter_types.go`.
 
 **Bidirectional watching pattern**: Gateway watches Router status (for route advertisement), Router watches Gateway spec (for config propagation). This creates a reactive loop where gateway config changes flow down to router pods, and router route advertisements flow up to VPC routes.
 

@@ -82,7 +82,7 @@ Displays all VPCRouter resources as a table.
 | Gateway | Associated VPCGateway (links to gateway detail) |
 | Networks | Number of connected networks |
 | Transit IP | Router's IP on the transit network |
-| Functions | Active functions (NAT, DHCP, Firewall) |
+| Functions | Active functions (NAT, DHCP, Firewall, IDS/IPS) |
 | Status | Sync status badge |
 | Age | Time since creation |
 
@@ -117,7 +117,7 @@ A form for creating a new VPCRouter:
 
 Displays router details in two cards:
 
-**Overview** — Name, Namespace, Gateway (with inline zone badge and phase status from the gateway), Phase, Transit IP, Advertised Routes, Functions, Sync Status, Created
+**Overview** — Name, Namespace, Gateway (with inline zone badge and phase status from the gateway), Phase, Transit IP, Advertised Routes, IDS/IPS (color-coded label: blue for IDS, orange for IPS), Functions, Sync Status, Created
 
 **Connected Networks** — Table showing each network's name, address, and connection status (Connected/Disconnected labels).
 
