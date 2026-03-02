@@ -28,6 +28,12 @@ rules:
   - vpcrouters
   - vpcrouters/status
   - vpcrouters/finalizers
+  - vpcl2bridges
+  - vpcl2bridges/status
+  - vpcl2bridges/finalizers
+  - vpcvpngateways
+  - vpcvpngateways/status
+  - vpcvpngateways/finalizers
   verbs:
   - create
   - delete

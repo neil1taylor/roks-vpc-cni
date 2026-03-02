@@ -1,0 +1,364 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vpcvpngateways.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VPCVPNGateway
+    listKind: VPCVPNGatewayList
+    plural: vpcvpngateways
+    singular: vpcvpngateway
+    shortNames:
+    - vvg
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Protocol
+      type: string
+      jsonPath: .spec.protocol
+    - name: Gateway
+      type: string
+      jsonPath: .spec.gatewayRef
+    - name: Tunnels
+      type: string
+      jsonPath: .status.activeTunnels
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Endpoint
+      type: string
+      jsonPath: .status.tunnelEndpoint
+      priority: 1
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: >-
+          VPCVPNGateway is the Schema for the vpcvpngateways API.
+          It represents a VPN gateway that provides site-to-site and client-to-site VPN
+          connectivity for VM workload networks.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPCVPNGatewaySpec defines the desired state of a VPCVPNGateway.
+            type: object
+            required:
+            - protocol
+            - gatewayRef
+            - tunnels
+            properties:
+              protocol:
+                description: Protocol is the VPN protocol to use.
+                type: string
+                enum:
+                - wireguard
+                - ipsec
+              gatewayRef:
+                description: GatewayRef is the name of the VPCGateway this VPN gateway is associated with.
+                type: string
+                minLength: 1
+              wireGuard:
+                description: >-
+                  WireGuard contains global WireGuard configuration.
+                  Required when protocol is "wireguard".
+                type: object
+                required:
+                - privateKey
+                properties:
+                  privateKey:
+                    description: PrivateKey is a reference to a Secret containing the WireGuard private key.
+                    type: object
+                    required:
+                    - name
+                    - key
+                    properties:
+                      name:
+                        description: Name is the name of the Secret.
+                        type: string
+                        minLength: 1
+                      key:
+                        description: Key is the key within the Secret data.
+                        type: string
+                        minLength: 1
+                  listenPort:
+                    description: ListenPort is the UDP port for WireGuard.
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 65535
+                    default: 51820
+              ipsec:
+                description: >-
+                  IPsec contains global IPsec/StrongSwan configuration.
+                  Required when protocol is "ipsec".
+                type: object
+                properties:
+                  ikePolicy:
+                    description: IKEPolicy defines the IKE policy parameters.
+                    type: object
+                    properties:
+                      ikeVersion:
+                        type: integer
+                        format: int32
+                        enum: [1, 2]
+                        default: 2
+                      encryption:
+                        type: string
+                        enum: [aes128, aes256, aes128gcm16, aes256gcm16]
+                        default: aes256
+                      integrity:
+                        type: string
+                        enum: [sha256, sha384, sha512]
+                        default: sha256
+                      dhGroup:
+                        type: integer
+                        format: int32
+                        enum: [14, 15, 16, 19, 20, 21]
+                        default: 14
+                  ipsecPolicy:
+                    description: IPsecPolicy defines the IPsec (child SA) policy parameters.
+                    type: object
+                    properties:
+                      ikeVersion:
+                        type: integer
+                        format: int32
+                      encryption:
+                        type: string
+                      integrity:
+                        type: string
+                      dhGroup:
+                        type: integer
+                        format: int32
+                  image:
+                    description: Image overrides the default StrongSwan container image.
+                    type: string
+              tunnels:
+                description: Tunnels is the list of VPN tunnels to remote peers.
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required:
+                  - name
+                  - remoteEndpoint
+                  - remoteNetworks
+                  properties:
+                    name:
+                      description: Name is a unique identifier for this tunnel.
+                      type: string
+                      minLength: 1
+                    remoteEndpoint:
+                      description: RemoteEndpoint is the IP address or hostname of the remote VPN peer.
+                      type: string
+                      minLength: 1
+                    remoteNetworks:
+                      description: RemoteNetworks is a list of CIDRs reachable via this tunnel.
+                      type: array
+                      minItems: 1
+                      items:
+                        type: string
+                    peerPublicKey:
+                      description: PeerPublicKey is the WireGuard public key of the remote peer.
+                      type: string
+                    tunnelAddressLocal:
+                      description: TunnelAddressLocal is the local tunnel IP address (e.g., "10.99.0.1/30").
+                      type: string
+                    tunnelAddressRemote:
+                      description: TunnelAddressRemote is the remote tunnel IP address (e.g., "10.99.0.2/30").
+                      type: string
+                    presharedKey:
+                      description: PresharedKey is a reference to a Secret containing the IPsec pre-shared key.
+                      type: object
+                      required:
+                      - name
+                      - key
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                        key:
+                          type: string
+                          minLength: 1
+              remoteAccess:
+                description: RemoteAccess defines optional client-to-site VPN configuration.
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: false
+                  addressPool:
+                    description: AddressPool is the IP address pool for remote clients.
+                    type: string
+                  dnsServers:
+                    description: DNSServers is a list of DNS server addresses pushed to remote clients.
+                    type: array
+                    items:
+                      type: string
+                  maxClients:
+                    description: MaxClients is the maximum number of concurrent remote access clients.
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    default: 10
+              localNetworks:
+                description: LocalNetworks lists the local networks to advertise to VPN peers.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    networkRef:
+                      description: NetworkRef is a reference to a CUDN or UDN resource.
+                      type: object
+                      required:
+                      - name
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                        kind:
+                          type: string
+                          enum:
+                          - ClusterUserDefinedNetwork
+                          - UserDefinedNetwork
+                          default: ClusterUserDefinedNetwork
+                        namespace:
+                          type: string
+                    cidr:
+                      description: CIDR is an explicit CIDR to advertise.
+                      type: string
+              mtu:
+                description: MTU defines MTU and TCP MSS clamping settings for VPN tunnels.
+                type: object
+                properties:
+                  tunnelMTU:
+                    description: TunnelMTU is the MTU for the tunnel interface.
+                    type: integer
+                    format: int32
+                    minimum: 1200
+                    maximum: 9000
+                    default: 1420
+                  mssClamp:
+                    description: MSSClamp enables TCP MSS clamping on tunnel traffic.
+                    type: boolean
+                    default: true
+              pod:
+                description: Pod defines pod-level overrides for the VPN gateway pod.
+                type: object
+                properties:
+                  image:
+                    description: Image is the container image to use for the VPN gateway pod.
+                    type: string
+          status:
+            description: VPCVPNGatewayStatus defines the observed state of a VPCVPNGateway.
+            type: object
+            properties:
+              phase:
+                description: Phase is the current lifecycle phase.
+                type: string
+                enum:
+                - Pending
+                - Provisioning
+                - Ready
+                - Degraded
+                - Error
+              tunnelEndpoint:
+                description: TunnelEndpoint is the public IP used as the VPN endpoint.
+                type: string
+              podName:
+                description: PodName is the name of the VPN gateway pod.
+                type: string
+              tunnels:
+                description: Tunnels reports per-tunnel status.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    status:
+                      type: string
+                      enum: [Up, Down, Connecting]
+                    lastHandshake:
+                      type: string
+                      format: date-time
+                    bytesIn:
+                      type: integer
+                      format: int64
+                    bytesOut:
+                      type: integer
+                      format: int64
+              advertisedRoutes:
+                description: AdvertisedRoutes is the list of remote CIDRs for VPCGateway route collection.
+                type: array
+                items:
+                  type: string
+              activeTunnels:
+                description: ActiveTunnels is the number of tunnels in the Up state.
+                type: integer
+                format: int32
+              totalTunnels:
+                description: TotalTunnels is the total number of configured tunnels.
+                type: integer
+                format: int32
+              connectedClients:
+                description: ConnectedClients is the number of currently connected remote access clients.
+                type: integer
+                format: int32
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the last successful sync.
+                type: string
+                format: date-time
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message
