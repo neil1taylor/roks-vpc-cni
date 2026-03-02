@@ -575,3 +575,77 @@ type L2BridgeRequest struct {
 	Remote     L2BridgeRemoteReq      `json:"remote"`
 	MTU        *L2BridgeMTUReq        `json:"mtu,omitempty"`
 }
+
+// ── VPN Gateway ──
+
+// VPNGatewayResponse represents a VPCVPNGateway resource.
+type VPNGatewayResponse struct {
+	Name             string               `json:"name"`
+	Namespace        string               `json:"namespace"`
+	Protocol         string               `json:"protocol"`
+	GatewayRef       string               `json:"gatewayRef"`
+	Phase            string               `json:"phase"`
+	TunnelEndpoint   string               `json:"tunnelEndpoint,omitempty"`
+	ActiveTunnels    int32                `json:"activeTunnels"`
+	TotalTunnels     int32                `json:"totalTunnels"`
+	ConnectedClients int32                `json:"connectedClients"`
+	Tunnels          []VPNTunnelStatusResp `json:"tunnels,omitempty"`
+	AdvertisedRoutes []string             `json:"advertisedRoutes,omitempty"`
+	TunnelMTU        int32                `json:"tunnelMTU,omitempty"`
+	MSSClamp         *bool                `json:"mssClamp,omitempty"`
+	PodName          string               `json:"podName,omitempty"`
+	SyncStatus       string               `json:"syncStatus"`
+	Message          string               `json:"message,omitempty"`
+	CreatedAt        string               `json:"createdAt,omitempty"`
+}
+
+// VPNTunnelStatusResp represents per-tunnel status in a VPN gateway.
+type VPNTunnelStatusResp struct {
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	LastHandshake string `json:"lastHandshake,omitempty"`
+	BytesIn       int64  `json:"bytesIn"`
+	BytesOut      int64  `json:"bytesOut"`
+}
+
+// VPNTunnelReq represents a tunnel entry in a VPN gateway create request.
+type VPNTunnelReq struct {
+	Name                string   `json:"name"`
+	RemoteEndpoint      string   `json:"remoteEndpoint"`
+	RemoteNetworks      []string `json:"remoteNetworks"`
+	PeerPublicKey       string   `json:"peerPublicKey,omitempty"`
+	TunnelAddressLocal  string   `json:"tunnelAddressLocal,omitempty"`
+	TunnelAddressRemote string   `json:"tunnelAddressRemote,omitempty"`
+	PresharedKeySecret    string `json:"presharedKeySecret,omitempty"`
+	PresharedKeySecretKey string `json:"presharedKeySecretKey,omitempty"`
+}
+
+// VPNWireGuardReq represents WireGuard config in a VPN gateway create request.
+type VPNWireGuardReq struct {
+	PrivateKeySecret    string `json:"privateKeySecret"`
+	PrivateKeySecretKey string `json:"privateKeySecretKey"`
+	ListenPort          *int32 `json:"listenPort,omitempty"`
+}
+
+// VPNIPsecReq represents IPsec config in a VPN gateway create request.
+type VPNIPsecReq struct {
+	Image string `json:"image,omitempty"`
+}
+
+// VPNMTUReq represents MTU settings in a VPN gateway create request.
+type VPNMTUReq struct {
+	TunnelMTU *int32 `json:"tunnelMTU,omitempty"`
+	MSSClamp  *bool  `json:"mssClamp,omitempty"`
+}
+
+// VPNGatewayRequest represents a request to create a VPCVPNGateway.
+type VPNGatewayRequest struct {
+	Name      string           `json:"name"`
+	Namespace string           `json:"namespace,omitempty"`
+	Protocol  string           `json:"protocol"`
+	GatewayRef string          `json:"gatewayRef"`
+	WireGuard *VPNWireGuardReq `json:"wireGuard,omitempty"`
+	IPsec     *VPNIPsecReq     `json:"ipsec,omitempty"`
+	Tunnels   []VPNTunnelReq   `json:"tunnels"`
+	MTU       *VPNMTUReq       `json:"mtu,omitempty"`
+}
