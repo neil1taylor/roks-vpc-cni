@@ -32,6 +32,10 @@ type RouterNetwork struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Address string `json:"address"`
+
+	// DHCP provides per-network DHCP overrides.
+	// +optional
+	DHCP *NetworkDHCP `json:"dhcp,omitempty"`
 }
 
 // RouteAdvertisement controls which routes the router advertises.
@@ -54,6 +58,124 @@ type RouterDHCP struct {
 	// Enabled controls whether the router acts as a DHCP server.
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled"`
+
+	// LeaseTime is the default DHCP lease duration (e.g. "12h", "1h", "30m").
+	// Defaults to "12h" if not specified.
+	// +optional
+	LeaseTime string `json:"leaseTime,omitempty"`
+
+	// DNS configures DNS settings for DHCP responses.
+	// +optional
+	DNS *DHCPDNSConfig `json:"dns,omitempty"`
+
+	// Options configures additional DHCP options.
+	// +optional
+	Options *DHCPOptions `json:"options,omitempty"`
+}
+
+// NetworkDHCP provides per-network DHCP overrides.
+type NetworkDHCP struct {
+	// Enabled overrides the global DHCP enabled setting for this network.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Range defines a custom DHCP address range for this network.
+	// +optional
+	Range *NetworkDHCPRange `json:"range,omitempty"`
+
+	// LeaseTime overrides the global lease duration for this network.
+	// +optional
+	LeaseTime string `json:"leaseTime,omitempty"`
+
+	// Reservations defines static MAC→IP reservations for this network.
+	// +optional
+	Reservations []DHCPStaticReservation `json:"reservations,omitempty"`
+
+	// DNS overrides the global DNS settings for this network.
+	// +optional
+	DNS *DHCPDNSConfig `json:"dns,omitempty"`
+
+	// Options overrides the global DHCP options for this network.
+	// +optional
+	Options *DHCPOptions `json:"options,omitempty"`
+}
+
+// NetworkDHCPRange defines custom start/end addresses for a DHCP pool.
+type NetworkDHCPRange struct {
+	// Start is the first IP address in the DHCP pool.
+	// +kubebuilder:validation:Required
+	Start string `json:"start"`
+
+	// End is the last IP address in the DHCP pool.
+	// +kubebuilder:validation:Required
+	End string `json:"end"`
+}
+
+// DHCPStaticReservation maps a MAC address to a fixed IP.
+type DHCPStaticReservation struct {
+	// MAC is the hardware address (e.g. "fa:16:3e:aa:bb:cc").
+	// +kubebuilder:validation:Required
+	MAC string `json:"mac"`
+
+	// IP is the reserved IP address (e.g. "10.100.0.50").
+	// +kubebuilder:validation:Required
+	IP string `json:"ip"`
+
+	// Hostname is an optional hostname for the reservation.
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
+}
+
+// DHCPDNSConfig configures DNS settings for DHCP responses.
+type DHCPDNSConfig struct {
+	// Nameservers is a list of DNS server IP addresses (DHCP option 6).
+	// +optional
+	Nameservers []string `json:"nameservers,omitempty"`
+
+	// SearchDomains is a list of DNS search domains (DHCP option 119).
+	// +optional
+	SearchDomains []string `json:"searchDomains,omitempty"`
+
+	// LocalDomain sets the local domain name for DHCP clients.
+	// +optional
+	LocalDomain string `json:"localDomain,omitempty"`
+}
+
+// DHCPOptions configures additional DHCP options.
+type DHCPOptions struct {
+	// Router overrides the default gateway (DHCP option 3).
+	// +optional
+	Router string `json:"router,omitempty"`
+
+	// MTU sets the interface MTU for DHCP clients (DHCP option 26).
+	// +optional
+	MTU *int32 `json:"mtu,omitempty"`
+
+	// NTPServers is a list of NTP server addresses (DHCP option 42).
+	// +optional
+	NTPServers []string `json:"ntpServers,omitempty"`
+
+	// Custom is a list of raw dnsmasq --dhcp-option values for passthrough.
+	// +optional
+	Custom []string `json:"custom,omitempty"`
+}
+
+// DHCPNetworkStatus reports the DHCP status of a single network.
+type DHCPNetworkStatus struct {
+	// Enabled indicates whether DHCP is active on this network.
+	Enabled bool `json:"enabled"`
+
+	// PoolStart is the first IP in the DHCP range.
+	// +optional
+	PoolStart string `json:"poolStart,omitempty"`
+
+	// PoolEnd is the last IP in the DHCP range.
+	// +optional
+	PoolEnd string `json:"poolEnd,omitempty"`
+
+	// ReservationCount is the number of static reservations configured.
+	// +optional
+	ReservationCount int32 `json:"reservationCount,omitempty"`
 }
 
 // RouterNetworkStatus reports the status of a network attached to the router.
@@ -66,6 +188,10 @@ type RouterNetworkStatus struct {
 
 	// Connected indicates whether the router has connectivity to this network.
 	Connected bool `json:"connected"`
+
+	// DHCP reports the DHCP status of this network.
+	// +optional
+	DHCP *DHCPNetworkStatus `json:"dhcp,omitempty"`
 }
 
 // RouterIDS defines IDS/IPS configuration using a Suricata sidecar container.

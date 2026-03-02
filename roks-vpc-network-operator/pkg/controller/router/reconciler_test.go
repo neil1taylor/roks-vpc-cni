@@ -930,6 +930,399 @@ func TestPodNeedsRecreation_IDSModeChanged(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// DHCP Tests
+// ---------------------------------------------------------------------------
+
+// TestResolvedDHCPConfig_GlobalOnly tests global enabled with no per-network overrides.
+func TestResolvedDHCPConfig_GlobalOnly(t *testing.T) {
+	global := &v1alpha1.RouterDHCP{Enabled: true}
+	net := v1alpha1.RouterNetwork{Name: "app", Address: "10.100.0.1/24"}
+
+	cfg := resolvedDHCPConfig(global, net)
+	if cfg == nil {
+		t.Fatal("expected resolved config, got nil")
+	}
+	if cfg.LeaseTime != "12h" {
+		t.Errorf("expected default lease 12h, got %q", cfg.LeaseTime)
+	}
+}
+
+// TestResolvedDHCPConfig_PerNetworkDisable tests that per-network enabled=false overrides global.
+func TestResolvedDHCPConfig_PerNetworkDisable(t *testing.T) {
+	global := &v1alpha1.RouterDHCP{Enabled: true}
+	boolFalse := false
+	net := v1alpha1.RouterNetwork{
+		Name:    "isolated",
+		Address: "10.200.0.1/24",
+		DHCP:    &v1alpha1.NetworkDHCP{Enabled: &boolFalse},
+	}
+
+	cfg := resolvedDHCPConfig(global, net)
+	if cfg != nil {
+		t.Error("expected nil (disabled), got config")
+	}
+}
+
+// TestResolvedDHCPConfig_PerNetworkEnable tests that per-network enabled=true works even when global is disabled.
+func TestResolvedDHCPConfig_PerNetworkEnable(t *testing.T) {
+	global := &v1alpha1.RouterDHCP{Enabled: false}
+	boolTrue := true
+	net := v1alpha1.RouterNetwork{
+		Name:    "special",
+		Address: "10.200.0.1/24",
+		DHCP:    &v1alpha1.NetworkDHCP{Enabled: &boolTrue},
+	}
+
+	cfg := resolvedDHCPConfig(global, net)
+	if cfg == nil {
+		t.Fatal("expected config when per-network enables DHCP")
+	}
+}
+
+// TestResolvedDHCPConfig_LeaseTimeMerge tests that per-network lease time overrides global.
+func TestResolvedDHCPConfig_LeaseTimeMerge(t *testing.T) {
+	global := &v1alpha1.RouterDHCP{Enabled: true, LeaseTime: "6h"}
+	net := v1alpha1.RouterNetwork{
+		Name:    "fast",
+		Address: "10.100.0.1/24",
+		DHCP:    &v1alpha1.NetworkDHCP{LeaseTime: "1h"},
+	}
+
+	cfg := resolvedDHCPConfig(global, net)
+	if cfg == nil {
+		t.Fatal("expected config, got nil")
+	}
+	if cfg.LeaseTime != "1h" {
+		t.Errorf("expected per-network lease 1h, got %q", cfg.LeaseTime)
+	}
+}
+
+// TestResolvedDHCPConfig_DNSMerge tests that per-network DNS replaces global DNS wholesale.
+func TestResolvedDHCPConfig_DNSMerge(t *testing.T) {
+	global := &v1alpha1.RouterDHCP{
+		Enabled: true,
+		DNS: &v1alpha1.DHCPDNSConfig{
+			Nameservers: []string{"8.8.8.8", "1.1.1.1"},
+		},
+	}
+	net := v1alpha1.RouterNetwork{
+		Name:    "custom-dns",
+		Address: "10.100.0.1/24",
+		DHCP: &v1alpha1.NetworkDHCP{
+			DNS: &v1alpha1.DHCPDNSConfig{
+				Nameservers: []string{"10.100.0.1"},
+				LocalDomain: "vm.local",
+			},
+		},
+	}
+
+	cfg := resolvedDHCPConfig(global, net)
+	if cfg == nil {
+		t.Fatal("expected config, got nil")
+	}
+	if len(cfg.DNS.Nameservers) != 1 || cfg.DNS.Nameservers[0] != "10.100.0.1" {
+		t.Errorf("expected per-network DNS to replace global, got %v", cfg.DNS.Nameservers)
+	}
+	if cfg.DNS.LocalDomain != "vm.local" {
+		t.Errorf("expected localDomain vm.local, got %q", cfg.DNS.LocalDomain)
+	}
+}
+
+// TestResolvedDHCPConfig_NilGlobal tests that per-network DHCP works when global spec.dhcp is nil.
+func TestResolvedDHCPConfig_NilGlobal(t *testing.T) {
+	boolTrue := true
+	net := v1alpha1.RouterNetwork{
+		Name:    "standalone",
+		Address: "10.100.0.1/24",
+		DHCP:    &v1alpha1.NetworkDHCP{Enabled: &boolTrue, LeaseTime: "30m"},
+	}
+
+	cfg := resolvedDHCPConfig(nil, net)
+	if cfg == nil {
+		t.Fatal("expected config with nil global but per-network enabled")
+	}
+	if cfg.LeaseTime != "30m" {
+		t.Errorf("expected 30m, got %q", cfg.LeaseTime)
+	}
+}
+
+// TestGenerateDnsmasqCommand_Basic tests auto-computed range with default lease.
+func TestGenerateDnsmasqCommand_Basic(t *testing.T) {
+	cfg := &resolvedDHCP{LeaseTime: "12h"}
+	cmd := generateDnsmasqCommand("net0", "10.100.0.1/24", cfg)
+
+	if !containsString(cmd, "--interface=net0") {
+		t.Error("expected --interface=net0")
+	}
+	if !containsString(cmd, "--dhcp-range=10.100.0.10,10.100.0.254,255.255.255.0,12h") {
+		t.Errorf("expected auto-computed range, got %q", cmd)
+	}
+	if !containsString(cmd, "--bind-interfaces") {
+		t.Error("expected --bind-interfaces")
+	}
+	if !containsString(cmd, "--pid-file=/var/run/dnsmasq-net0.pid") {
+		t.Error("expected --pid-file for net0")
+	}
+}
+
+// TestGenerateDnsmasqCommand_CustomRange tests custom start/end in output.
+func TestGenerateDnsmasqCommand_CustomRange(t *testing.T) {
+	cfg := &resolvedDHCP{
+		LeaseTime: "1h",
+		Range:     &v1alpha1.NetworkDHCPRange{Start: "10.100.0.20", End: "10.100.0.200"},
+	}
+	cmd := generateDnsmasqCommand("net0", "10.100.0.1/24", cfg)
+
+	if !containsString(cmd, "--dhcp-range=10.100.0.20,10.100.0.200,255.255.255.0,1h") {
+		t.Errorf("expected custom range, got %q", cmd)
+	}
+}
+
+// TestGenerateDnsmasqCommand_Reservations tests --dhcp-host flags.
+func TestGenerateDnsmasqCommand_Reservations(t *testing.T) {
+	cfg := &resolvedDHCP{
+		LeaseTime: "12h",
+		Reservations: []v1alpha1.DHCPStaticReservation{
+			{MAC: "fa:16:3e:aa:bb:cc", IP: "10.100.0.10", Hostname: "db-server"},
+			{MAC: "fa:16:3e:dd:ee:ff", IP: "10.100.0.11"},
+		},
+	}
+	cmd := generateDnsmasqCommand("net0", "10.100.0.1/24", cfg)
+
+	if !containsString(cmd, "--dhcp-host=fa:16:3e:aa:bb:cc,10.100.0.10,db-server") {
+		t.Errorf("expected reservation with hostname, got %q", cmd)
+	}
+	if !containsString(cmd, "--dhcp-host=fa:16:3e:dd:ee:ff,10.100.0.11") {
+		t.Errorf("expected reservation without hostname, got %q", cmd)
+	}
+}
+
+// TestGenerateDnsmasqCommand_AllDNS tests nameservers, search domains, and local domain flags.
+func TestGenerateDnsmasqCommand_AllDNS(t *testing.T) {
+	cfg := &resolvedDHCP{
+		LeaseTime: "12h",
+		DNS: &v1alpha1.DHCPDNSConfig{
+			Nameservers:   []string{"8.8.8.8", "1.1.1.1"},
+			SearchDomains: []string{"example.com", "test.local"},
+			LocalDomain:   "vm.local",
+		},
+	}
+	cmd := generateDnsmasqCommand("net0", "10.100.0.1/24", cfg)
+
+	if !containsString(cmd, "--dhcp-option=6,8.8.8.8,1.1.1.1") {
+		t.Errorf("expected nameservers option, got %q", cmd)
+	}
+	if !containsString(cmd, "--dhcp-option=119,example.com,test.local") {
+		t.Errorf("expected search domains option, got %q", cmd)
+	}
+	if !containsString(cmd, "--domain=vm.local") {
+		t.Errorf("expected local domain, got %q", cmd)
+	}
+	if !containsString(cmd, "--expand-hosts") {
+		t.Errorf("expected --expand-hosts with local domain, got %q", cmd)
+	}
+}
+
+// TestGenerateDnsmasqCommand_AllOptions tests router, MTU, NTP, and custom option flags.
+func TestGenerateDnsmasqCommand_AllOptions(t *testing.T) {
+	mtu := int32(1400)
+	cfg := &resolvedDHCP{
+		LeaseTime: "12h",
+		Options: &v1alpha1.DHCPOptions{
+			Router:     "10.100.0.1",
+			MTU:        &mtu,
+			NTPServers: []string{"pool.ntp.org"},
+			Custom:     []string{"15,example.com"},
+		},
+	}
+	cmd := generateDnsmasqCommand("net0", "10.100.0.1/24", cfg)
+
+	if !containsString(cmd, "--dhcp-option=3,10.100.0.1") {
+		t.Errorf("expected router option, got %q", cmd)
+	}
+	if !containsString(cmd, "--dhcp-option=26,1400") {
+		t.Errorf("expected MTU option, got %q", cmd)
+	}
+	if !containsString(cmd, "--dhcp-option=42,pool.ntp.org") {
+		t.Errorf("expected NTP option, got %q", cmd)
+	}
+	if !containsString(cmd, "--dhcp-option=15,example.com") {
+		t.Errorf("expected custom option, got %q", cmd)
+	}
+}
+
+// TestComputeDHCPRangeWithLease tests parameterized lease times.
+func TestComputeDHCPRangeWithLease(t *testing.T) {
+	tests := []struct {
+		address   string
+		leaseTime string
+		want      string
+	}{
+		{"10.100.0.1/24", "1h", "10.100.0.10,10.100.0.254,255.255.255.0,1h"},
+		{"10.100.0.1/24", "30m", "10.100.0.10,10.100.0.254,255.255.255.0,30m"},
+		{"10.200.0.1/20", "6h", "10.200.0.10,10.200.15.254,255.255.240.0,6h"},
+		{"invalid", "12h", ""},
+	}
+	for _, tc := range tests {
+		got := computeDHCPRangeWithLease(tc.address, tc.leaseTime)
+		if got != tc.want {
+			t.Errorf("computeDHCPRangeWithLease(%q, %q) = %q, want %q", tc.address, tc.leaseTime, got, tc.want)
+		}
+	}
+}
+
+// TestBuildInitScript_PerNetworkDHCP tests that the init script generates
+// dnsmasq commands only for networks with DHCP enabled.
+func TestBuildInitScript_PerNetworkDHCP(t *testing.T) {
+	boolFalse := false
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-dhcp-mix", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			DHCP:    &v1alpha1.RouterDHCP{Enabled: true},
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "net-a", Address: "10.100.0.1/24"}, // inherits global → enabled
+				{Name: "net-b", Address: "10.200.0.1/24", DHCP: &v1alpha1.NetworkDHCP{Enabled: &boolFalse}}, // disabled
+				{Name: "net-c", Address: "10.300.0.1/24", DHCP: &v1alpha1.NetworkDHCP{
+					Range: &v1alpha1.NetworkDHCPRange{Start: "10.300.0.50", End: "10.300.0.100"},
+				}}, // enabled with custom range
+			},
+		},
+	}
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	script := buildInitScript(router, gw)
+
+	// net0 (net-a) should have dnsmasq
+	if !containsString(script, "--interface=net0") {
+		t.Error("expected dnsmasq for net0 (globally enabled)")
+	}
+
+	// net1 (net-b) should NOT have dnsmasq
+	if containsString(script, "--interface=net1") {
+		t.Error("expected NO dnsmasq for net1 (per-network disabled)")
+	}
+
+	// net2 (net-c) should have dnsmasq with custom range
+	if !containsString(script, "--interface=net2") {
+		t.Error("expected dnsmasq for net2 (enabled with custom range)")
+	}
+}
+
+// TestBuildRouterPod_DHCPConfigHash tests that DHCP_CONFIG_HASH env var is present
+// and changes when config changes.
+func TestBuildRouterPod_DHCPConfigHash(t *testing.T) {
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	router1 := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-hash1", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			DHCP:     &v1alpha1.RouterDHCP{Enabled: true, LeaseTime: "12h"},
+			Networks: []v1alpha1.RouterNetwork{{Name: "app", Address: "10.100.0.1/24"}},
+		},
+	}
+
+	router2 := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-hash2", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			DHCP:     &v1alpha1.RouterDHCP{Enabled: true, LeaseTime: "1h"},
+			Networks: []v1alpha1.RouterNetwork{{Name: "app", Address: "10.100.0.1/24"}},
+		},
+	}
+
+	pod1 := buildRouterPod(router1, gw)
+	pod2 := buildRouterPod(router2, gw)
+
+	hash1 := ""
+	hash2 := ""
+	for _, env := range pod1.Spec.Containers[0].Env {
+		if env.Name == "DHCP_CONFIG_HASH" {
+			hash1 = env.Value
+		}
+	}
+	for _, env := range pod2.Spec.Containers[0].Env {
+		if env.Name == "DHCP_CONFIG_HASH" {
+			hash2 = env.Value
+		}
+	}
+
+	if hash1 == "" {
+		t.Fatal("expected DHCP_CONFIG_HASH env var on pod1")
+	}
+	if hash2 == "" {
+		t.Fatal("expected DHCP_CONFIG_HASH env var on pod2")
+	}
+	if hash1 == hash2 {
+		t.Error("expected different hashes for different DHCP configs")
+	}
+}
+
+// TestPodNeedsRecreation_DHCPConfigChanged tests that changing DHCP lease time
+// triggers pod recreation via DHCP_CONFIG_HASH change.
+func TestPodNeedsRecreation_DHCPConfigChanged(t *testing.T) {
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	oldRouter := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-test", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			DHCP:     &v1alpha1.RouterDHCP{Enabled: true, LeaseTime: "12h"},
+			Networks: []v1alpha1.RouterNetwork{{Name: "app", Address: "10.100.0.1/24"}},
+		},
+	}
+	existingPod := buildRouterPod(oldRouter, gw)
+
+	newRouter := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-test", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-test",
+			DHCP:     &v1alpha1.RouterDHCP{Enabled: true, LeaseTime: "1h"},
+			Networks: []v1alpha1.RouterNetwork{{Name: "app", Address: "10.100.0.1/24"}},
+		},
+	}
+
+	r := &Reconciler{}
+	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+		t.Error("expected pod recreation when DHCP lease time changes")
+	}
+}
+
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
 }

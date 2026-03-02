@@ -1,6 +1,7 @@
 package router
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -284,17 +285,17 @@ func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) string
 	sb.WriteString("  echo \"$IPS_NFQUEUE_CONFIG\" | nft -f -\n")
 	sb.WriteString("fi\n\n")
 
-	// Optional DHCP server
-	sb.WriteString("# Optional: start dnsmasq for DHCP\n")
-	sb.WriteString("if [ \"$DHCP_ENABLED\" = \"true\" ]; then\n")
-	for i, net := range router.Spec.Networks {
-		ifName := fmt.Sprintf("net%d", i)
-		dhcpRange := computeDHCPRange(net.Address)
-		if dhcpRange != "" {
-			sb.WriteString(fmt.Sprintf("  dnsmasq --interface=%s --dhcp-range=%s --no-daemon --log-dhcp &\n", ifName, dhcpRange))
+	// DHCP servers — per-network with merged global/local config
+	sb.WriteString("# DHCP servers\n")
+	for i, netSpec := range router.Spec.Networks {
+		cfg := resolvedDHCPConfig(router.Spec.DHCP, netSpec)
+		if cfg == nil {
+			continue
 		}
+		ifName := fmt.Sprintf("net%d", i)
+		sb.WriteString(generateDnsmasqCommand(ifName, netSpec.Address, cfg) + " &\n")
 	}
-	sb.WriteString("fi\n\n")
+	sb.WriteString("\n")
 
 	sb.WriteString("# Keep the pod running\n")
 	sb.WriteString("exec sleep infinity\n")
@@ -325,14 +326,27 @@ func buildEnvVars(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) []corev1.
 		})
 	}
 
-	// DHCP
+	// DHCP — check if any network has DHCP enabled (global or per-network)
+	anyDHCP := false
+	for _, netSpec := range router.Spec.Networks {
+		if resolvedDHCPConfig(router.Spec.DHCP, netSpec) != nil {
+			anyDHCP = true
+			break
+		}
+	}
 	dhcpEnabled := "false"
-	if router.Spec.DHCP != nil && router.Spec.DHCP.Enabled {
+	if anyDHCP {
 		dhcpEnabled = "true"
 	}
 	envVars = append(envVars, corev1.EnvVar{
 		Name:  "DHCP_ENABLED",
 		Value: dhcpEnabled,
+	})
+
+	// DHCP config hash — ensures podNeedsRecreation detects DHCP changes
+	envVars = append(envVars, corev1.EnvVar{
+		Name:  "DHCP_CONFIG_HASH",
+		Value: dhcpConfigHash(router),
 	})
 
 	// IPS NFQUEUE nftables rules — applied by the router init container
@@ -395,6 +409,167 @@ func generateFirewallConfig(fw *v1alpha1.GatewayFirewall) string {
 	return sb.String()
 }
 
+// resolvedDHCP holds the fully merged DHCP config for a single network.
+type resolvedDHCP struct {
+	LeaseTime    string
+	Range        *v1alpha1.NetworkDHCPRange
+	Reservations []v1alpha1.DHCPStaticReservation
+	DNS          *v1alpha1.DHCPDNSConfig
+	Options      *v1alpha1.DHCPOptions
+}
+
+// resolvedDHCPConfig merges global spec.dhcp with per-network spec.networks[].dhcp.
+// Returns nil if DHCP is disabled for this network.
+func resolvedDHCPConfig(global *v1alpha1.RouterDHCP, net v1alpha1.RouterNetwork) *resolvedDHCP {
+	globalEnabled := global != nil && global.Enabled
+
+	// Per-network enabled overrides global
+	if net.DHCP != nil && net.DHCP.Enabled != nil {
+		if !*net.DHCP.Enabled {
+			return nil
+		}
+		// per-network explicitly enabled
+	} else if !globalEnabled {
+		return nil
+	}
+
+	cfg := &resolvedDHCP{
+		LeaseTime: "12h", // default
+	}
+
+	// Apply global settings
+	if global != nil {
+		if global.LeaseTime != "" {
+			cfg.LeaseTime = global.LeaseTime
+		}
+		cfg.DNS = global.DNS
+		cfg.Options = global.Options
+	}
+
+	// Apply per-network overrides (replace wholesale, not field-level merge)
+	if net.DHCP != nil {
+		if net.DHCP.LeaseTime != "" {
+			cfg.LeaseTime = net.DHCP.LeaseTime
+		}
+		if net.DHCP.Range != nil {
+			cfg.Range = net.DHCP.Range
+		}
+		if len(net.DHCP.Reservations) > 0 {
+			cfg.Reservations = net.DHCP.Reservations
+		}
+		if net.DHCP.DNS != nil {
+			cfg.DNS = net.DHCP.DNS
+		}
+		if net.DHCP.Options != nil {
+			cfg.Options = net.DHCP.Options
+		}
+	}
+
+	return cfg
+}
+
+// computeDHCPRangeWithLease derives a DHCP range from a network address with a parameterized lease time.
+func computeDHCPRangeWithLease(address, leaseTime string) string {
+	_, ipNet, err := net.ParseCIDR(address)
+	if err != nil {
+		return ""
+	}
+
+	start := make(net.IP, len(ipNet.IP))
+	copy(start, ipNet.IP)
+	start[len(start)-1] += 10
+
+	end := broadcastIP(ipNet)
+	end[len(end)-1]--
+
+	mask := net.IP(ipNet.Mask)
+	return fmt.Sprintf("%s,%s,%s,%s", start, end, mask, leaseTime)
+}
+
+// generateDnsmasqCommand maps a resolved DHCP config to a dnsmasq command line.
+func generateDnsmasqCommand(ifName, address string, cfg *resolvedDHCP) string {
+	var args []string
+
+	// Interface binding
+	args = append(args,
+		fmt.Sprintf("--interface=%s", ifName),
+		"--bind-interfaces",
+		"--no-daemon",
+		"--log-dhcp",
+		"--no-resolv",
+		fmt.Sprintf("--pid-file=/var/run/dnsmasq-%s.pid", ifName),
+	)
+
+	// DHCP range
+	if cfg.Range != nil {
+		// Custom range — need subnet mask from address
+		_, ipNet, err := net.ParseCIDR(address)
+		if err == nil {
+			mask := net.IP(ipNet.Mask)
+			args = append(args, fmt.Sprintf("--dhcp-range=%s,%s,%s,%s",
+				cfg.Range.Start, cfg.Range.End, mask, cfg.LeaseTime))
+		}
+	} else {
+		// Auto-computed range
+		rangeStr := computeDHCPRangeWithLease(address, cfg.LeaseTime)
+		if rangeStr != "" {
+			args = append(args, fmt.Sprintf("--dhcp-range=%s", rangeStr))
+		}
+	}
+
+	// Static reservations
+	for _, res := range cfg.Reservations {
+		if res.Hostname != "" {
+			args = append(args, fmt.Sprintf("--dhcp-host=%s,%s,%s", res.MAC, res.IP, res.Hostname))
+		} else {
+			args = append(args, fmt.Sprintf("--dhcp-host=%s,%s", res.MAC, res.IP))
+		}
+	}
+
+	// DNS settings
+	if cfg.DNS != nil {
+		if len(cfg.DNS.Nameservers) > 0 {
+			args = append(args, fmt.Sprintf("--dhcp-option=6,%s", strings.Join(cfg.DNS.Nameservers, ",")))
+		}
+		if len(cfg.DNS.SearchDomains) > 0 {
+			args = append(args, fmt.Sprintf("--dhcp-option=119,%s", strings.Join(cfg.DNS.SearchDomains, ",")))
+		}
+		if cfg.DNS.LocalDomain != "" {
+			args = append(args, fmt.Sprintf("--domain=%s", cfg.DNS.LocalDomain), "--expand-hosts")
+		}
+	}
+
+	// DHCP options
+	if cfg.Options != nil {
+		if cfg.Options.Router != "" {
+			args = append(args, fmt.Sprintf("--dhcp-option=3,%s", cfg.Options.Router))
+		}
+		if cfg.Options.MTU != nil {
+			args = append(args, fmt.Sprintf("--dhcp-option=26,%d", *cfg.Options.MTU))
+		}
+		if len(cfg.Options.NTPServers) > 0 {
+			args = append(args, fmt.Sprintf("--dhcp-option=42,%s", strings.Join(cfg.Options.NTPServers, ",")))
+		}
+		for _, custom := range cfg.Options.Custom {
+			args = append(args, fmt.Sprintf("--dhcp-option=%s", custom))
+		}
+	}
+
+	return "dnsmasq " + strings.Join(args, " ")
+}
+
+// dhcpConfigHash computes a SHA256 hash of the DHCP configuration for change detection.
+func dhcpConfigHash(router *v1alpha1.VPCRouter) string {
+	data, _ := json.Marshal(struct {
+		Global   *v1alpha1.RouterDHCP   `json:"global,omitempty"`
+		Networks []v1alpha1.RouterNetwork `json:"networks"`
+	}{
+		Global:   router.Spec.DHCP,
+		Networks: router.Spec.Networks,
+	})
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
 // computeSubnetGateway derives the VPC subnet gateway IP from a host IP.
 // VPC subnets always use the first usable address (x.x.x.1) as the gateway.
 // For example, "10.240.1.5" → "10.240.1.1".
@@ -414,22 +589,7 @@ func computeSubnetGateway(ip string) string {
 //	"10.100.0.1/24" → "10.100.0.10,10.100.0.254,255.255.255.0,12h"
 //	"10.200.0.1/20" → "10.200.0.10,10.200.15.254,255.255.240.0,12h"
 func computeDHCPRange(address string) string {
-	_, ipNet, err := net.ParseCIDR(address)
-	if err != nil {
-		return ""
-	}
-
-	// Start: network + 10
-	start := make(net.IP, len(ipNet.IP))
-	copy(start, ipNet.IP)
-	start[len(start)-1] += 10
-
-	// End: broadcast - 1
-	end := broadcastIP(ipNet)
-	end[len(end)-1]--
-
-	mask := net.IP(ipNet.Mask)
-	return fmt.Sprintf("%s,%s,%s,12h", start, end, mask)
+	return computeDHCPRangeWithLease(address, "12h")
 }
 
 // broadcastIP returns the broadcast address for the given network.

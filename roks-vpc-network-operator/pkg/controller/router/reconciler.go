@@ -116,14 +116,44 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 	}
 	_ = transitNetwork // Used for informational purposes; could be stored in status later
 
-	// Step 5: Build network statuses from spec.networks
+	// Step 5: Build network statuses from spec.networks (including DHCP status)
 	networkStatuses := make([]v1alpha1.RouterNetworkStatus, 0, len(router.Spec.Networks))
-	for _, net := range router.Spec.Networks {
-		networkStatuses = append(networkStatuses, v1alpha1.RouterNetworkStatus{
-			Name:      net.Name,
-			Address:   net.Address,
+	anyDHCPEnabled := false
+	for _, netSpec := range router.Spec.Networks {
+		ns := v1alpha1.RouterNetworkStatus{
+			Name:      netSpec.Name,
+			Address:   netSpec.Address,
 			Connected: true,
-		})
+		}
+
+		// Populate DHCP status for this network
+		cfg := resolvedDHCPConfig(router.Spec.DHCP, netSpec)
+		if cfg != nil {
+			anyDHCPEnabled = true
+			dhcpStatus := &v1alpha1.DHCPNetworkStatus{
+				Enabled:          true,
+				ReservationCount: int32(len(cfg.Reservations)),
+			}
+			if cfg.Range != nil {
+				dhcpStatus.PoolStart = cfg.Range.Start
+				dhcpStatus.PoolEnd = cfg.Range.End
+			} else {
+				// Auto-computed range
+				_, ipNet, err := net.ParseCIDR(netSpec.Address)
+				if err == nil {
+					start := make(net.IP, len(ipNet.IP))
+					copy(start, ipNet.IP)
+					start[len(start)-1] += 10
+					end := broadcastIP(ipNet)
+					end[len(end)-1]--
+					dhcpStatus.PoolStart = start.String()
+					dhcpStatus.PoolEnd = end.String()
+				}
+			}
+			ns.DHCP = dhcpStatus
+		}
+
+		networkStatuses = append(networkStatuses, ns)
 	}
 
 	// Step 6: Build advertisedRoutes from spec.networks when route advertisement is enabled
@@ -182,6 +212,27 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		Message:            podCondMessage,
 		LastTransitionTime: now,
 	})
+
+	// DHCP status condition
+	if anyDHCPEnabled {
+		dhcpCondStatus := metav1.ConditionTrue
+		dhcpCondReason := "DHCPConfigured"
+		dhcpCondMessage := "DHCP servers configured"
+		if !podReady {
+			dhcpCondStatus = metav1.ConditionFalse
+			dhcpCondReason = "PodNotReady"
+			dhcpCondMessage = "DHCP servers waiting for pod"
+		}
+		meta.SetStatusCondition(&router.Status.Conditions, metav1.Condition{
+			Type:               "DHCPReady",
+			Status:             dhcpCondStatus,
+			Reason:             dhcpCondReason,
+			Message:            dhcpCondMessage,
+			LastTransitionTime: now,
+		})
+	} else {
+		meta.RemoveStatusCondition(&router.Status.Conditions, "DHCPReady")
+	}
 
 	// IDS/IPS status
 	if router.Spec.IDS != nil && router.Spec.IDS.Enabled {

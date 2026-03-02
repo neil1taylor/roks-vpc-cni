@@ -96,6 +96,85 @@ spec:
                       description: Address is the IP address on this network.
                       type: string
                       minLength: 1
+                    dhcp:
+                      description: Per-network DHCP overrides.
+                      type: object
+                      properties:
+                        enabled:
+                          description: Override global DHCP enabled setting for this network.
+                          type: boolean
+                        range:
+                          description: Custom DHCP address range.
+                          type: object
+                          required:
+                          - start
+                          - end
+                          properties:
+                            start:
+                              description: First IP address in the DHCP pool.
+                              type: string
+                            end:
+                              description: Last IP address in the DHCP pool.
+                              type: string
+                        leaseTime:
+                          description: Override global lease duration for this network.
+                          type: string
+                        reservations:
+                          description: Static MAC to IP reservations.
+                          type: array
+                          items:
+                            type: object
+                            required:
+                            - mac
+                            - ip
+                            properties:
+                              mac:
+                                description: "Hardware address (e.g. fa:16:3e:aa:bb:cc)."
+                                type: string
+                              ip:
+                                description: "Reserved IP address (e.g. 10.100.0.50)."
+                                type: string
+                              hostname:
+                                description: Optional hostname for the reservation.
+                                type: string
+                        dns:
+                          description: Override global DNS settings for this network.
+                          type: object
+                          properties:
+                            nameservers:
+                              description: DNS server IP addresses (DHCP option 6).
+                              type: array
+                              items:
+                                type: string
+                            searchDomains:
+                              description: DNS search domains (DHCP option 119).
+                              type: array
+                              items:
+                                type: string
+                            localDomain:
+                              description: Local domain name for DHCP clients.
+                              type: string
+                        options:
+                          description: Override global DHCP options for this network.
+                          type: object
+                          properties:
+                            router:
+                              description: Override default gateway (DHCP option 3).
+                              type: string
+                            mtu:
+                              description: Interface MTU for DHCP clients (DHCP option 26).
+                              type: integer
+                              format: int32
+                            ntpServers:
+                              description: NTP server addresses (DHCP option 42).
+                              type: array
+                              items:
+                                type: string
+                            custom:
+                              description: Raw dnsmasq --dhcp-option values for passthrough.
+                              type: array
+                              items:
+                                type: string
               routeAdvertisement:
                 description: RouteAdvertisement controls which routes the router advertises.
                 type: object
@@ -120,6 +199,47 @@ spec:
                     description: Enabled controls whether the router acts as a DHCP server.
                     type: boolean
                     default: false
+                  leaseTime:
+                    description: "Default DHCP lease duration (e.g. 12h, 1h, 30m). Defaults to 12h."
+                    type: string
+                  dns:
+                    description: DNS settings for DHCP responses.
+                    type: object
+                    properties:
+                      nameservers:
+                        description: DNS server IP addresses (DHCP option 6).
+                        type: array
+                        items:
+                          type: string
+                      searchDomains:
+                        description: DNS search domains (DHCP option 119).
+                        type: array
+                        items:
+                          type: string
+                      localDomain:
+                        description: Local domain name for DHCP clients.
+                        type: string
+                  options:
+                    description: Additional DHCP options.
+                    type: object
+                    properties:
+                      router:
+                        description: Override default gateway (DHCP option 3).
+                        type: string
+                      mtu:
+                        description: Interface MTU for DHCP clients (DHCP option 26).
+                        type: integer
+                        format: int32
+                      ntpServers:
+                        description: NTP server addresses (DHCP option 42).
+                        type: array
+                        items:
+                          type: string
+                      custom:
+                        description: Raw dnsmasq --dhcp-option values for passthrough.
+                        type: array
+                        items:
+                          type: string
               firewall:
                 description: Firewall defines firewall rules for the router.
                 type: object
@@ -259,6 +379,23 @@ spec:
                     connected:
                       description: Connected indicates whether the router has connectivity to this network.
                       type: boolean
+                    dhcp:
+                      description: DHCP status of this network.
+                      type: object
+                      properties:
+                        enabled:
+                          description: Whether DHCP is active on this network.
+                          type: boolean
+                        poolStart:
+                          description: First IP in the DHCP range.
+                          type: string
+                        poolEnd:
+                          description: Last IP in the DHCP range.
+                          type: string
+                        reservationCount:
+                          description: Number of static reservations configured.
+                          type: integer
+                          format: int32
               advertisedRoutes:
                 description: AdvertisedRoutes is the list of routes the router is currently advertising.
                 type: array
