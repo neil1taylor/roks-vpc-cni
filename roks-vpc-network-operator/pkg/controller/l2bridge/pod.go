@@ -157,7 +157,7 @@ func buildGRETAPInitScript(bridge *v1alpha1.VPCL2Bridge) string {
 	sb.WriteString("# Step 1: WireGuard\n")
 	sb.WriteString("ip link add dev wg0 type wireguard\n")
 	sb.WriteString("ip addr add ${WG_LOCAL_ADDR} dev wg0\n")
-	sb.WriteString("wg set wg0 private-key /run/secrets/wireguard/privateKey peer ${WG_PEER_PUBLIC_KEY} endpoint ${WG_REMOTE_ENDPOINT}:${WG_LISTEN_PORT} allowed-ips 0.0.0.0/0\n")
+	sb.WriteString("wg set wg0 listen-port ${WG_LISTEN_PORT} private-key /run/secrets/wireguard/privateKey peer ${WG_PEER_PUBLIC_KEY} endpoint ${WG_REMOTE_ENDPOINT}:${WG_LISTEN_PORT} allowed-ips 0.0.0.0/0\n")
 	sb.WriteString("ip link set wg0 up\n\n")
 
 	// Step 2: GRETAP

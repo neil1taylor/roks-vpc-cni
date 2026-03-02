@@ -129,7 +129,7 @@ func TestBuildGRETAPInitScript(t *testing.T) {
 		"${WG_PEER_PUBLIC_KEY}",
 		"${WG_REMOTE_ENDPOINT}",
 		"${WG_LISTEN_PORT}",
-		"wg set wg0 private-key /run/secrets/wireguard/privateKey",
+		"wg set wg0 listen-port ${WG_LISTEN_PORT} private-key /run/secrets/wireguard/privateKey",
 		"ip link set wg0 up",
 
 		// GRETAP
