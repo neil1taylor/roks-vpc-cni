@@ -500,6 +500,50 @@ export interface CreateGatewayRequest {
 
 // ── VPCRouter ──
 
+export interface DHCPReservation {
+  mac: string;
+  ip: string;
+  hostname?: string;
+}
+
+export interface DHCPDNSConfig {
+  nameservers?: string[];
+  searchDomains?: string[];
+  localDomain?: string;
+}
+
+export interface DHCPOptionsConfig {
+  router?: string;
+  mtu?: number;
+  ntpServers?: string[];
+  custom?: string[];
+}
+
+export interface DHCPRange {
+  start: string;
+  end: string;
+}
+
+export interface RouterDHCPConfig {
+  enabled: boolean;
+  leaseTime?: string;
+  dns?: DHCPDNSConfig;
+  options?: DHCPOptionsConfig;
+}
+
+export interface RouterNetworkDHCP {
+  enabled: boolean;
+  hasOverride: boolean;
+  poolStart?: string;
+  poolEnd?: string;
+  rangeOverride?: DHCPRange;
+  leaseTime?: string;
+  reservations?: DHCPReservation[];
+  reservationCount: number;
+  dns?: DHCPDNSConfig;
+  options?: DHCPOptionsConfig;
+}
+
 export interface Router {
   name: string;
   namespace: string;
@@ -510,6 +554,7 @@ export interface Router {
   advertisedRoutes?: string[];
   functions?: string[];
   idsMode?: string;
+  dhcp?: RouterDHCPConfig;
   syncStatus: string;
   createdAt?: string;
 }
@@ -518,13 +563,30 @@ export interface RouterNetwork {
   name: string;
   address: string;
   connected: boolean;
+  dhcp?: RouterNetworkDHCP;
+}
+
+export interface CreateRouterNetworkDHCP {
+  override: 'inherit' | 'enabled' | 'disabled';
+  rangeStart?: string;
+  rangeEnd?: string;
+  leaseTime?: string;
+  reservations?: DHCPReservation[];
+  dns?: DHCPDNSConfig;
+  options?: DHCPOptionsConfig;
 }
 
 export interface CreateRouterRequest {
   name: string;
   namespace?: string;
   gateway: string;
-  networks?: { name: string; address: string }[];
+  networks?: { name: string; address: string; dhcp?: CreateRouterNetworkDHCP }[];
+  dhcp?: {
+    enabled: boolean;
+    leaseTime?: string;
+    dns?: DHCPDNSConfig;
+    options?: DHCPOptionsConfig;
+  };
 }
 
 // ── Public Address Range (PAR) ──

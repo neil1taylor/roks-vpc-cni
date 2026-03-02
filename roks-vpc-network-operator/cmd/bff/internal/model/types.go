@@ -458,21 +458,24 @@ type RouterResponse struct {
 	AdvertisedRoutes []string            `json:"advertisedRoutes,omitempty"`
 	PodIP            string              `json:"podIP,omitempty"`
 	IDSMode          string              `json:"idsMode,omitempty"`
+	DHCP             *RouterDHCPResp     `json:"dhcp,omitempty"`
 	SyncStatus       string              `json:"syncStatus"`
 	CreatedAt        string              `json:"createdAt,omitempty"`
 }
 
 // RouterNetworkResp represents a network attached to a router.
 type RouterNetworkResp struct {
-	Name      string `json:"name"`
-	Address   string `json:"address"`
-	Connected bool   `json:"connected"`
+	Name      string                  `json:"name"`
+	Address   string                  `json:"address"`
+	Connected bool                    `json:"connected"`
+	DHCP      *RouterNetworkDHCPResp  `json:"dhcp,omitempty"`
 }
 
 // RouterNetworkReq represents a network entry in a router create request.
 type RouterNetworkReq struct {
-	Name    string `json:"name"`
-	Address string `json:"address"`
+	Name    string               `json:"name"`
+	Address string               `json:"address"`
+	DHCP    *RouterNetworkDHCPReq `json:"dhcp,omitempty"`
 }
 
 // RouterRequest represents a request to create a VPCRouter.
@@ -481,6 +484,78 @@ type RouterRequest struct {
 	Namespace string             `json:"namespace,omitempty"`
 	Gateway   string             `json:"gateway"`
 	Networks  []RouterNetworkReq `json:"networks,omitempty"`
+	DHCP      *RouterDHCPReq     `json:"dhcp,omitempty"`
+}
+
+// ── Router DHCP Types ──
+
+// RouterDHCPResp represents global DHCP configuration in a router response.
+type RouterDHCPResp struct {
+	Enabled   bool             `json:"enabled"`
+	LeaseTime string           `json:"leaseTime,omitempty"`
+	DNS       *DHCPDNSResp     `json:"dns,omitempty"`
+	Options   *DHCPOptionsResp `json:"options,omitempty"`
+}
+
+// RouterNetworkDHCPResp represents per-network DHCP state (merged spec+status).
+type RouterNetworkDHCPResp struct {
+	Enabled          bool                  `json:"enabled"`
+	HasOverride      bool                  `json:"hasOverride"`
+	PoolStart        string                `json:"poolStart,omitempty"`
+	PoolEnd          string                `json:"poolEnd,omitempty"`
+	RangeOverride    *DHCPRangeResp        `json:"rangeOverride,omitempty"`
+	LeaseTime        string                `json:"leaseTime,omitempty"`
+	Reservations     []DHCPReservationResp `json:"reservations,omitempty"`
+	ReservationCount int                   `json:"reservationCount"`
+	DNS              *DHCPDNSResp          `json:"dns,omitempty"`
+	Options          *DHCPOptionsResp      `json:"options,omitempty"`
+}
+
+// DHCPReservationResp represents a static DHCP reservation.
+type DHCPReservationResp struct {
+	MAC      string `json:"mac"`
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname,omitempty"`
+}
+
+// DHCPDNSResp represents DNS settings in a DHCP response.
+type DHCPDNSResp struct {
+	Nameservers   []string `json:"nameservers,omitempty"`
+	SearchDomains []string `json:"searchDomains,omitempty"`
+	LocalDomain   string   `json:"localDomain,omitempty"`
+}
+
+// DHCPOptionsResp represents additional DHCP options in a response.
+type DHCPOptionsResp struct {
+	Router     string   `json:"router,omitempty"`
+	MTU        *int32   `json:"mtu,omitempty"`
+	NTPServers []string `json:"ntpServers,omitempty"`
+	Custom     []string `json:"custom,omitempty"`
+}
+
+// DHCPRangeResp represents a DHCP address range.
+type DHCPRangeResp struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+// RouterDHCPReq represents global DHCP configuration in a router create request.
+type RouterDHCPReq struct {
+	Enabled   bool             `json:"enabled"`
+	LeaseTime string           `json:"leaseTime,omitempty"`
+	DNS       *DHCPDNSResp     `json:"dns,omitempty"`
+	Options   *DHCPOptionsResp `json:"options,omitempty"`
+}
+
+// RouterNetworkDHCPReq represents per-network DHCP configuration in a create request.
+type RouterNetworkDHCPReq struct {
+	Override     string                `json:"override"`
+	RangeStart   string                `json:"rangeStart,omitempty"`
+	RangeEnd     string                `json:"rangeEnd,omitempty"`
+	LeaseTime    string                `json:"leaseTime,omitempty"`
+	Reservations []DHCPReservationResp `json:"reservations,omitempty"`
+	DNS          *DHCPDNSResp          `json:"dns,omitempty"`
+	Options      *DHCPOptionsResp      `json:"options,omitempty"`
 }
 
 // ── Public Address Range (PAR) ──

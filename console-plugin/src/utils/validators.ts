@@ -90,6 +90,13 @@ export function isValidProtocol(protocol: string): boolean {
 }
 
 /**
+ * Validate MAC address (colon-separated hex, e.g. "fa:16:3e:aa:bb:cc")
+ */
+export function isValidMAC(mac: string): boolean {
+  return /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac);
+}
+
+/**
  * Validate VLAN ID
  */
 export function isValidVLANId(vlan: number | string): boolean {
