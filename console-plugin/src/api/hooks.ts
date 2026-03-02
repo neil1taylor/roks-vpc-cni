@@ -508,6 +508,23 @@ export function useL2Bridge(name: string, namespace?: string) {
   return { l2bridge, loading, error };
 }
 
+// VPN Gateway Hooks
+export function useVPNGateways() {
+  const { data: vpnGateways, loading, error } = useBFFData(
+    () => apiClient.listVPNGateways(),
+    [],
+  );
+  return { vpnGateways, loading, error };
+}
+
+export function useVPNGateway(name: string, namespace?: string) {
+  const { data: vpnGateway, loading, error } = useBFFData(
+    () => apiClient.getVPNGateway(name, namespace),
+    [name, namespace],
+  );
+  return { vpnGateway, loading, error };
+}
+
 // Kubernetes CR Hooks
 
 export function useK8sVPCSubnets(namespace?: string): {

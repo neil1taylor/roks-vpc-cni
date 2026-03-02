@@ -28,6 +28,7 @@ const tabs = [
   { key: 'gateways', label: 'Gateways', path: '/vpc-networking/gateways' },
   { key: 'routers', label: 'Routers', path: '/vpc-networking/routers' },
   { key: 'l2-bridges', label: 'L2 Bridges', path: '/vpc-networking/l2-bridges' },
+  { key: 'vpn-gateways', label: 'VPN Gateways', path: '/vpc-networking/vpn-gateways' },
   { key: 'topology', label: 'Topology', path: '/vpc-networking/topology' },
 ];
 

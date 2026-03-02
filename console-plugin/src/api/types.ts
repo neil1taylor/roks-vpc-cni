@@ -609,3 +609,62 @@ export interface CreateL2BridgeRequest {
   tunnelMTU?: number;
   mssClamp?: boolean;
 }
+
+// ── VPCVPNGateway ──
+
+export interface VPNTunnelStatus {
+  name: string;
+  status: string;
+  lastHandshake?: string;
+  bytesIn: number;
+  bytesOut: number;
+}
+
+export interface VPNGateway {
+  name: string;
+  namespace: string;
+  protocol: 'wireguard' | 'ipsec';
+  gatewayRef: string;
+  phase: string;
+  tunnelEndpoint?: string;
+  activeTunnels: number;
+  totalTunnels: number;
+  connectedClients: number;
+  tunnels?: VPNTunnelStatus[];
+  advertisedRoutes?: string[];
+  tunnelMTU?: number;
+  mssClamp?: boolean;
+  podName?: string;
+  syncStatus: string;
+  message?: string;
+  createdAt?: string;
+}
+
+export interface CreateVPNGatewayRequest {
+  name: string;
+  namespace?: string;
+  protocol: string;
+  gatewayRef: string;
+  wireGuard?: {
+    privateKeySecret: string;
+    privateKeySecretKey: string;
+    listenPort?: number;
+  };
+  ipsec?: {
+    image?: string;
+  };
+  tunnels: {
+    name: string;
+    remoteEndpoint: string;
+    remoteNetworks: string[];
+    peerPublicKey?: string;
+    tunnelAddressLocal?: string;
+    tunnelAddressRemote?: string;
+    presharedKeySecret?: string;
+    presharedKeySecretKey?: string;
+  }[];
+  mtu?: {
+    tunnelMTU?: number;
+    mssClamp?: boolean;
+  };
+}

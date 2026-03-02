@@ -27,6 +27,7 @@ import {
   useRouters,
   usePARs,
   useL2Bridges,
+  useVPNGateways,
 } from '../api/hooks';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
@@ -54,6 +55,7 @@ const VPCDashboardPage: React.FC = () => {
   const { gateways, loading: gwLoading } = useGateways();
   const { routers, loading: rtLoading } = useRouters();
   const { l2bridges, loading: l2bLoading } = useL2Bridges();
+  const { vpnGateways, loading: vpnLoading } = useVPNGateways();
   const { networks, loading: networksLoading } = useNetworkDefinitions();
 
   const renderCount = (count: number | undefined, loading: boolean) => {
@@ -173,7 +175,33 @@ const VPCDashboardPage: React.FC = () => {
               </CardBody>
             </Card>
           </GridItem>
-          <GridItem span={6}>
+          <GridItem span={3}>
+            <Card isCompact>
+              <CardTitle>VPN Gateways</CardTitle>
+              <CardBody>
+                {renderCount(vpnGateways?.length, vpnLoading)}
+                {!vpnLoading && vpnGateways && vpnGateways.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                      <strong>Active tunnels:</strong>{' '}
+                      {vpnGateways.reduce((sum, gw) => sum + gw.activeTunnels, 0)}/{vpnGateways.reduce((sum, gw) => sum + gw.totalTunnels, 0)}
+                    </div>
+                    <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                      <strong>By protocol:</strong>{' '}
+                      {['wireguard', 'ipsec'].map((proto) => {
+                        const count = vpnGateways.filter((gw) => gw.protocol === proto).length;
+                        return count > 0 ? `${proto}: ${count}` : null;
+                      }).filter(Boolean).join(' · ')}
+                    </div>
+                  </>
+                )}
+                <div style={{ marginTop: 'var(--pf-v5-global--spacer--sm)' }}>
+                  <a href="/vpc-networking/vpn-gateways">View all VPN Gateways →</a>
+                </div>
+              </CardBody>
+            </Card>
+          </GridItem>
+          <GridItem span={3}>
             <Card isCompact>
               <CardTitle>L2 Bridges</CardTitle>
               <CardBody>

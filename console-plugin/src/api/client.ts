@@ -34,6 +34,8 @@ import {
   CreatePARRequest,
   L2Bridge,
   CreateL2BridgeRequest,
+  VPNGateway,
+  CreateVPNGatewayRequest,
   ApiResponse,
   ApiError,
 } from './types';
@@ -502,6 +504,25 @@ class VPCNetworkClient {
   async deleteL2Bridge(name: string, namespace?: string): Promise<ApiResponse<void>> {
     const params = namespace ? `?ns=${encodeURIComponent(namespace)}` : '';
     return this.request<void>('DELETE', `/l2bridges/${encodeURIComponent(name)}${params}`);
+  }
+
+  // VPN Gateway Operations
+  async listVPNGateways(): Promise<ApiResponse<VPNGateway[]>> {
+    return this.request<VPNGateway[]>('GET', '/vpn-gateways');
+  }
+
+  async getVPNGateway(name: string, namespace?: string): Promise<ApiResponse<VPNGateway>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<VPNGateway>('GET', `/vpn-gateways/${encodeURIComponent(name)}${params}`);
+  }
+
+  async createVPNGateway(req: CreateVPNGatewayRequest): Promise<ApiResponse<VPNGateway>> {
+    return this.request<VPNGateway>('POST', '/vpn-gateways', req as unknown as Record<string, unknown>);
+  }
+
+  async deleteVPNGateway(name: string, namespace?: string): Promise<ApiResponse<void>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>('DELETE', `/vpn-gateways/${encodeURIComponent(name)}${params}`);
   }
 }
 

@@ -231,5 +231,29 @@
       "path": "/vpc-networking/l2-bridges/:name",
       "component": { "$codeRef": "L2BridgeDetailPage" }
     }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vpn-gateways",
+      "component": { "$codeRef": "VPNGatewaysListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vpn-gateways/create",
+      "component": { "$codeRef": "VPNGatewayCreatePage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/vpn-gateways/:name",
+      "component": { "$codeRef": "VPNGatewayDetailPage" }
+    }
   }
 ]
