@@ -1,12 +1,12 @@
 # VPN Gateway Tutorial
 
-This tutorial shows how to set up a VPCVPNGateway to create encrypted site-to-site VPN tunnels between your OpenShift cluster and remote sites.
+This tutorial shows how to set up a VPCVPNGateway to create encrypted site-to-site VPN tunnels between your OpenShift cluster and remote sites using WireGuard, IPsec, or OpenVPN.
 
 ## Prerequisites
 
 - A running OpenShift cluster with the ROKS VPC Network Operator installed
 - A VPCGateway resource in the `Ready` state (provides the floating IP for the VPN tunnel endpoint)
-- WireGuard key pair generated (for WireGuard protocol) or pre-shared keys (for IPsec)
+- WireGuard key pair generated (for WireGuard protocol), pre-shared keys (for IPsec), or PKI certificates (for OpenVPN — CA cert, server cert/key)
 
 ## Part 1: WireGuard Site-to-Site VPN
 
@@ -179,6 +179,168 @@ secrets {
 }
 ```
 
+## Part 3: OpenVPN Site-to-Site + Remote Access VPN
+
+OpenVPN provides TLS-based VPN tunnels with certificate authentication. It supports both site-to-site tunneling and remote-access client pools via the `clientSubnet` option.
+
+### Step 1: Generate PKI
+
+Use `easy-rsa` to create the certificate authority, server certificate, and server key:
+
+```bash
+# Install easy-rsa
+sudo apt install easy-rsa   # Debian/Ubuntu
+# or: brew install easy-rsa  # macOS
+
+# Initialize PKI
+make-cadir ~/ovpn-pki && cd ~/ovpn-pki
+./easyrsa init-pki
+./easyrsa build-ca nopass          # creates pki/ca.crt
+./easyrsa gen-req server nopass    # creates pki/private/server.key, pki/reqs/server.req
+./easyrsa sign-req server server   # creates pki/issued/server.crt
+
+# Optional: generate DH parameters (omit to use ECDH instead)
+./easyrsa gen-dh                   # creates pki/dh.pem
+
+# Optional: generate TLS-Auth HMAC key
+openvpn --genkey secret ta.key
+```
+
+For remote-access clients, also generate client certificates:
+
+```bash
+./easyrsa gen-req client1 nopass
+./easyrsa sign-req client client1
+```
+
+### Step 2: Create Kubernetes Secrets
+
+```bash
+# Required: CA, server cert, and server key
+kubectl create secret generic ovpn-ca \
+  --from-file=ca.crt=pki/ca.crt \
+  -n roks-vpc-network-operator
+
+kubectl create secret generic ovpn-cert \
+  --from-file=server.crt=pki/issued/server.crt \
+  -n roks-vpc-network-operator
+
+kubectl create secret generic ovpn-key \
+  --from-file=server.key=pki/private/server.key \
+  -n roks-vpc-network-operator
+
+# Optional: DH parameters
+kubectl create secret generic ovpn-dh \
+  --from-file=dh.pem=pki/dh.pem \
+  -n roks-vpc-network-operator
+
+# Optional: TLS-Auth HMAC key
+kubectl create secret generic ovpn-tls-auth \
+  --from-file=ta.key=ta.key \
+  -n roks-vpc-network-operator
+```
+
+### Step 3: Create the VPCVPNGateway
+
+```yaml
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCVPNGateway
+metadata:
+  name: ovpn-to-onprem
+  namespace: roks-vpc-network-operator
+spec:
+  protocol: openvpn
+  gatewayRef: my-gateway  # must be a Ready VPCGateway in the same namespace
+
+  openVPN:
+    ca:
+      name: ovpn-ca
+      key: ca.crt
+    cert:
+      name: ovpn-cert
+      key: server.crt
+    key:
+      name: ovpn-key
+      key: server.key
+    listenPort: 1194
+    proto: udp              # "udp" (default) or "tcp"
+    cipher: AES-256-GCM
+    # Optional: DH parameters (omit to use ECDH)
+    # dh:
+    #   name: ovpn-dh
+    #   key: dh.pem
+    # Optional: TLS-Auth HMAC key
+    # tlsAuth:
+    #   name: ovpn-tls-auth
+    #   key: ta.key
+    # Optional: remote-access client IP pool
+    # clientSubnet: "10.8.0.0/24"
+
+  tunnels:
+    - name: onprem-dc1
+      remoteEndpoint: 203.0.113.10
+      remoteNetworks:
+        - 10.0.0.0/24
+        - 192.168.1.0/24
+      tunnelAddressLocal: "10.99.0.1/30"
+      tunnelAddressRemote: "10.99.0.2/30"
+
+  mtu:
+    tunnelMTU: 1400
+    mssClamp: true
+```
+
+```bash
+kubectl apply -f ovpn-gateway.yaml
+```
+
+### Step 4: Configure the Remote Side
+
+On the remote OpenVPN peer, create a client configuration file:
+
+```ini
+# client.ovpn
+client
+dev tun
+proto udp
+remote <VPCGateway floating IP> 1194
+resolv-retry infinite
+nobind
+
+ca   ca.crt       # copy from pki/ca.crt
+cert client1.crt  # copy from pki/issued/client1.crt (or server cert for site-to-site)
+key  client1.key  # copy from pki/private/client1.key
+
+cipher AES-256-GCM
+verb 3
+
+# If TLS-Auth is enabled on the server:
+# tls-auth ta.key 1
+```
+
+```bash
+sudo openvpn --config client.ovpn
+```
+
+For site-to-site mode, the remote side should also push routes to networks behind it, matching the `remoteNetworks` configured in the tunnel spec.
+
+### Step 5: Verify the Tunnel
+
+```bash
+# Check VPN gateway status
+kubectl get vpcvpngateway ovpn-to-onprem -n roks-vpc-network-operator
+
+# Check detailed status
+kubectl get vpcvpngateway ovpn-to-onprem -n roks-vpc-network-operator -o yaml
+
+# Expected: phase=Ready, activeTunnels=1
+
+# Check OpenVPN status log inside the pod
+kubectl exec -it vpngw-ovpn-to-onprem -n roks-vpc-network-operator -- cat /run/openvpn/status.log
+```
+
+The VPCGateway will automatically pick up the advertised routes (`10.0.0.0/24`, `192.168.1.0/24`) and create VPC routes pointing traffic for those CIDRs through the VPN gateway pod.
+
 ## Multi-Tunnel Configuration
 
 A VPN gateway can have multiple tunnels to different remote peers:
@@ -218,7 +380,7 @@ spec:
 ## How It Works
 
 1. The VPCVPNGateway reconciler looks up the referenced VPCGateway to obtain the floating IP (tunnel endpoint)
-2. It builds a privileged pod with WireGuard or StrongSwan configured using the tunnel spec
+2. It builds a privileged pod with WireGuard, StrongSwan, or OpenVPN configured using the tunnel spec
 3. The pod obtains an uplink interface via Multus and sets up VPN tunnels to all configured remote peers
 4. Remote networks from all tunnels are collected as `advertisedRoutes` in the VPN gateway status
 5. The VPCGateway reconciler watches VPN gateway status and creates VPC routes for the advertised routes
@@ -235,6 +397,15 @@ kubectl exec -it vpngw-site-to-onprem -n roks-vpc-network-operator -- wg show
 
 # Check IPsec tunnel status
 kubectl exec -it vpngw-ipsec-to-onprem -n roks-vpc-network-operator -- swanctl --list-sas
+
+# Check OpenVPN status log
+kubectl exec -it vpngw-ovpn-to-onprem -n roks-vpc-network-operator -- cat /run/openvpn/status.log
+
+# Check OpenVPN server config (useful for debugging)
+kubectl exec -it vpngw-ovpn-to-onprem -n roks-vpc-network-operator -- cat /etc/openvpn/server-final.conf
+
+# Verify OpenVPN process is running
+kubectl exec -it vpngw-ovpn-to-onprem -n roks-vpc-network-operator -- pgrep -a openvpn
 
 # Check VPC routes created by the gateway
 kubectl get vpcgateway my-gateway -n roks-vpc-network-operator -o yaml
