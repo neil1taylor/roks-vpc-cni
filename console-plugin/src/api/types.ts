@@ -772,7 +772,7 @@ export interface VPNTunnelStatus {
 export interface VPNGateway {
   name: string;
   namespace: string;
-  protocol: 'wireguard' | 'ipsec';
+  protocol: 'wireguard' | 'ipsec' | 'openvpn';
   gatewayRef: string;
   phase: string;
   tunnelEndpoint?: string;
@@ -801,6 +801,22 @@ export interface CreateVPNGatewayRequest {
   };
   ipsec?: {
     image?: string;
+  };
+  openVPN?: {
+    caSecret: string;
+    caSecretKey: string;
+    certSecret: string;
+    certSecretKey: string;
+    keySecret: string;
+    keySecretKey: string;
+    dhSecret?: string;
+    dhSecretKey?: string;
+    tlsAuthSecret?: string;
+    tlsAuthSecretKey?: string;
+    listenPort?: number;
+    proto?: string;
+    cipher?: string;
+    clientSubnet?: string;
   };
   tunnels: {
     name: string;

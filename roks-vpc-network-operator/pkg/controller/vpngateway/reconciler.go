@@ -106,6 +106,8 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, vpn *v1alpha1.VPCVPNGa
 		desiredPod = buildWireGuardPod(vpn, gw)
 	case "ipsec":
 		desiredPod = buildStrongSwanPod(vpn, gw)
+	case "openvpn":
+		desiredPod = buildOpenVPNPod(vpn, gw)
 	default:
 		return r.setErrorStatus(ctx, vpn, fmt.Sprintf("unsupported protocol %q", vpn.Spec.Protocol))
 	}
@@ -230,6 +232,10 @@ func (r *Reconciler) validateConfig(vpn *v1alpha1.VPCVPNGateway) error {
 			if tunnel.PresharedKey == nil {
 				return fmt.Errorf("IPsec tunnel %q requires presharedKey", tunnel.Name)
 			}
+		}
+	case "openvpn":
+		if vpn.Spec.OpenVPN == nil {
+			return fmt.Errorf("protocol %q requires spec.openVPN configuration", vpn.Spec.Protocol)
 		}
 	}
 	return nil

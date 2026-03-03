@@ -35,9 +35,10 @@ import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import { formatTimestamp, formatBytes } from '../utils/formatters';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 
-const protocolColors: Record<string, 'blue' | 'purple'> = {
+const protocolColors: Record<string, 'blue' | 'purple' | 'cyan'> = {
   wireguard: 'blue',
   ipsec: 'purple',
+  openvpn: 'cyan',
 };
 
 const tunnelStatusColors: Record<string, 'green' | 'red' | 'orange'> = {

@@ -74,6 +74,7 @@ spec:
                 enum:
                 - wireguard
                 - ipsec
+                - openvpn
               gatewayRef:
                 description: GatewayRef is the name of the VPCGateway this VPN gateway is associated with.
                 type: string
@@ -152,6 +153,100 @@ spec:
                         format: int32
                   image:
                     description: Image overrides the default StrongSwan container image.
+                    type: string
+              openVPN:
+                description: >-
+                  OpenVPN contains global OpenVPN configuration.
+                  Required when protocol is "openvpn".
+                type: object
+                required:
+                - ca
+                - cert
+                - key
+                properties:
+                  ca:
+                    description: CA is a reference to a Secret containing the CA certificate.
+                    type: object
+                    required:
+                    - name
+                    - key
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      key:
+                        type: string
+                        minLength: 1
+                  cert:
+                    description: Cert is a reference to a Secret containing the server certificate.
+                    type: object
+                    required:
+                    - name
+                    - key
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      key:
+                        type: string
+                        minLength: 1
+                  key:
+                    description: Key is a reference to a Secret containing the server private key.
+                    type: object
+                    required:
+                    - name
+                    - key
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      key:
+                        type: string
+                        minLength: 1
+                  dh:
+                    description: DH is a reference to a Secret containing DH parameters. Optional.
+                    type: object
+                    required:
+                    - name
+                    - key
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      key:
+                        type: string
+                        minLength: 1
+                  tlsAuth:
+                    description: TLSAuth is a reference to a Secret containing the TLS-Auth HMAC key.
+                    type: object
+                    required:
+                    - name
+                    - key
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      key:
+                        type: string
+                        minLength: 1
+                  listenPort:
+                    description: ListenPort is the OpenVPN listen port.
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 65535
+                    default: 1194
+                  proto:
+                    description: Transport protocol.
+                    type: string
+                    enum: [udp, tcp]
+                    default: udp
+                  cipher:
+                    description: Data channel cipher.
+                    type: string
+                    default: AES-256-GCM
+                  clientSubnet:
+                    description: CIDR for the remote-access client IP pool.
                     type: string
               tunnels:
                 description: Tunnels is the list of VPN tunnels to remote peers.

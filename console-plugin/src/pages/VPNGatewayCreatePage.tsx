@@ -64,6 +64,18 @@ const VPNGatewayCreatePage: React.FC = () => {
   const [wgSecretKey, setWgSecretKey] = useState('privatekey');
   const [listenPort, setListenPort] = useState('51820');
 
+  // OpenVPN global config
+  const [ovpnCaSecret, setOvpnCaSecret] = useState('');
+  const [ovpnCaKey, setOvpnCaKey] = useState('ca.crt');
+  const [ovpnCertSecret, setOvpnCertSecret] = useState('');
+  const [ovpnCertKey, setOvpnCertKey] = useState('server.crt');
+  const [ovpnKeySecret, setOvpnKeySecret] = useState('');
+  const [ovpnKeyKey, setOvpnKeyKey] = useState('server.key');
+  const [ovpnPort, setOvpnPort] = useState('1194');
+  const [ovpnProto, setOvpnProto] = useState('udp');
+  const [ovpnCipher, setOvpnCipher] = useState('AES-256-GCM');
+  const [ovpnClientSubnet, setOvpnClientSubnet] = useState('');
+
   // Tunnels
   const [tunnels, setTunnels] = useState<TunnelEntry[]>([emptyTunnel()]);
 
@@ -100,7 +112,8 @@ const VPNGatewayCreatePage: React.FC = () => {
     name.trim() !== '' &&
     gateway !== '' &&
     tunnels.every(isTunnelValid) &&
-    (protocol !== 'wireguard' || (wgSecretName.trim() !== '' && wgSecretKey.trim() !== ''));
+    (protocol !== 'wireguard' || (wgSecretName.trim() !== '' && wgSecretKey.trim() !== '')) &&
+    (protocol !== 'openvpn' || (ovpnCaSecret.trim() !== '' && ovpnCertSecret.trim() !== '' && ovpnKeySecret.trim() !== ''));
 
   const handleSubmit = async () => {
     if (!isValid) return;
@@ -135,6 +148,21 @@ const VPNGatewayCreatePage: React.FC = () => {
       };
     }
 
+    if (protocol === 'openvpn') {
+      req.openVPN = {
+        caSecret: ovpnCaSecret.trim(),
+        caSecretKey: ovpnCaKey.trim(),
+        certSecret: ovpnCertSecret.trim(),
+        certSecretKey: ovpnCertKey.trim(),
+        keySecret: ovpnKeySecret.trim(),
+        keySecretKey: ovpnKeyKey.trim(),
+        listenPort: parseInt(ovpnPort, 10) || 1194,
+        proto: ovpnProto,
+        cipher: ovpnCipher.trim(),
+        clientSubnet: ovpnClientSubnet.trim() || undefined,
+      };
+    }
+
     const resp = await apiClient.createVPNGateway(req);
     if (resp.error) {
       setSubmitError(resp.error.message);
@@ -153,7 +181,7 @@ const VPNGatewayCreatePage: React.FC = () => {
         </Breadcrumb>
         <Title headingLevel="h1" style={{ marginTop: '16px' }}>Create VPCVPNGateway</Title>
         <Text component={TextVariants.p} style={{ marginTop: '8px', color: 'var(--pf-v5-global--Color--200)' }}>
-          A VPCVPNGateway establishes encrypted VPN tunnels to remote sites using WireGuard or IPsec/StrongSwan.
+          A VPCVPNGateway establishes encrypted VPN tunnels to remote sites using WireGuard, IPsec/StrongSwan, or OpenVPN.
         </Text>
       </PageSection>
 
@@ -177,6 +205,7 @@ const VPNGatewayCreatePage: React.FC = () => {
                 <FormSelect id="vpn-protocol" value={protocol} onChange={(_e, v) => setProtocol(v)}>
                   <FormSelectOption value="wireguard" label="WireGuard" />
                   <FormSelectOption value="ipsec" label="IPsec (StrongSwan)" />
+                  <FormSelectOption value="openvpn" label="OpenVPN" />
                 </FormSelect>
                 <FormHelperText>
                   <HelperText><HelperTextItem>WireGuard is lightweight and fast with modern cryptography. IPsec (StrongSwan) offers broader compatibility with legacy VPN devices.</HelperTextItem></HelperText>
@@ -241,6 +270,62 @@ const VPNGatewayCreatePage: React.FC = () => {
                     <FormHelperText>
                       <HelperText><HelperTextItem>UDP port for WireGuard to listen on (default: 51820). Must be unique per VPN gateway.</HelperTextItem></HelperText>
                     </FormHelperText>
+                  </FormGroup>
+                </>
+              )}
+
+              {protocol === 'openvpn' && (
+                <>
+                  <Title headingLevel="h3" style={{ marginTop: '16px', marginBottom: '8px' }}>OpenVPN Configuration</Title>
+
+                  <FormGroup label="CA Secret" isRequired fieldId="vpn-ovpn-ca">
+                    <TextInput id="vpn-ovpn-ca" value={ovpnCaSecret} onChange={(_e, v) => setOvpnCaSecret(v)} isRequired placeholder="e.g. ovpn-ca" />
+                    <FormHelperText><HelperText><HelperTextItem>Kubernetes Secret containing the CA certificate</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+                  <FormGroup label="CA Secret Key" fieldId="vpn-ovpn-ca-key">
+                    <TextInput id="vpn-ovpn-ca-key" value={ovpnCaKey} onChange={(_e, v) => setOvpnCaKey(v)} />
+                    <FormHelperText><HelperText><HelperTextItem>Key within the Secret (default: ca.crt)</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+
+                  <FormGroup label="Server Cert Secret" isRequired fieldId="vpn-ovpn-cert">
+                    <TextInput id="vpn-ovpn-cert" value={ovpnCertSecret} onChange={(_e, v) => setOvpnCertSecret(v)} isRequired placeholder="e.g. ovpn-cert" />
+                    <FormHelperText><HelperText><HelperTextItem>Kubernetes Secret containing the server certificate</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+                  <FormGroup label="Cert Secret Key" fieldId="vpn-ovpn-cert-key">
+                    <TextInput id="vpn-ovpn-cert-key" value={ovpnCertKey} onChange={(_e, v) => setOvpnCertKey(v)} />
+                    <FormHelperText><HelperText><HelperTextItem>Key within the Secret (default: server.crt)</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+
+                  <FormGroup label="Server Key Secret" isRequired fieldId="vpn-ovpn-key">
+                    <TextInput id="vpn-ovpn-key" value={ovpnKeySecret} onChange={(_e, v) => setOvpnKeySecret(v)} isRequired placeholder="e.g. ovpn-key" />
+                    <FormHelperText><HelperText><HelperTextItem>Kubernetes Secret containing the server private key</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+                  <FormGroup label="Key Secret Key" fieldId="vpn-ovpn-key-key">
+                    <TextInput id="vpn-ovpn-key-key" value={ovpnKeyKey} onChange={(_e, v) => setOvpnKeyKey(v)} />
+                    <FormHelperText><HelperText><HelperTextItem>Key within the Secret (default: server.key)</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+
+                  <FormGroup label="Listen Port" fieldId="vpn-ovpn-port">
+                    <TextInput id="vpn-ovpn-port" type="number" value={ovpnPort} onChange={(_e, v) => setOvpnPort(v)} />
+                    <FormHelperText><HelperText><HelperTextItem>OpenVPN listen port (default: 1194)</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+
+                  <FormGroup label="Protocol" fieldId="vpn-ovpn-proto">
+                    <FormSelect id="vpn-ovpn-proto" value={ovpnProto} onChange={(_e, v) => setOvpnProto(v)}>
+                      <FormSelectOption value="udp" label="UDP (Recommended)" />
+                      <FormSelectOption value="tcp" label="TCP" />
+                    </FormSelect>
+                    <FormHelperText><HelperText><HelperTextItem>Transport protocol. UDP is faster; TCP can traverse restrictive firewalls.</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+
+                  <FormGroup label="Cipher" fieldId="vpn-ovpn-cipher">
+                    <TextInput id="vpn-ovpn-cipher" value={ovpnCipher} onChange={(_e, v) => setOvpnCipher(v)} />
+                    <FormHelperText><HelperText><HelperTextItem>Data channel cipher (default: AES-256-GCM)</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+
+                  <FormGroup label="Client Subnet" fieldId="vpn-ovpn-client-subnet">
+                    <TextInput id="vpn-ovpn-client-subnet" value={ovpnClientSubnet} onChange={(_e, v) => setOvpnClientSubnet(v)} placeholder="e.g. 10.8.0.0/24" />
+                    <FormHelperText><HelperText><HelperTextItem>IP pool for remote-access clients. Leave empty for site-to-site only.</HelperTextItem></HelperText></FormHelperText>
                   </FormGroup>
                 </>
               )}
