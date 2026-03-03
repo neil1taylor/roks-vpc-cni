@@ -28,9 +28,10 @@ import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 import { formatRelativeTime } from '../utils/formatters';
 
-const protocolColors: Record<string, 'blue' | 'purple'> = {
+const protocolColors: Record<string, 'blue' | 'purple' | 'cyan'> = {
   wireguard: 'blue',
   ipsec: 'purple',
+  openvpn: 'cyan',
 };
 
 const VPNGatewaysListPage: React.FC = () => {
@@ -80,7 +81,7 @@ const VPNGatewaysListPage: React.FC = () => {
     <VPCNetworkingShell>
       <PageSection>
         <Text component={TextVariants.p} style={{ marginBottom: '16px', color: 'var(--pf-v5-global--Color--200)' }}>
-          VPN Gateways provide site-to-site and client-to-site VPN connectivity for VM workload networks using WireGuard or IPsec/StrongSwan.
+          VPN Gateways provide site-to-site and client-to-site VPN connectivity for VM workload networks using WireGuard, IPsec/StrongSwan, or OpenVPN.
         </Text>
 
         {deleteError && (
