@@ -1,20 +1,20 @@
 # Tutorial: Advanced Multi-Namespace Enterprise Networking
 
-This tutorial builds a realistic enterprise network topology using every major feature of the ROKS VPC Network Operator — multi-namespace isolation, multi-tier routing, SNAT/DNAT, IPS inline security, WireGuard VPN, firewall segmentation, and DHCP reservations. Each part builds on the previous one. By the end, you will have a fully connected, secured, multi-namespace topology with VPN access and verified connectivity at every stage.
+This tutorial builds a realistic enterprise network topology using every major feature of the ROKS VPC Network Operator — multi-namespace isolation, multi-network routing, SNAT/DNAT, IPS inline security, WireGuard VPN, firewall rules, and DHCP reservations. Each part builds on the previous one. By the end, you will have a fully connected, secured, multi-namespace topology with VPN access and verified connectivity at every stage.
 
 ## Table of contents
 
 - [Part 1: Prerequisites & network planning](#part-1-prerequisites--network-planning)
 - [Part 2: Foundation — L2 networks](#part-2-foundation--l2-networks)
 - [Part 3: VMs — workloads on L2 networks](#part-3-vms--workloads-on-l2-networks)
-- [Part 4: Routers — connecting L2 to transit](#part-4-routers--connecting-l2-to-transit)
+- [Part 4: Router — connecting all L2 networks](#part-4-router--connecting-all-l2-networks)
 - [Part 5: Gateway — internet uplink with SNAT](#part-5-gateway--internet-uplink-with-snat)
 - [Part 6: Connectivity testing — the foundation works](#part-6-connectivity-testing--the-foundation-works)
 - [Part 7: Secure DMZ — DNAT + PAR ingress](#part-7-secure-dmz--dnat--par-ingress)
 - [Part 8: IPS inline security](#part-8-ips-inline-security)
 - [Part 9: VPN — site-to-site WireGuard](#part-9-vpn--site-to-site-wireguard)
 - [Part 10: Split routing verification](#part-10-split-routing-verification)
-- [Part 11: Multi-tier firewall + DHCP reservations](#part-11-multi-tier-firewall--dhcp-reservations)
+- [Part 11: Firewall + DHCP reservations](#part-11-firewall--dhcp-reservations)
 - [Part 12: Full topology verification & cleanup](#part-12-full-topology-verification--cleanup)
 
 ---
@@ -32,6 +32,7 @@ This tutorial builds a realistic enterprise network topology using every major f
 
 - `oc` (OpenShift CLI), logged in to the cluster
 - `virtctl` (KubeVirt CLI) for VM console/SSH access
+- `sshpass` for scripted SSH commands (install via `brew install hudochenkov/sshpass/sshpass` on macOS or `apt install sshpass` on Linux)
 - `wg` (WireGuard tools) for key generation
 - `ibmcloud` CLI (optional, for verifying VPC resources)
 
@@ -46,47 +47,42 @@ This tutorial builds a realistic enterprise network topology using every major f
             |  VPCGateway       |
             |  "adv-gw"        |
             |  uplink=localnet  |
-            |  transit=10.99.0.1|
             +--------+----------+
                      |
-                     | transit-l2 (10.99.0.0/24)
+                     | localnet-ext (VPC subnet)
                      |
-          +----------+----------+
-          |                     |
-   +------+--------+    +------+--------+
-   | VPCRouter     |    | VPCVPNGateway |
-   | "router-a"    |    | "adv-vpn"     |
-   | transit=.2    |    | WireGuard     |
-   | ns-a          |    | 192.168.0/24  |
-   +---+-------+---+    +------+--------+
-       |       |                |
-       |       |         +------+--------+
-       |       |         | VPCRouter     |
-       |       |         | "router-b"    |
-       |       |         | transit=.3    |
-       |       |         | ns-b          |
-       |       |         +---+-------+---+
-       |       |             |       |
-   app-l2  db-l2        web-l2   svc-l2
-  10.100.0 10.100.1    10.200.0 10.200.1
-   /24      /24         /24      /24
-     |       |           |       |
-   VM-1    VM-2        VM-3    VM-4
-  (app)    (db)        (web)   (svc)
+            +--------+----------+           +------------------+
+            |  VPCRouter        |           |  VPCVPNGateway   |
+            |  "adv-router"     |           |  "adv-vpn"       |
+            |  (all 4 networks) |           |  WireGuard       |
+            +--+-+-+-+----------+           |  192.168.0/24    |
+               | | | |                      +------------------+
+               | | | |
+      +--------+ | | +--------+
+      |          | |          |
+   app-l2     db-l2     web-l2     svc-l2
+  10.100.0   10.100.1  10.200.0   10.200.1
+    /24        /24       /24        /24
+     |          |         |          |
+   VM-1       VM-2      VM-3      VM-4
+  (ns-a)     (ns-a)    (ns-b)    (ns-b)
 ```
+
+A single VPCRouter connects all four workload L2 networks. The router pod gets the gateway's VNI MAC on its uplink interface for VPC fabric connectivity, plus Multus attachments to each workload network. A separate VPCVPNGateway pod handles WireGuard tunnels with its own identity on the uplink.
 
 ### Address plan
 
 | Resource | CIDR / Address | Purpose |
 |----------|---------------|---------|
-| `transit-l2` | `10.99.0.0/24` | Inter-router transit network |
 | `app-l2` | `10.100.0.0/24` | Application tier (ns-a) |
 | `db-l2` | `10.100.1.0/24` | Database tier (ns-a) |
 | `web-l2` | `10.200.0.0/24` | Web tier (ns-b) |
 | `svc-l2` | `10.200.1.0/24` | Services tier (ns-b) |
-| `adv-gw` transit | `10.99.0.1` | Gateway on transit |
-| `router-a` transit | `10.99.0.2` | Router A on transit |
-| `router-b` transit | `10.99.0.3` | Router B on transit |
+| `adv-gw` transit | `10.99.0.1` | Gateway logical address |
+| `adv-router` app-l2 | `10.100.0.1/24` | Router on app network |
+| `adv-router` db-l2 | `10.100.1.1/24` | Router on db network |
+| `adv-router` web-l2 | `10.200.0.1/24` | Router on web network |
+| `adv-router` svc-l2 | `10.200.1.1/24` | Router on svc network |
 | VPN remote | `192.168.0.0/24` | Simulated remote office |
 
 ### VPC resource IDs
@@ -111,11 +107,11 @@ oc create namespace ns-b
 
 ## Part 2: Foundation — L2 networks
 
-This topology uses five Layer2 CUDNs (no VPC resources needed) and one LocalNet CUDN (VPC-backed, for the gateway uplink).
+This topology uses four Layer2 CUDNs (pure OVN, no VPC resources) and one LocalNet CUDN (VPC-backed, for the gateway uplink).
 
 ### 2.1 Create the workload Layer2 networks
 
-Layer2 CUDNs are pure OVN networks — no VPC subnet, no VLAN attachment. They provide isolated L2 segments for VM workloads.
+Layer2 CUDNs are pure OVN networks — no VPC subnet, no VLAN attachment. They provide isolated L2 segments for VM workloads. Each CUDN includes both the workload namespace and the operator namespace so that router pods can attach.
 
 ```yaml
 # adv-l2-networks.yaml
@@ -192,37 +188,9 @@ spec:
 oc apply -f adv-l2-networks.yaml
 ```
 
-### 2.2 Create the transit Layer2 network
+### 2.2 Create the uplink LocalNet CUDN
 
-The transit network connects all routers and the gateway. Both workload namespaces and the operator namespace must be included.
-
-```yaml
-# adv-transit.yaml
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: transit-l2
-spec:
-  namespaceSelector:
-    matchExpressions:
-    - key: kubernetes.io/metadata.name
-      operator: In
-      values: [ns-a, ns-b, roks-vpc-network-operator]
-  network:
-    topology: Layer2
-    layer2:
-      role: Secondary
-      subnets:
-      - cidr: "10.99.0.0/24"
-```
-
-```bash
-oc apply -f adv-transit.yaml
-```
-
-### 2.3 Create the uplink LocalNet CUDN
-
-The uplink network is a LocalNet CUDN — it creates a VPC subnet and VLAN attachments on every bare metal node. The gateway uses this to reach the VPC fabric.
+The uplink network is a LocalNet CUDN — it creates a VPC subnet and VLAN attachments on every bare metal node. The gateway uses this to reach the VPC fabric, and the router pod gets a Multus attachment to it.
 
 ```yaml
 # adv-localnet.yaml
@@ -257,10 +225,10 @@ oc apply -f adv-localnet.yaml
 
 **What happens:** The CUDN reconciler creates a VPC subnet (`roks-<cluster>-localnet-ext`) and a VLAN attachment on every bare metal node with `vlan_id: 300`, `allow_to_float: true`.
 
-### 2.4 Verify all networks
+### 2.3 Verify all networks
 
 ```bash
-# All 6 CUDNs should appear
+# All 5 CUDNs should appear
 oc get cudn
 
 # Expected output:
@@ -269,7 +237,6 @@ oc get cudn
 # db-l2          Layer2     30s
 # web-l2         Layer2     30s
 # svc-l2         Layer2     30s
-# transit-l2     Layer2     30s
 # localnet-ext   LocalNet   30s
 
 # Verify VPC resources for the LocalNet CUDN
@@ -283,7 +250,7 @@ Wait until the VPC subnet status shows `active` (10-30 seconds).
 
 ## Part 3: VMs — workloads on L2 networks
 
-Each VM connects to a single Layer2 network with `autoattachPodInterface: false` (no pod network). DHCP will come from routers in Part 4 — for now, VMs boot and wait for an IP.
+Each VM connects to a single Layer2 network with `autoattachPodInterface: false` (no pod network). DHCP will come from the router in Part 4 — for now, VMs boot and wait for an IP.
 
 ### 3.1 Application VM (ns-a, app-l2)
 
@@ -502,46 +469,43 @@ oc get vmi -n ns-b -w
 oc get vmi -A -l 'kubevirt.io/domain'
 ```
 
-The VMs are running but have no IP addresses yet — DHCP service starts when we create the routers in the next step.
+The VMs are running but have no IP addresses yet — DHCP service starts when we create the router in the next step.
 
 ---
 
-## Part 4: Routers — connecting L2 to transit
+## Part 4: Router — connecting all L2 networks
 
-Each router connects workload L2 networks to the transit network, provides DHCP, and advertises its connected routes to the gateway.
+A single VPCRouter connects all four workload L2 networks and provides DHCP on each.
 
 ### How it works
 
 ```
-  transit-l2 (10.99.0.0/24)
-       |
-  +----+------+
-  | router-a  |  (ns-a)
-  | .2 transit|
-  +----+--+---+
-       |  |
-       |  +--- db-l2 (10.100.1.0/24)   router address: 10.100.1.1
-       |
-       +------ app-l2 (10.100.0.0/24)  router address: 10.100.0.1
+        localnet-ext (VPC fabric)
+             |
+        +----+----------+
+        | adv-router     |
+        | uplink (VNI MAC from gateway)
+        +--+--+--+--+---+
+           |  |  |  |
+           |  |  |  +--- svc-l2 (10.200.1.0/24)  router: 10.200.1.1
+           |  |  +------ web-l2 (10.200.0.0/24)  router: 10.200.0.1
+           |  +--------- db-l2  (10.100.1.0/24)  router: 10.100.1.1
+           +------------ app-l2 (10.100.0.0/24)  router: 10.100.0.1
 ```
 
-The router pod gets Multus attachments to each network. IP forwarding bridges traffic between them. DHCP serves addresses on each workload network with the router as the default gateway.
+The router pod gets a Multus attachment to each network. The `uplink` interface uses the gateway's VNI MAC for VPC identity. IP forwarding bridges traffic between workload networks. DHCP serves addresses on each workload network with the router as the default gateway.
 
-### 4.1 Router A (ns-a workloads)
+### 4.1 Create the router
 
 ```yaml
-# adv-router-a.yaml
+# adv-router.yaml
 apiVersion: vpc.roks.ibm.com/v1alpha1
 kind: VPCRouter
 metadata:
-  name: router-a
+  name: adv-router
   namespace: roks-vpc-network-operator
 spec:
   gateway: adv-gw                       # References the gateway (created in Part 5)
-
-  transit:
-    network: transit-l2
-    address: "10.99.0.2"
 
   networks:
   - name: app-l2
@@ -550,36 +514,6 @@ spec:
   - name: db-l2
     namespace: ns-a
     address: "10.100.1.1/24"
-
-  dhcp:
-    enabled: true
-    leaseTime: "12h"
-    dns:
-      nameservers:
-      - "8.8.8.8"
-      - "8.8.4.4"
-
-  routeAdvertisement:
-    connectedSegments: true              # Advertises 10.100.0.0/24 + 10.100.1.0/24
-```
-
-### 4.2 Router B (ns-b workloads)
-
-```yaml
-# adv-router-b.yaml
-apiVersion: vpc.roks.ibm.com/v1alpha1
-kind: VPCRouter
-metadata:
-  name: router-b
-  namespace: roks-vpc-network-operator
-spec:
-  gateway: adv-gw
-
-  transit:
-    network: transit-l2
-    address: "10.99.0.3"
-
-  networks:
   - name: web-l2
     namespace: ns-b
     address: "10.200.0.1/24"
@@ -596,45 +530,42 @@ spec:
       - "8.8.4.4"
 
   routeAdvertisement:
-    connectedSegments: true              # Advertises 10.200.0.0/24 + 10.200.1.0/24
+    connectedSegments: true              # Advertises all 4 network CIDRs
 ```
 
-> **Note:** The routers reference `adv-gw` which does not exist yet. Apply the routers now — they will enter `Pending` phase and become `Ready` after the gateway is created in Part 5.
+> **Note:** The router references `adv-gw` which does not exist yet. Apply the router now — it will enter `Pending` phase and become `Ready` after the gateway is created in Part 5.
 
 ```bash
-oc apply -f adv-router-a.yaml -f adv-router-b.yaml
+oc apply -f adv-router.yaml
 ```
 
 **What the reconciler does:**
 1. Adds the `vpc.roks.ibm.com/router-cleanup` finalizer
 2. Waits for the referenced gateway `adv-gw` to be `Ready`
-3. Creates a router pod with Multus attachments to the transit and workload networks
-4. Starts dnsmasq for DHCP on each workload interface
-5. Writes `status.advertisedRoutes` with the connected network CIDRs
+3. Creates a router pod with Multus attachments: `uplink` (gateway's LocalNet with VNI MAC) + `net0` (app-l2) + `net1` (db-l2) + `net2` (web-l2) + `net3` (svc-l2)
+4. Enables IP forwarding between all interfaces
+5. Starts dnsmasq for DHCP on each workload interface (net0–net3)
+6. Writes `status.advertisedRoutes` with the connected network CIDRs
 
-### 4.3 Verify routers (after gateway creation)
+### 4.2 Verify the router (after gateway creation)
 
-After the gateway is created in Part 5, the routers will transition to `Ready`:
+After the gateway is created in Part 5, the router will transition to `Ready`:
 
 ```bash
 oc get vrt -n roks-vpc-network-operator
 
 # Expected output:
-# NAME       GATEWAY   PHASE   SYNC     AGE
-# router-a   adv-gw    Ready   Synced   2m
-# router-b   adv-gw    Ready   Synced   2m
+# NAME         GATEWAY   PHASE   SYNC     AGE
+# adv-router   adv-gw    Ready   Synced   2m
 
 # Check advertised routes
-oc get vrt router-a -n roks-vpc-network-operator -o jsonpath='{.status.advertisedRoutes}'
-# ["10.100.0.0/24","10.100.1.0/24"]
-
-oc get vrt router-b -n roks-vpc-network-operator -o jsonpath='{.status.advertisedRoutes}'
-# ["10.200.0.0/24","10.200.1.0/24"]
+oc get vrt adv-router -n roks-vpc-network-operator -o jsonpath='{.status.advertisedRoutes}'
+# ["10.100.0.0/24","10.100.1.0/24","10.200.0.0/24","10.200.1.0/24"]
 ```
 
-### 4.4 Verify VMs get DHCP leases
+### 4.3 Verify VMs get DHCP leases
 
-Once the routers are running, VMs should acquire IP addresses via DHCP:
+Once the router is running, VMs should acquire IP addresses via DHCP:
 
 ```bash
 # SSH into vm-app and check IP
@@ -654,7 +585,7 @@ ip route
 
 ## Part 5: Gateway — internet uplink with SNAT
 
-The VPCGateway creates a shared uplink VNI on the VPC fabric. It connects to the transit network and provides internet access via SNAT. VPC routes are auto-collected from router `advertisedRoutes`.
+The VPCGateway provisions a VNI on the VPC fabric, allocates a floating IP, and manages VPC routes. It does **not** create a pod — the router pod uses the gateway's VNI MAC on its uplink interface for VPC connectivity. VPC routes are auto-collected from the router's `advertisedRoutes`.
 
 ### How it works
 
@@ -663,16 +594,17 @@ The VPCGateway creates a shared uplink VNI on the VPC fabric. It connects to the
      |
   Floating IP (158.177.x.x)
      |
-  VPCGateway "adv-gw"
+  VPCGateway "adv-gw"          (VPC resources only, no pod)
   +-----------------------+
-  | uplink: localnet-ext  |  VNI on VPC subnet
-  | transit: 10.99.0.1    |
-  | NAT: SNAT 10.0/8->FIP|
+  | uplink: localnet-ext  |     VNI + VLAN attachment on VPC subnet
+  | transit: 10.99.0.1    |     Logical address for routing
+  | NAT: SNAT 10.0/8->FIP|     NAT rules pushed to router pod
   | NAT: noNAT 10/8<->10/8|
   +-----------+-----------+
               |
-         transit-l2
-         10.99.0.0/24
+         localnet-ext
+              |
+         adv-router pod        (uses gateway's VNI MAC on uplink)
 ```
 
 ### 5.1 Create the gateway
@@ -693,9 +625,7 @@ spec:
     - "<sg-id>"
 
   transit:
-    network: transit-l2
     address: "10.99.0.1"
-    cidr: "10.99.0.0/24"
 
   floatingIP:
     enabled: true
@@ -721,7 +651,7 @@ oc apply -f adv-gateway.yaml
 1. Adds the `vpc.roks.ibm.com/gateway-cleanup` finalizer
 2. Picks a bare metal server and creates a VLAN attachment with an inline VNI
 3. Allocates a floating IP and binds it to the VNI
-4. Watches router-a and router-b status — collects `advertisedRoutes` from both
+4. Watches the router's status — collects `advertisedRoutes`
 5. Creates VPC routes for all 4 L2 CIDRs (`10.100.0.0/24`, `10.100.1.0/24`, `10.200.0.0/24`, `10.200.1.0/24`) with `action: deliver` and `next_hop: <gateway VNI reserved IP>`
 6. Sets phase to `Ready`
 
@@ -735,7 +665,7 @@ oc get vgw adv-gw -n roks-vpc-network-operator
 # NAME     ZONE      PHASE   VNI IP           FIP              SYNC     AGE
 # adv-gw   eu-de-1   Ready   10.240.64.x      158.177.x.x      Synced   30s
 
-# Check VPC routes (auto-collected from routers)
+# Check VPC routes (auto-collected from router)
 oc get vgw adv-gw -n roks-vpc-network-operator -o jsonpath='{.status.vpcRouteIDs}' | jq .
 
 # Verify via IBM Cloud CLI
@@ -743,23 +673,21 @@ ibmcloud is vpc-routing-table-routes <vpc-id> <default-rt-id>
 # Should show 4 routes: 10.100.0.0/24, 10.100.1.0/24, 10.200.0.0/24, 10.200.1.0/24
 ```
 
-Now go back and verify the routers are Ready (they were waiting for the gateway):
+Now go back and verify the router is Ready (it was waiting for the gateway):
 
 ```bash
 oc get vrt -n roks-vpc-network-operator
 
-# Both routers should now be Ready
-# NAME       GATEWAY   PHASE   SYNC     AGE
-# router-a   adv-gw    Ready   Synced   5m
-# router-b   adv-gw    Ready   Synced   5m
+# Router should now be Ready
+# NAME         GATEWAY   PHASE   SYNC     AGE
+# adv-router   adv-gw    Ready   Synced   5m
 
-# Check router pods are running
+# Check router pod is running
 oc get pods -n roks-vpc-network-operator -l 'vpc.roks.ibm.com/router'
 
 # Expected:
-# NAME              READY   STATUS    AGE
-# router-a-pod       1/1     Running   3m
-# router-b-pod       1/1     Running   3m
+# NAME               READY   STATUS    AGE
+# adv-router-pod      1/1     Running   3m
 ```
 
 ---
@@ -768,17 +696,17 @@ oc get pods -n roks-vpc-network-operator -l 'vpc.roks.ibm.com/router'
 
 Now the full data path is functional. Let's verify every traffic pattern.
 
-### 6.1 VM-to-VM same router (cross-L2)
+### 6.1 VM-to-VM same namespace (cross-L2)
 
-VM-1 (app-l2) pinging VM-2 (db-l2) — both behind router-a.
+VM-1 (app-l2) pinging VM-2 (db-l2) — both on different L2 networks, forwarded by the router.
 
 ```
-VM-1 (10.100.0.x) --app-l2--> router-a --db-l2--> VM-2 (10.100.1.x)
+VM-1 (10.100.0.x) --app-l2--> adv-router --db-l2--> VM-2 (10.100.1.x)
 ```
 
 ```bash
 # Get VM-2's IP
-VM2_IP=$(virtctl ssh --namespace=ns-a --username=fedora \
+VM2_IP=$(sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c 'ip -4 -o addr show enp1s0 | awk "{print \$4}" | cut -d/ -f1' \
@@ -786,32 +714,32 @@ VM2_IP=$(virtctl ssh --namespace=ns-a --username=fedora \
 echo "VM-2 (db) IP: $VM2_IP"
 
 # From VM-1, ping VM-2
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "ping -c 3 $VM2_IP" \
   vm-app
 ```
 
-### 6.2 VM-to-VM cross router
+### 6.2 VM-to-VM cross namespace
 
-VM-1 (app-l2, behind router-a) pinging VM-3 (web-l2, behind router-b). Traffic crosses the transit network.
+VM-1 (app-l2, ns-a) pinging VM-3 (web-l2, ns-b). Traffic crosses L2 networks through the single router.
 
 ```
-VM-1 (10.100.0.x) --app-l2--> router-a --transit-l2--> router-b --web-l2--> VM-3 (10.200.0.x)
+VM-1 (10.100.0.x) --app-l2--> adv-router --web-l2--> VM-3 (10.200.0.x)
 ```
 
 ```bash
 # Get VM-3's IP
-VM3_IP=$(virtctl ssh --namespace=ns-b --username=fedora \
+VM3_IP=$(sshpass -p fedora virtctl ssh --namespace=ns-b --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c 'ip -4 -o addr show enp1s0 | awk "{print \$4}" | cut -d/ -f1' \
   vm-web 2>/dev/null | tr -d '\r')
 echo "VM-3 (web) IP: $VM3_IP"
 
-# From VM-1, ping VM-3 (cross-router)
-virtctl ssh --namespace=ns-a --username=fedora \
+# From VM-1, ping VM-3 (cross-namespace via router)
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "ping -c 3 $VM3_IP" \
@@ -823,12 +751,12 @@ virtctl ssh --namespace=ns-a --username=fedora \
 VM-1 reaches the internet via SNAT through the gateway's floating IP.
 
 ```
-VM-1 --app-l2--> router-a --transit-l2--> gateway --SNAT--> VPC --FIP--> Internet
+VM-1 --app-l2--> adv-router --uplink--> VPC fabric --SNAT--> FIP --> Internet
 ```
 
 ```bash
 # From VM-1, test internet connectivity
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "curl -s --max-time 10 ifconfig.me" \
@@ -846,7 +774,7 @@ for NS_VM in "ns-a vm-app" "ns-a vm-db" "ns-b vm-web" "ns-b vm-svc"; do
   NS=$(echo $NS_VM | awk '{print $1}')
   VM=$(echo $NS_VM | awk '{print $2}')
   echo -n "$VM ($NS): "
-  virtctl ssh --namespace=$NS --username=fedora \
+  sshpass -p fedora virtctl ssh --namespace=$NS --username=fedora \
     -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
     -t '-o PreferredAuthentications=password' \
     -c "curl -s --max-time 10 ifconfig.me || echo TIMEOUT" \
@@ -875,7 +803,7 @@ Add a Public Address Range (PAR) to the gateway for inbound traffic. DNAT rules 
      | DNAT: port 443 -> VM-3:8443
      | DNAT: port 80  -> VM-3:80
      |
-  transit-l2 --> router-b --> web-l2 --> VM-3
+  localnet-ext --> adv-router --> web-l2 --> VM-3
 ```
 
 ### 7.1 Update the gateway with PAR and DNAT
@@ -883,7 +811,7 @@ Add a Public Address Range (PAR) to the gateway for inbound traffic. DNAT rules 
 First, get VM-3's DHCP-assigned IP:
 
 ```bash
-VM3_IP=$(virtctl ssh --namespace=ns-b --username=fedora \
+VM3_IP=$(sshpass -p fedora virtctl ssh --namespace=ns-b --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c 'ip -4 -o addr show enp1s0 | awk "{print \$4}" | cut -d/ -f1' \
@@ -909,9 +837,7 @@ spec:
     - "<sg-id>"
 
   transit:
-    network: transit-l2
     address: "10.99.0.1"
-    cidr: "10.99.0.0/24"
 
   floatingIP:
     enabled: true
@@ -953,7 +879,7 @@ oc apply -f adv-gateway-par.yaml
 1. Creates a PAR in the VPC zone with prefix length /29
 2. Creates an ingress routing table with `route_internet_ingress: true`
 3. Creates an ingress route: `destination=<PAR CIDR>`, `next_hop=<gateway VNI IP>`
-4. Gateway pod is recreated with updated DNAT nftables rules
+4. The router pod is recreated with updated DNAT nftables rules (the gateway pushes NAT config to the router)
 
 ### 7.2 Verify the PAR
 
@@ -969,7 +895,7 @@ oc get vgw adv-gw -n roks-vpc-network-operator -o wide
 
 ```bash
 # SSH into VM-3 and start a simple HTTP server
-virtctl ssh --namespace=ns-b --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-b --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "nohup python3 -m http.server 80 &>/dev/null &" \
@@ -985,7 +911,7 @@ From a VM on a different network (e.g., vm-app), test reaching vm-web through th
 GW_FIP=$(oc get vgw adv-gw -n roks-vpc-network-operator -o jsonpath='{.status.floatingIP}')
 
 # From VM-1, curl VM-3's HTTP server via the gateway's public IP
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "curl -s --max-time 10 http://$GW_FIP:80 || echo TIMEOUT" \
@@ -1002,12 +928,12 @@ curl -s --max-time 10 http://$GW_FIP:80
 
 ## Part 8: IPS inline security
 
-Enable inline IPS (intrusion prevention) on router-a to protect the ns-a workloads. Suricata inspects all forwarded traffic and can block malicious patterns.
+Enable inline IPS (intrusion prevention) on the router to protect all workloads. Suricata inspects all forwarded traffic and can block malicious patterns.
 
 ### How it works
 
 ```
-                     Router-A Pod
+                     adv-router Pod
   +----------------------------------------------------+
   |                                                    |
   |   +------------+         +--------------------+    |
@@ -1020,21 +946,17 @@ Enable inline IPS (intrusion prevention) on router-a to protect the ns-a workloa
   +----------------------------------------------------+
 ```
 
-### 8.1 Update router-a with IPS
+### 8.1 Update the router with IPS
 
 ```yaml
-# adv-router-a-ips.yaml
+# adv-router-ips.yaml
 apiVersion: vpc.roks.ibm.com/v1alpha1
 kind: VPCRouter
 metadata:
-  name: router-a
+  name: adv-router
   namespace: roks-vpc-network-operator
 spec:
   gateway: adv-gw
-
-  transit:
-    network: transit-l2
-    address: "10.99.0.2"
 
   networks:
   - name: app-l2
@@ -1043,6 +965,12 @@ spec:
   - name: db-l2
     namespace: ns-a
     address: "10.100.1.1/24"
+  - name: web-l2
+    namespace: ns-b
+    address: "10.200.0.1/24"
+  - name: svc-l2
+    namespace: ns-b
+    address: "10.200.1.1/24"
 
   dhcp:
     enabled: true
@@ -1065,7 +993,7 @@ spec:
 ```
 
 ```bash
-oc apply -f adv-router-a-ips.yaml
+oc apply -f adv-router-ips.yaml
 ```
 
 The router reconciler detects the IDS configuration change and recreates the pod with a Suricata sidecar.
@@ -1074,21 +1002,21 @@ The router reconciler detects the IDS configuration change and recreates the pod
 
 ```bash
 # Wait for pod recreation
-oc wait --for=condition=Ready pod/router-a-pod -n roks-vpc-network-operator --timeout=120s
+oc wait --for=condition=Ready pod/adv-router-pod -n roks-vpc-network-operator --timeout=120s
 
 # Pod should show 2/2 containers (router + suricata)
-oc get pod router-a-pod -n roks-vpc-network-operator
+oc get pod adv-router-pod -n roks-vpc-network-operator
 
 # Expected:
-# NAME             READY   STATUS    AGE
-# router-a-pod      2/2     Running   30s
+# NAME               READY   STATUS    AGE
+# adv-router-pod      2/2     Running   30s
 
 # Verify IDS mode in status
-oc get vrt router-a -n roks-vpc-network-operator -o wide
+oc get vrt adv-router -n roks-vpc-network-operator -o wide
 # The IDS column should show "ips"
 
 # Verify NFQUEUE rules on the router container
-oc exec router-a-pod -n roks-vpc-network-operator -c router -- nft list table ip suricata
+oc exec adv-router-pod -n roks-vpc-network-operator -c router -- nft list table ip suricata
 ```
 
 Expected nftables output:
@@ -1105,10 +1033,10 @@ table ip suricata {
 
 ### 8.3 Trigger an alert
 
-From VM-1 (behind router-a), make an HTTP request to trigger the ET Open ruleset:
+From VM-1, make an HTTP request to trigger the ET Open ruleset:
 
 ```bash
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "curl -s http://testmynids.org/uid/index.html" \
@@ -1118,7 +1046,7 @@ virtctl ssh --namespace=ns-a --username=fedora \
 Check Suricata logs for alerts:
 
 ```bash
-oc logs router-a-pod -n roks-vpc-network-operator -c suricata --tail=20 | grep '"alert"'
+oc logs adv-router-pod -n roks-vpc-network-operator -c suricata --tail=20 | grep '"alert"'
 ```
 
 ---
@@ -1136,13 +1064,14 @@ Add a WireGuard VPN gateway to provide encrypted connectivity to a simulated rem
   WireGuard Peer  <-- encrypted tunnel -->  VPCVPNGateway "adv-vpn"
   203.0.113.10:51820                         <GW FIP>:51820
                                                 |
-                                           transit-l2
+                                           localnet-ext
+                                           (own MAC, separate pod)
                                                 |
                                     routes: 192.168.0.0/24
                                     via VPN gateway pod
 ```
 
-The VPCGateway automatically creates a VPC route for `192.168.0.0/24` when the VPN gateway advertises it.
+The VPN gateway pod gets its own Multus attachment to the localnet-ext network (without MAC pinning — it uses its own VPC identity). The VPCGateway automatically creates a VPC route for `192.168.0.0/24` when the VPN gateway advertises it.
 
 ### 9.1 Generate WireGuard keys
 
@@ -1206,9 +1135,10 @@ oc apply -f adv-vpn.yaml
 
 **What the reconciler does:**
 1. Looks up `adv-gw` to obtain the floating IP as the tunnel endpoint
-2. Creates a VPN pod with WireGuard configured with the tunnel spec
-3. Sets `status.advertisedRoutes: ["192.168.0.0/24"]`
-4. The VPCGateway reconciler detects the new advertised route and creates a VPC route for `192.168.0.0/24`
+2. Creates a VPN pod (`vpngw-adv-vpn`) with WireGuard configured using the tunnel spec
+3. The pod gets a Multus attachment to `localnet-ext` as its `net0` interface (no MAC pinning — it gets its own identity from VPC DHCP)
+4. Sets `status.advertisedRoutes: ["192.168.0.0/24"]`
+5. The VPCGateway reconciler detects the new advertised route and creates a VPC route for `192.168.0.0/24`
 
 ### 9.4 Configure the remote side
 
@@ -1224,7 +1154,7 @@ ListenPort = 51820
 [Peer]
 PublicKey = <contents of cluster-public.key>
 Endpoint = <VPCGateway floating IP>:51820
-AllowedIPs = 10.100.0.0/24, 10.100.1.0/24, 10.200.0.0/24, 10.200.1.0/24, 10.99.0.0/24
+AllowedIPs = 10.100.0.0/24, 10.100.1.0/24, 10.200.0.0/24, 10.200.1.0/24
 PersistentKeepalive = 25
 ```
 
@@ -1260,7 +1190,7 @@ With the full topology in place, traffic from any VM takes a different path depe
 
 ```bash
 # SSH into VM-1 and check routes
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "ip route" \
@@ -1270,21 +1200,21 @@ virtctl ssh --namespace=ns-a --username=fedora \
 Expected:
 
 ```
-default via 10.100.0.1 dev enp1s0             # router-a is the default gateway
+default via 10.100.0.1 dev enp1s0             # adv-router is the default gateway
 10.100.0.0/24 dev enp1s0 proto kernel scope link src 10.100.0.x
 ```
 
-### 10.2 Traffic path: VM-to-VM cross router
+### 10.2 Traffic path: VM-to-VM cross-network
 
-VM-1 (10.100.0.x) to VM-3 (10.200.0.x):
+VM-1 (10.100.0.x) to VM-3 (10.200.0.x) — traffic is forwarded within the router pod between its net0 and net2 interfaces:
 
 ```
-VM-1 -> 10.100.0.1 (router-a) -> 10.99.0.3 (router-b via transit) -> 10.200.0.x (VM-3)
+VM-1 -> 10.100.0.1 (adv-router net0) -> kernel forwarding -> (adv-router net2) -> 10.200.0.x (VM-3)
 ```
 
 ```bash
 # Traceroute from VM-1 to VM-3
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "traceroute -n $VM3_IP" \
@@ -1292,21 +1222,20 @@ virtctl ssh --namespace=ns-a --username=fedora \
 ```
 
 Expected hops:
-1. `10.100.0.1` (router-a)
-2. `10.200.0.1` (router-b)
-3. `10.200.0.x` (VM-3)
+1. `10.100.0.1` (adv-router — single hop since all networks are on the same router)
+2. `10.200.0.x` (VM-3)
 
 ### 10.3 Traffic path: VM-to-Internet
 
-VM-1 (10.100.0.x) to the internet:
+VM-1 (10.100.0.x) to the internet — traffic goes to the router, out the uplink to the VPC fabric, SNAT to FIP:
 
 ```
-VM-1 -> router-a (10.100.0.1) -> transit (10.99.0.1 gateway) -> SNAT -> FIP -> Internet
+VM-1 -> adv-router (net0 -> uplink) -> VPC fabric -> SNAT -> FIP -> Internet
 ```
 
 ```bash
 # Traceroute to an internet host
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "traceroute -n 8.8.8.8" \
@@ -1314,21 +1243,20 @@ virtctl ssh --namespace=ns-a --username=fedora \
 ```
 
 Expected first hops:
-1. `10.100.0.1` (router-a)
-2. `10.99.0.1` (gateway on transit)
-3. VPC fabric hops...
+1. `10.100.0.1` (adv-router)
+2. VPC fabric gateway hops...
 
 ### 10.4 Traffic path: VM-to-VPN remote
 
-VM-1 (10.100.0.x) to the remote office (192.168.0.x):
+VM-1 (10.100.0.x) to the remote office (192.168.0.x) — traffic goes through the VPC fabric to the VPN pod:
 
 ```
-VM-1 -> router-a -> transit -> gateway -> VPC route -> VPN pod -> WireGuard tunnel -> 192.168.0.x
+VM-1 -> adv-router -> uplink -> VPC route (192.168.0.0/24) -> VPN pod -> WireGuard tunnel -> 192.168.0.x
 ```
 
 ```bash
 # From VM-1, ping the remote office subnet (only works if remote side is connected)
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "ping -c 3 -W 5 192.168.0.1 || echo 'Remote side not reachable (expected if no real remote peer)'" \
@@ -1339,24 +1267,30 @@ virtctl ssh --namespace=ns-a --username=fedora \
 
 | Source | Destination | Path | NAT |
 |--------|------------|------|-----|
-| VM-1 (10.100.0.x) | VM-2 (10.100.1.x) | app-l2 -> router-a -> db-l2 | None (noNAT) |
-| VM-1 (10.100.0.x) | VM-3 (10.200.0.x) | app-l2 -> router-a -> transit -> router-b -> web-l2 | None (noNAT) |
-| VM-1 (10.100.0.x) | Internet | app-l2 -> router-a -> transit -> gateway -> VPC | SNAT to FIP |
-| VM-1 (10.100.0.x) | 192.168.0.x | app-l2 -> router-a -> transit -> gateway -> VPN tunnel | None |
-| Internet | VM-3:80 | FIP:80 -> gateway DNAT -> transit -> router-b -> web-l2 | DNAT |
+| VM-1 (10.100.0.x) | VM-2 (10.100.1.x) | app-l2 -> router -> db-l2 | None |
+| VM-1 (10.100.0.x) | VM-3 (10.200.0.x) | app-l2 -> router -> web-l2 | None |
+| VM-1 (10.100.0.x) | Internet | app-l2 -> router -> uplink -> VPC -> SNAT | SNAT to FIP |
+| VM-1 (10.100.0.x) | 192.168.0.x | app-l2 -> router -> uplink -> VPC route -> VPN tunnel | None |
+| Internet | VM-3:80 | FIP:80 -> router DNAT -> web-l2 | DNAT |
 
 ---
 
-## Part 11: Multi-tier firewall + DHCP reservations
+## Part 11: Firewall + DHCP reservations
 
-Add firewall rules to router-a to enforce micro-segmentation between the application and database tiers. Add DHCP reservations for predictable database IPs.
+Add firewall rules to control internet access and DHCP reservations for predictable IPs.
+
+### How the firewall works
+
+The router's firewall rules generate nftables chains in the `forward` hook. Rules use `direction: ingress` (maps to `iifname "uplink"` — traffic arriving from the VPC fabric) and `direction: egress` (maps to `oifname "uplink"` — traffic leaving to the VPC fabric). This means the firewall controls traffic between VMs and the internet. Traffic forwarded between workload networks (net0 ↔ net1 ↔ net2 ↔ net3) does not traverse the uplink and is handled by the kernel's forwarding table directly.
+
+> **Note:** For network-level microsegmentation between L2 networks (e.g., preventing db-l2 from reaching web-l2), use OVN Network Policies or Kubernetes NetworkPolicies at the CNI layer.
 
 ### 11.1 Get VM-2's MAC address
 
 DHCP reservations require the VM's MAC address:
 
 ```bash
-VM2_MAC=$(virtctl ssh --namespace=ns-a --username=fedora \
+VM2_MAC=$(sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "ip link show enp1s0 | awk '/ether/ {print \$2}'" \
@@ -1364,21 +1298,17 @@ VM2_MAC=$(virtctl ssh --namespace=ns-a --username=fedora \
 echo "VM-2 (db) MAC: $VM2_MAC"
 ```
 
-### 11.2 Update router-a with firewall and DHCP reservations
+### 11.2 Update the router with firewall and DHCP reservations
 
 ```yaml
-# adv-router-a-fw.yaml
+# adv-router-fw.yaml
 apiVersion: vpc.roks.ibm.com/v1alpha1
 kind: VPCRouter
 metadata:
-  name: router-a
+  name: adv-router
   namespace: roks-vpc-network-operator
 spec:
   gateway: adv-gw
-
-  transit:
-    network: transit-l2
-    address: "10.99.0.2"
 
   networks:
   - name: app-l2
@@ -1392,6 +1322,12 @@ spec:
       - mac: "<VM2_MAC>"                 # Replace with VM-2's actual MAC
         ip: "10.100.1.100"
         hostname: "db-server"
+  - name: web-l2
+    namespace: ns-b
+    address: "10.200.0.1/24"
+  - name: svc-l2
+    namespace: ns-b
+    address: "10.200.1.1/24"
 
   dhcp:
     enabled: true
@@ -1414,50 +1350,40 @@ spec:
   firewall:
     enabled: true
     rules:
-    # Allow app tier to reach DB on PostgreSQL port
-    - name: allow-app-to-db-postgres
-      direction: egress
-      action: allow
-      source: "10.100.0.0/24"
-      destination: "10.100.1.0/24"
-      protocol: tcp
-      port: 5432
-      priority: 10
-
-    # Allow app tier to ping DB tier (monitoring)
-    - name: allow-app-to-db-icmp
-      direction: egress
-      action: allow
-      source: "10.100.0.0/24"
-      destination: "10.100.1.0/24"
-      protocol: icmp
-      priority: 11
-
-    # Deny DB tier initiating connections to app tier
-    - name: deny-db-to-app
+    # Deny database tier from reaching the internet (block outbound)
+    - name: deny-db-to-internet
       direction: egress
       action: deny
       source: "10.100.1.0/24"
-      destination: "10.100.0.0/24"
-      protocol: tcp
-      priority: 20
+      protocol: any
+      priority: 10
 
-    # Deny SSH to DB tier from anywhere
-    - name: deny-ssh-to-db
+    # Deny inbound SSH from internet to database tier
+    - name: deny-internet-ssh-to-db
       direction: ingress
       action: deny
       destination: "10.100.1.0/24"
       protocol: tcp
       port: 22
-      priority: 30
+      priority: 20
 
-    # Allow all other traffic
+    # Deny inbound SSH from internet to services tier
+    - name: deny-internet-ssh-to-svc
+      direction: ingress
+      action: deny
+      destination: "10.200.1.0/24"
+      protocol: tcp
+      port: 22
+      priority: 21
+
+    # Allow all other outbound traffic to internet
     - name: allow-all-egress
       direction: egress
       action: allow
       protocol: any
       priority: 999
 
+    # Allow all other inbound traffic from internet
     - name: allow-all-ingress
       direction: ingress
       action: allow
@@ -1468,7 +1394,7 @@ spec:
 > **Important:** Replace `<VM2_MAC>` with the actual MAC address from step 11.1.
 
 ```bash
-oc apply -f adv-router-a-fw.yaml
+oc apply -f adv-router-fw.yaml
 ```
 
 The router pod is recreated with the new firewall rules and DHCP reservation.
@@ -1479,7 +1405,7 @@ After the router pod restarts, renew VM-2's DHCP lease:
 
 ```bash
 # Force DHCP renewal on VM-2
-virtctl ssh --namespace=ns-a --username=fedora \
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
   -c "sudo dhclient -r enp1s0 && sudo dhclient enp1s0 && ip addr show enp1s0" \
@@ -1492,31 +1418,54 @@ VM-2 should now have IP `10.100.1.100`.
 
 ```bash
 # Check nftables on the router pod
-oc exec router-a-pod -n roks-vpc-network-operator -c router -- nft list ruleset
+oc exec adv-router-pod -n roks-vpc-network-operator -c router -- nft list ruleset
+```
+
+Expected nftables output (firewall section):
+
+```
+table ip filter {
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+    ct state established,related accept
+    oifname "uplink" ip saddr 10.100.1.0/24 counter deny
+    iifname "uplink" ip daddr 10.100.1.0/24 meta l4proto tcp th dport 22 counter deny
+    iifname "uplink" ip daddr 10.200.1.0/24 meta l4proto tcp th dport 22 counter deny
+    oifname "uplink" counter allow
+    iifname "uplink" counter allow
+  }
+}
 ```
 
 ### 11.5 Test firewall enforcement
 
 ```bash
-# Test 1: VM-1 CAN ping VM-2 (ICMP allowed)
-virtctl ssh --namespace=ns-a --username=fedora \
+# Test 1: VM-1 CAN reach the internet (app tier allowed)
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
-  -c "ping -c 2 -W 3 10.100.1.100 && echo 'PASS: ICMP allowed'" \
+  -c "curl -s --max-time 10 ifconfig.me && echo ' PASS: internet reachable'" \
   vm-app
 
-# Test 2: VM-1 CAN reach VM-2 on port 5432 (PostgreSQL allowed)
-virtctl ssh --namespace=ns-a --username=fedora \
+# Test 2: VM-2 CANNOT reach the internet (db tier blocked)
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
-  -c "timeout 3 bash -c 'echo | nc -w 2 10.100.1.100 5432' 2>&1; echo 'PASS: Port 5432 reachable (connection attempt made)'" \
+  -c "curl -s --max-time 5 ifconfig.me || echo 'PASS: internet blocked for db tier'" \
+  vm-db
+
+# Test 3: VM-1 CAN still ping VM-2 (inter-L2 traffic bypasses the firewall)
+sshpass -p fedora virtctl ssh --namespace=ns-a --username=fedora \
+  -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
+  -t '-o PreferredAuthentications=password' \
+  -c "ping -c 2 -W 3 10.100.1.100 && echo 'PASS: inter-L2 connectivity preserved'" \
   vm-app
 
-# Test 3: VM-3 CANNOT SSH to VM-2 (denied by firewall)
-virtctl ssh --namespace=ns-b --username=fedora \
+# Test 4: VM-3 CAN reach the internet (web tier allowed)
+sshpass -p fedora virtctl ssh --namespace=ns-b --username=fedora \
   -t '-o StrictHostKeyChecking=no' -t '-o UserKnownHostsFile=/dev/null' \
   -t '-o PreferredAuthentications=password' \
-  -c "timeout 3 ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no fedora@10.100.1.100 echo 'FAIL: SSH should be blocked' 2>&1 || echo 'PASS: SSH blocked by firewall'" \
+  -c "curl -s --max-time 10 ifconfig.me && echo ' PASS: internet reachable'" \
   vm-web
 ```
 
@@ -1529,10 +1478,9 @@ virtctl ssh --namespace=ns-b --username=fedora \
 | Source | Destination | Expected | Test command |
 |--------|------------|----------|-------------|
 | VM-1 (app) | VM-2 (db) ICMP | Allow | `ping -c 1 10.100.1.100` |
-| VM-1 (app) | VM-2 (db) TCP/5432 | Allow | `nc -w 2 10.100.1.100 5432` |
 | VM-1 (app) | VM-3 (web) ICMP | Allow | `ping -c 1 <VM3_IP>` |
 | VM-1 (app) | Internet | Allow (SNAT) | `curl -s ifconfig.me` |
-| VM-3 (web) | VM-2 (db) SSH | Deny | `ssh fedora@10.100.1.100` |
+| VM-2 (db) | Internet | Deny (firewall) | `curl -s --max-time 5 ifconfig.me` |
 | VM-3 (web) | Internet | Allow (SNAT) | `curl -s ifconfig.me` |
 | Internet | VM-3:80 | Allow (DNAT) | `curl http://<GW_FIP>:80` |
 
@@ -1543,9 +1491,8 @@ virtctl ssh --namespace=ns-b --username=fedora \
 oc get vrt,vgw,vvg -n roks-vpc-network-operator
 
 # Expected:
-# NAME                              GATEWAY   PHASE   SYNC     AGE
-# vpcrouter.vpc.roks.ibm.com/router-a   adv-gw    Ready   Synced   20m
-# vpcrouter.vpc.roks.ibm.com/router-b   adv-gw    Ready   Synced   20m
+# NAME                                    GATEWAY   PHASE   SYNC     AGE
+# vpcrouter.vpc.roks.ibm.com/adv-router   adv-gw    Ready   Synced   20m
 #
 # NAME                              ZONE      PHASE   VNI IP         FIP            SYNC     AGE
 # vpcgateway.vpc.roks.ibm.com/adv-gw   eu-de-1   Ready   10.240.64.x    158.177.x.x    Synced   18m
@@ -1566,7 +1513,7 @@ oc get vmi -A
 View the full topology in the OpenShift Console plugin:
 
 1. Navigate to **Networking > VPC Networking > Topology**
-2. The topology view shows all resources: gateway, routers, VPN gateway, networks, and VMs
+2. The topology view shows all resources: gateway, router, VPN gateway, networks, and VMs
 3. Connections between resources show the data path
 4. Click any resource to see its status and configuration
 
@@ -1586,11 +1533,11 @@ oc wait --for=delete vmi/vm-web vmi/vm-svc -n ns-b --timeout=120s
 # 2. Delete VPN gateway (depends on gateway)
 oc delete vpcvpngateway adv-vpn -n roks-vpc-network-operator
 
-# 3. Delete routers (depend on gateway)
-oc delete vpcrouter router-a router-b -n roks-vpc-network-operator
+# 3. Delete router (depends on gateway)
+oc delete vpcrouter adv-router -n roks-vpc-network-operator
 
-# Wait for router pods to terminate
-oc wait --for=delete pod/router-a-pod pod/router-b-pod -n roks-vpc-network-operator --timeout=120s
+# Wait for router pod to terminate
+oc wait --for=delete pod/adv-router-pod -n roks-vpc-network-operator --timeout=120s
 
 # 4. Delete gateway (finalizer cleans up FIP, PAR, VPC routes, VLAN attachment)
 oc delete vpcgateway adv-gw -n roks-vpc-network-operator
@@ -1599,7 +1546,7 @@ oc delete vpcgateway adv-gw -n roks-vpc-network-operator
 oc delete secret adv-wg-key -n roks-vpc-network-operator
 
 # 6. Delete CUDNs (LocalNet finalizer cleans up VPC subnet + VLAN attachments)
-oc delete cudn localnet-ext transit-l2 app-l2 db-l2 web-l2 svc-l2
+oc delete cudn localnet-ext app-l2 db-l2 web-l2 svc-l2
 
 # 7. Delete namespaces
 oc delete namespace ns-a ns-b
@@ -1613,7 +1560,7 @@ oc get vrt,vgw,vvg,vsn,vla -n roks-vpc-network-operator
 # No resources found
 
 # No CUDNs from this tutorial
-oc get cudn | grep -E 'app-l2|db-l2|web-l2|svc-l2|transit-l2|localnet-ext'
+oc get cudn | grep -E 'app-l2|db-l2|web-l2|svc-l2|localnet-ext'
 # (no output)
 
 # Optionally verify VPC resources are cleaned up
