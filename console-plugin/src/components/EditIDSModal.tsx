@@ -139,6 +139,13 @@ export const EditIDSModal: React.FC<EditIDSModalProps> = ({
             <FormSelectOption value="uplink" label="Uplink only" />
             <FormSelectOption value="workload" label="Workload only" />
           </FormSelect>
+          <FormHelperText>
+            <HelperText>
+              <HelperTextItem>
+                &quot;All&quot; monitors both uplink and workload traffic. &quot;Uplink&quot; monitors external-facing traffic to/from the VPC. &quot;Workload&quot; monitors VM-to-VM traffic on internal networks.
+              </HelperTextItem>
+            </HelperText>
+          </FormHelperText>
         </FormGroup>
 
         <FormGroup label="Syslog Target" fieldId="ids-syslog">

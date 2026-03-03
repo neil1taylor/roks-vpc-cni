@@ -178,6 +178,9 @@ const VPNGatewayCreatePage: React.FC = () => {
                   <FormSelectOption value="wireguard" label="WireGuard" />
                   <FormSelectOption value="ipsec" label="IPsec (StrongSwan)" />
                 </FormSelect>
+                <FormHelperText>
+                  <HelperText><HelperTextItem>WireGuard is lightweight and fast with modern cryptography. IPsec (StrongSwan) offers broader compatibility with legacy VPN devices.</HelperTextItem></HelperText>
+                </FormHelperText>
               </FormGroup>
 
               {/* Gateway */}
@@ -223,6 +226,9 @@ const VPNGatewayCreatePage: React.FC = () => {
                       onChange={(_e, v) => setWgSecretKey(v)}
                       isRequired
                     />
+                    <FormHelperText>
+                      <HelperText><HelperTextItem>The key within the Kubernetes Secret that holds the private key data (default: &quot;privatekey&quot;)</HelperTextItem></HelperText>
+                    </FormHelperText>
                   </FormGroup>
 
                   <FormGroup label="Listen Port" fieldId="vpn-wg-port">
@@ -232,6 +238,9 @@ const VPNGatewayCreatePage: React.FC = () => {
                       value={listenPort}
                       onChange={(_e, v) => setListenPort(v)}
                     />
+                    <FormHelperText>
+                      <HelperText><HelperTextItem>UDP port for WireGuard to listen on (default: 51820). Must be unique per VPN gateway.</HelperTextItem></HelperText>
+                    </FormHelperText>
                   </FormGroup>
                 </>
               )}
@@ -251,10 +260,16 @@ const VPNGatewayCreatePage: React.FC = () => {
 
                     <FormGroup label="Tunnel Name" isRequired fieldId={`t-${idx}-name`}>
                       <TextInput id={`t-${idx}-name`} value={tunnel.name} onChange={(_e, v) => updateTunnel(idx, 'name', v)} isRequired />
+                      <FormHelperText>
+                        <HelperText><HelperTextItem>Unique identifier for this tunnel. Used as the WireGuard peer name or IPsec connection name.</HelperTextItem></HelperText>
+                      </FormHelperText>
                     </FormGroup>
 
                     <FormGroup label="Remote Endpoint" isRequired fieldId={`t-${idx}-endpoint`}>
                       <TextInput id={`t-${idx}-endpoint`} value={tunnel.remoteEndpoint} onChange={(_e, v) => updateTunnel(idx, 'remoteEndpoint', v)} isRequired placeholder="e.g. 203.0.113.10" />
+                      <FormHelperText>
+                        <HelperText><HelperTextItem>Public IP address or hostname of the remote VPN peer</HelperTextItem></HelperText>
+                      </FormHelperText>
                     </FormGroup>
 
                     <FormGroup label="Remote Networks" isRequired fieldId={`t-${idx}-networks`}>
@@ -268,12 +283,21 @@ const VPNGatewayCreatePage: React.FC = () => {
                       <>
                         <FormGroup label="Peer Public Key" isRequired fieldId={`t-${idx}-pubkey`}>
                           <TextInput id={`t-${idx}-pubkey`} value={tunnel.peerPublicKey} onChange={(_e, v) => updateTunnel(idx, 'peerPublicKey', v)} isRequired placeholder="Base64 WireGuard public key" />
+                          <FormHelperText>
+                            <HelperText><HelperTextItem>The remote peer&apos;s WireGuard public key. Generate with: wg genkey | tee privatekey | wg pubkey</HelperTextItem></HelperText>
+                          </FormHelperText>
                         </FormGroup>
                         <FormGroup label="Tunnel Address Local" fieldId={`t-${idx}-addr-local`}>
                           <TextInput id={`t-${idx}-addr-local`} value={tunnel.tunnelAddressLocal} onChange={(_e, v) => updateTunnel(idx, 'tunnelAddressLocal', v)} placeholder="e.g. 10.99.0.1/30" />
+                          <FormHelperText>
+                            <HelperText><HelperTextItem>Inner tunnel IP in CIDR notation for this end (e.g. 10.99.0.1/30). Use a /30 point-to-point block.</HelperTextItem></HelperText>
+                          </FormHelperText>
                         </FormGroup>
                         <FormGroup label="Tunnel Address Remote" fieldId={`t-${idx}-addr-remote`}>
                           <TextInput id={`t-${idx}-addr-remote`} value={tunnel.tunnelAddressRemote} onChange={(_e, v) => updateTunnel(idx, 'tunnelAddressRemote', v)} placeholder="e.g. 10.99.0.2/30" />
+                          <FormHelperText>
+                            <HelperText><HelperTextItem>Inner tunnel IP in CIDR notation for the remote end. Must be in the same subnet as local address.</HelperTextItem></HelperText>
+                          </FormHelperText>
                         </FormGroup>
                       </>
                     )}
@@ -282,9 +306,15 @@ const VPNGatewayCreatePage: React.FC = () => {
                       <>
                         <FormGroup label="PSK Secret Name" isRequired fieldId={`t-${idx}-psk-secret`}>
                           <TextInput id={`t-${idx}-psk-secret`} value={tunnel.presharedKeySecret} onChange={(_e, v) => updateTunnel(idx, 'presharedKeySecret', v)} isRequired placeholder="e.g. ipsec-psk-tunnel1" />
+                          <FormHelperText>
+                            <HelperText><HelperTextItem>Kubernetes Secret containing the IPsec pre-shared key for this tunnel</HelperTextItem></HelperText>
+                          </FormHelperText>
                         </FormGroup>
                         <FormGroup label="PSK Secret Key" isRequired fieldId={`t-${idx}-psk-key`}>
                           <TextInput id={`t-${idx}-psk-key`} value={tunnel.presharedKeySecretKey} onChange={(_e, v) => updateTunnel(idx, 'presharedKeySecretKey', v)} isRequired placeholder="e.g. psk" />
+                          <FormHelperText>
+                            <HelperText><HelperTextItem>The key within the Secret that holds the pre-shared key data (e.g. &quot;psk&quot;)</HelperTextItem></HelperText>
+                          </FormHelperText>
                         </FormGroup>
                       </>
                     )}
@@ -292,6 +322,9 @@ const VPNGatewayCreatePage: React.FC = () => {
                 </Card>
               ))}
 
+              <Text component={TextVariants.small} style={{ marginBottom: '8px', color: 'var(--pf-v5-global--Color--200)' }}>
+                Add multiple tunnels to connect to different remote sites or for redundancy.
+              </Text>
               <Button variant="secondary" onClick={addTunnel} style={{ marginBottom: '16px' }}>
                 Add Tunnel
               </Button>

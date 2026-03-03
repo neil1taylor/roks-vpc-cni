@@ -19,17 +19,17 @@ const tabs = [
   { key: 'networks', label: 'Networks', path: '/vpc-networking/networks' },
   { key: 'subnets', label: 'Subnets', path: '/vpc-networking/subnets' },
   { key: 'vnis', label: 'VNIs', path: '/vpc-networking/vnis' },
-  { key: 'vlan-attachments', label: 'VLAN Attachments', path: '/vpc-networking/vlan-attachments' },
-  { key: 'floating-ips', label: 'Floating IPs', path: '/vpc-networking/floating-ips' },
+  { key: 'vlan-attachments', label: 'VLANs', path: '/vpc-networking/vlan-attachments' },
+  { key: 'floating-ips', label: 'FIPs', path: '/vpc-networking/floating-ips' },
   { key: 'pars', label: 'PARs', path: '/vpc-networking/pars' },
-  { key: 'security-groups', label: 'Security Groups', path: '/vpc-networking/security-groups' },
-  { key: 'network-acls', label: 'Network ACLs', path: '/vpc-networking/network-acls' },
+  { key: 'security-groups', label: 'Sec Groups', path: '/vpc-networking/security-groups' },
+  { key: 'network-acls', label: 'ACLs', path: '/vpc-networking/network-acls' },
   { key: 'routes', label: 'Routes', path: '/vpc-networking/routes' },
   { key: 'gateways', label: 'Gateways', path: '/vpc-networking/gateways' },
   { key: 'routers', label: 'Routers', path: '/vpc-networking/routers' },
   { key: 'l2-bridges', label: 'L2 Bridges', path: '/vpc-networking/l2-bridges' },
-  { key: 'vpn-gateways', label: 'VPN Gateways', path: '/vpc-networking/vpn-gateways' },
-  { key: 'observability', label: 'Observability', path: '/vpc-networking/observability' },
+  { key: 'vpn-gateways', label: 'VPN', path: '/vpc-networking/vpn-gateways' },
+  { key: 'observability', label: 'Observe', path: '/vpc-networking/observability' },
   { key: 'topology', label: 'Topology', path: '/vpc-networking/topology' },
 ];
 
@@ -60,7 +60,7 @@ const VPCNetworkingShell: React.FC<{ children: React.ReactNode }> = ({ children 
     <Page>
       <PageSection variant={PageSectionVariants.light}>
         <Title headingLevel="h1" style={{ marginBottom: '16px' }}>IBM VPC Networking</Title>
-        <Tabs activeKey={activeTab} onSelect={handleTabSelect}>
+        <Tabs activeKey={activeTab} onSelect={handleTabSelect} isOverflowHorizontal={{ showTabCount: true, defaultTitleText: 'More' }}>
           {tabs.map((tab) => (
             <Tab
               key={tab.key}

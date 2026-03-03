@@ -201,7 +201,7 @@ const L2BridgeCreatePage: React.FC = () => {
                   <FormSelectOption value="evpn-vxlan" label="EVPN-VXLAN" />
                 </FormSelect>
                 <FormHelperText>
-                  <HelperText><HelperTextItem>Tunneling technology used to bridge the overlay network to the remote site</HelperTextItem></HelperText>
+                  <HelperText><HelperTextItem>GRETAP+WireGuard: encrypted Linux-to-Linux site-to-site L2. NSX-T L2VPN: extend into VMware environments. EVPN-VXLAN: standards-based multi-vendor L2 with BGP control plane.</HelperTextItem></HelperText>
                 </FormHelperText>
               </FormGroup>
 

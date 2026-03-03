@@ -405,7 +405,13 @@ const RouterCreatePage: React.FC = () => {
                               />
                             </FormGroup>
                           </div>
+                          <FormHelperText>
+                            <HelperText><HelperTextItem>Leave range empty to auto-calculate from the network CIDR, excluding the router address and VPC gateway (.1).</HelperTextItem></HelperText>
+                          </FormHelperText>
                           <Title headingLevel="h5" style={{ marginBottom: '4px' }}>Static Reservations</Title>
+                          <Text component={TextVariants.small} style={{ marginBottom: '8px', color: 'var(--pf-v5-global--Color--200)' }}>
+                            Pin specific IP addresses to VM MAC addresses. Reservations take priority over the DHCP pool.
+                          </Text>
                           {net.reservations.map((res, ri) => {
                             const macValid = res.mac === '' || isValidMAC(res.mac);
                             const ipValid = res.ip === '' || isValidIPv4(res.ip);
@@ -561,6 +567,9 @@ const RouterCreatePage: React.FC = () => {
                         <FormSelectOption value="uplink" label="Uplink only" />
                         <FormSelectOption value="workload" label="Workload only" />
                       </FormSelect>
+                      <FormHelperText>
+                        <HelperText><HelperTextItem>&quot;All&quot; monitors both uplink and workload traffic. &quot;Uplink&quot; monitors external-facing traffic. &quot;Workload&quot; monitors VM-to-VM traffic on internal networks.</HelperTextItem></HelperText>
+                      </FormHelperText>
                     </FormGroup>
                     <FormGroup label="Syslog Target" fieldId="ids-syslog" style={{ flex: 1, minWidth: '200px' }}>
                       <TextInput
