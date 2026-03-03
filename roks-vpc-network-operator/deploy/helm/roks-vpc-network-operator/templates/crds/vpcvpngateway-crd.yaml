@@ -248,6 +248,9 @@ spec:
                   clientSubnet:
                     description: CIDR for the remote-access client IP pool.
                     type: string
+                  image:
+                    description: Image overrides the default OpenVPN container image.
+                    type: string
               tunnels:
                 description: Tunnels is the list of VPN tunnels to remote peers.
                 type: array

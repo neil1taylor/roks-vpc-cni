@@ -581,9 +581,9 @@ func TestBuildOpenVPNPod(t *testing.T) {
 		t.Errorf("container name = %q, want %q", container.Name, "vpn")
 	}
 
-	// Default image
-	if container.Image != defaultVPNImage {
-		t.Errorf("image = %q, want default %q", container.Image, defaultVPNImage)
+	// Default image (Fedora for OpenVPN)
+	if container.Image != defaultOpenVPNImage {
+		t.Errorf("image = %q, want default %q", container.Image, defaultOpenVPNImage)
 	}
 
 	// Security context: privileged + NET_ADMIN + NET_RAW

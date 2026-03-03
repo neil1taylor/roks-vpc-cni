@@ -512,8 +512,8 @@ func TestReconcileNormal_CreateOpenVPNGateway(t *testing.T) {
 	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "vpngw-test-ovpn", Namespace: "default"}, pod); err != nil {
 		t.Fatalf("Expected OpenVPN pod to be created: %v", err)
 	}
-	if pod.Spec.Containers[0].Image != defaultVPNImage {
-		t.Errorf("pod image = %q, want %q", pod.Spec.Containers[0].Image, defaultVPNImage)
+	if pod.Spec.Containers[0].Image != defaultOpenVPNImage {
+		t.Errorf("pod image = %q, want %q", pod.Spec.Containers[0].Image, defaultOpenVPNImage)
 	}
 
 	// Verify status

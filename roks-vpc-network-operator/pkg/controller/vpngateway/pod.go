@@ -14,6 +14,7 @@ import (
 const (
 	defaultVPNImage        = "registry.access.redhat.com/ubi9/ubi:latest"
 	defaultStrongSwanImage = "strongx509/strongswan:6.0.0"
+	defaultOpenVPNImage    = "quay.io/fedora/fedora:40"
 	defaultTunnelMTU       = int32(1420)
 	defaultListenPort      = int32(51820)
 	defaultOpenVPNPort     = int32(1194)
@@ -483,9 +484,15 @@ func resolveStrongSwanImage(vpn *v1alpha1.VPCVPNGateway) string {
 }
 
 // resolveOpenVPNImage determines the container image for the OpenVPN pod.
-// Delegates to resolveVPNImage (same UBI9 base).
+// Priority: OpenVPN-specific image > pod-level image > default Fedora image.
 func resolveOpenVPNImage(vpn *v1alpha1.VPCVPNGateway) string {
-	return resolveVPNImage(vpn)
+	if vpn.Spec.OpenVPN != nil && vpn.Spec.OpenVPN.Image != "" {
+		return vpn.Spec.OpenVPN.Image
+	}
+	if vpn.Spec.Pod != nil && vpn.Spec.Pod.Image != "" {
+		return vpn.Spec.Pod.Image
+	}
+	return defaultOpenVPNImage
 }
 
 // resolveOpenVPNPort returns the OpenVPN listen port from the spec or the default.
@@ -548,9 +555,7 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 
 	// Install tools
 	sb.WriteString("# Install tools\n")
-	sb.WriteString("dnf install -y epel-release 2>/dev/null || true\n")
-	sb.WriteString("dnf install -y openvpn iptables jq 2>/dev/null || ")
-	sb.WriteString("yum install -y epel-release && yum install -y openvpn iptables jq 2>/dev/null || true\n\n")
+	sb.WriteString("dnf install -y openvpn iptables jq python3 gettext procps-ng dhcp-client iproute 2>/dev/null || true\n\n")
 
 	// Uplink via DHCP
 	sb.WriteString("# Uplink via DHCP\n")
@@ -560,24 +565,7 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("# Enable IP forwarding\n")
 	sb.WriteString("sysctl -w net.ipv4.ip_forward=1\n\n")
 
-	// Create CCD directory
-	sb.WriteString("# Create client config directory\n")
-	sb.WriteString("mkdir -p /etc/openvpn/ccd\n\n")
-
-	// Generate CCD entries from VPN_TUNNELS JSON
-	sb.WriteString("# Generate CCD entries from VPN_TUNNELS\n")
-	sb.WriteString("echo \"${VPN_TUNNELS}\" | jq -c '.[]' | while read -r tunnel; do\n")
-	sb.WriteString("  TUNNEL_NAME=$(echo \"$tunnel\" | jq -r '.name')\n")
-	sb.WriteString("  REMOTE_NETS=$(echo \"$tunnel\" | jq -r '.remoteNetworks[]')\n")
-	sb.WriteString("  for net in $REMOTE_NETS; do\n")
-	sb.WriteString("    NETWORK=$(echo \"$net\" | cut -d/ -f1)\n")
-	sb.WriteString("    PREFIX=$(echo \"$net\" | cut -d/ -f2)\n")
-	sb.WriteString("    NETMASK=$(python3 -c \"import ipaddress; print(ipaddress.IPv4Network('${net}', strict=False).netmask)\" 2>/dev/null || echo \"255.255.255.0\")\n")
-	sb.WriteString("    echo \"iroute ${NETWORK} ${NETMASK}\" >> /etc/openvpn/ccd/${TUNNEL_NAME}\n")
-	sb.WriteString("  done\n")
-	sb.WriteString("done\n\n")
-
-	// Generate server.conf
+	// Generate server.conf base
 	sb.WriteString("# Generate server.conf\n")
 	sb.WriteString("cat > /etc/openvpn/server.conf << 'OVPNEOF'\n")
 	sb.WriteString("port ${OVPN_LISTEN_PORT}\n")
@@ -593,7 +581,6 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("persist-tun\n")
 	sb.WriteString("status /run/openvpn/status.log 30\n")
 	sb.WriteString("verb 3\n")
-	sb.WriteString("client-config-dir /etc/openvpn/ccd\n")
 	sb.WriteString("OVPNEOF\n\n")
 
 	// Conditionally add DH params or "dh none"
@@ -610,12 +597,33 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("  echo 'tls-auth /run/secrets/openvpn/tls-auth/ta.key 0' >> /etc/openvpn/server.conf\n")
 	sb.WriteString("fi\n\n")
 
-	// Client subnet server directive (conditional on OVPN_CLIENT_SUBNET)
-	sb.WriteString("# Client subnet (remote-access pool)\n")
+	// Server mode: always use 'server' directive (compatible with OpenVPN3 clients).
+	// Uses clientSubnet if provided, otherwise derives a /24 from the first tunnel address.
+	sb.WriteString("# Server mode setup\n")
 	sb.WriteString("if [ -n \"${OVPN_CLIENT_SUBNET}\" ]; then\n")
-	sb.WriteString("  SUBNET_NET=$(python3 -c \"import ipaddress; n=ipaddress.IPv4Network('${OVPN_CLIENT_SUBNET}', strict=False); print(n.network_address)\" 2>/dev/null || echo \"10.8.0.0\")\n")
-	sb.WriteString("  SUBNET_MASK=$(python3 -c \"import ipaddress; n=ipaddress.IPv4Network('${OVPN_CLIENT_SUBNET}', strict=False); print(n.netmask)\" 2>/dev/null || echo \"255.255.255.0\")\n")
-	sb.WriteString("  echo \"server ${SUBNET_NET} ${SUBNET_MASK}\" >> /etc/openvpn/server.conf\n")
+	sb.WriteString("  POOL_CIDR=\"${OVPN_CLIENT_SUBNET}\"\n")
+	sb.WriteString("else\n")
+	sb.WriteString("  LOCAL_IP=$(echo \"${VPN_TUNNELS}\" | jq -r '.[0].tunnelAddressLocal' | cut -d/ -f1)\n")
+	sb.WriteString("  POOL_CIDR=\"$(echo \"$LOCAL_IP\" | cut -d. -f1-3).0/24\"\n")
+	sb.WriteString("fi\n")
+	sb.WriteString("POOL_NET=$(python3 -c \"import ipaddress; n=ipaddress.IPv4Network('${POOL_CIDR}', strict=False); print(n.network_address)\" 2>/dev/null || echo \"10.8.0.0\")\n")
+	sb.WriteString("POOL_MASK=$(python3 -c \"import ipaddress; n=ipaddress.IPv4Network('${POOL_CIDR}', strict=False); print(n.netmask)\" 2>/dev/null || echo \"255.255.255.0\")\n")
+	sb.WriteString("echo \"server ${POOL_NET} ${POOL_MASK}\" >> /etc/openvpn/server.conf\n\n")
+
+	// CCD only for remote-access mode with named tunnel clients
+	sb.WriteString("# CCD for remote-access mode\n")
+	sb.WriteString("if [ -n \"${OVPN_CLIENT_SUBNET}\" ]; then\n")
+	sb.WriteString("  mkdir -p /etc/openvpn/ccd\n")
+	sb.WriteString("  echo 'client-config-dir /etc/openvpn/ccd' >> /etc/openvpn/server.conf\n")
+	sb.WriteString("  echo \"${VPN_TUNNELS}\" | jq -c '.[]' | while read -r tunnel; do\n")
+	sb.WriteString("    TUNNEL_NAME=$(echo \"$tunnel\" | jq -r '.name')\n")
+	sb.WriteString("    REMOTE_NETS=$(echo \"$tunnel\" | jq -r '.remoteNetworks[]')\n")
+	sb.WriteString("    for net in $REMOTE_NETS; do\n")
+	sb.WriteString("      NETWORK=$(echo \"$net\" | cut -d/ -f1)\n")
+	sb.WriteString("      NETMASK=$(python3 -c \"import ipaddress; print(ipaddress.IPv4Network('${net}', strict=False).netmask)\" 2>/dev/null || echo \"255.255.255.0\")\n")
+	sb.WriteString("      echo \"iroute ${NETWORK} ${NETMASK}\" >> /etc/openvpn/ccd/${TUNNEL_NAME}\n")
+	sb.WriteString("    done\n")
+	sb.WriteString("  done\n")
 	sb.WriteString("fi\n\n")
 
 	// Route directives from VPN_TUNNELS remote networks

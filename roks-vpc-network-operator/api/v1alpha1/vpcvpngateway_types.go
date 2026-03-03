@@ -192,6 +192,10 @@ type VPNOpenVPNConfig struct {
 	// Required when remoteAccess is enabled.
 	// +optional
 	ClientSubnet string `json:"clientSubnet,omitempty"`
+
+	// Image overrides the default OpenVPN container image.
+	// +optional
+	Image string `json:"image,omitempty"`
 }
 
 // VPCVPNGatewaySpec defines the desired state of a VPCVPNGateway.
