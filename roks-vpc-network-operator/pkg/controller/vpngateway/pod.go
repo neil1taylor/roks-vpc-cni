@@ -45,6 +45,7 @@ func buildWireGuardPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *co
 	image := resolveVPNImage(vpn)
 	script := buildWireGuardInitScript(vpn)
 	envVars := buildWireGuardEnvVars(vpn)
+	envVars = append(envVars, corev1.EnvVar{Name: "GW_VNI_MAC", Value: gw.Status.MACAddress})
 	multusJSON := buildVPNMultusAnnotation(vpn, gw)
 
 	isTrue := true
@@ -138,8 +139,10 @@ func buildWireGuardInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("yum install -y iproute nftables wireguard-tools jq 2>/dev/null || ")
 	sb.WriteString("apt-get update && apt-get install -y iproute2 nftables wireguard-tools jq 2>/dev/null || true\n\n")
 
-	// Uplink via DHCP
-	sb.WriteString("# Uplink via DHCP\n")
+	// Configure uplink with gateway VNI identity
+	sb.WriteString("# Configure uplink with gateway VNI identity\n")
+	sb.WriteString("ip link set net0 address ${GW_VNI_MAC}\n")
+	sb.WriteString("ip link set net0 up\n")
 	sb.WriteString("dhclient net0 2>/dev/null || true\n\n")
 
 	// Enable IP forwarding
@@ -252,6 +255,9 @@ func buildStrongSwanPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *c
 					Name:         "vpn",
 					Image:        image,
 					Command:      []string{"/bin/sh", "-c", script},
+					Env: []corev1.EnvVar{
+						{Name: "GW_VNI_MAC", Value: gw.Status.MACAddress},
+					},
 					VolumeMounts: volumeMounts,
 					SecurityContext: &corev1.SecurityContext{
 						Privileged: &isTrue,
@@ -290,8 +296,10 @@ func buildStrongSwanInitScript(vpn *v1alpha1.VPCVPNGateway, swanctlConf string) 
 	var sb strings.Builder
 	sb.WriteString("set -e\n\n")
 
-	// Uplink via DHCP
-	sb.WriteString("# Uplink via DHCP\n")
+	// Configure uplink with gateway VNI identity
+	sb.WriteString("# Configure uplink with gateway VNI identity\n")
+	sb.WriteString("ip link set net0 address ${GW_VNI_MAC}\n")
+	sb.WriteString("ip link set net0 up\n")
 	sb.WriteString("dhclient net0 2>/dev/null || true\n\n")
 
 	// Enable IP forwarding
@@ -557,8 +565,10 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("# Install tools\n")
 	sb.WriteString("dnf install -y openvpn iptables jq python3 gettext procps-ng dhcp-client iproute 2>/dev/null || true\n\n")
 
-	// Uplink via DHCP
-	sb.WriteString("# Uplink via DHCP\n")
+	// Configure uplink with gateway VNI identity
+	sb.WriteString("# Configure uplink with gateway VNI identity\n")
+	sb.WriteString("ip link set net0 address ${GW_VNI_MAC}\n")
+	sb.WriteString("ip link set net0 up\n")
 	sb.WriteString("dhclient net0 2>/dev/null || true\n\n")
 
 	// Enable IP forwarding
@@ -662,6 +672,7 @@ func buildOpenVPNPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *core
 	image := resolveOpenVPNImage(vpn)
 	script := buildOpenVPNInitScript(vpn)
 	envVars := buildOpenVPNEnvVars(vpn)
+	envVars = append(envVars, corev1.EnvVar{Name: "GW_VNI_MAC", Value: gw.Status.MACAddress})
 	multusJSON := buildVPNMultusAnnotation(vpn, gw)
 
 	isTrue := true

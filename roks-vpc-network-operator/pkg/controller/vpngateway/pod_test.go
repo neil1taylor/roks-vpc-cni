@@ -235,6 +235,20 @@ func TestBuildWireGuardPod(t *testing.T) {
 	}
 }
 
+func TestBuildWireGuardPod_GWVNIMac(t *testing.T) {
+	vpn := newTestWireGuardVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildWireGuardPod(vpn, gw)
+	envMap := make(map[string]string)
+	for _, env := range pod.Spec.Containers[0].Env {
+		envMap[env.Name] = env.Value
+	}
+	if envMap["GW_VNI_MAC"] != gw.Status.MACAddress {
+		t.Errorf("GW_VNI_MAC = %q, want %q", envMap["GW_VNI_MAC"], gw.Status.MACAddress)
+	}
+}
+
 func TestBuildWireGuardPod_DefaultImage(t *testing.T) {
 	vpn := newTestWireGuardVPN()
 	vpn.Spec.Pod = nil
@@ -262,6 +276,7 @@ func TestBuildWireGuardInitScript(t *testing.T) {
 	script := buildWireGuardInitScript(vpn)
 
 	mustContain := []string{
+		"ip link set net0 address ${GW_VNI_MAC}",
 		"ip link add dev wg0 type wireguard",
 		"wg set wg0 listen-port ${WG_LISTEN_PORT}",
 		"/run/secrets/wireguard/${WG_PRIVATE_KEY_FILE}",
@@ -389,6 +404,20 @@ func TestBuildStrongSwanPod(t *testing.T) {
 	// Default StrongSwan image
 	if container.Image != defaultStrongSwanImage {
 		t.Errorf("image = %q, want default %q", container.Image, defaultStrongSwanImage)
+	}
+}
+
+func TestBuildStrongSwanPod_GWVNIMac(t *testing.T) {
+	vpn := newTestIPsecVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildStrongSwanPod(vpn, gw)
+	envMap := make(map[string]string)
+	for _, env := range pod.Spec.Containers[0].Env {
+		envMap[env.Name] = env.Value
+	}
+	if envMap["GW_VNI_MAC"] != gw.Status.MACAddress {
+		t.Errorf("GW_VNI_MAC = %q, want %q", envMap["GW_VNI_MAC"], gw.Status.MACAddress)
 	}
 }
 
@@ -646,6 +675,20 @@ func TestBuildOpenVPNPod(t *testing.T) {
 	}
 }
 
+func TestBuildOpenVPNPod_GWVNIMac(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildOpenVPNPod(vpn, gw)
+	envMap := make(map[string]string)
+	for _, env := range pod.Spec.Containers[0].Env {
+		envMap[env.Name] = env.Value
+	}
+	if envMap["GW_VNI_MAC"] != gw.Status.MACAddress {
+		t.Errorf("GW_VNI_MAC = %q, want %q", envMap["GW_VNI_MAC"], gw.Status.MACAddress)
+	}
+}
+
 func TestBuildOpenVPNPod_OptionalVolumes(t *testing.T) {
 	vpn := newTestOpenVPNVPN()
 	// Add optional DH and TLSAuth
@@ -684,6 +727,7 @@ func TestBuildOpenVPNInitScript(t *testing.T) {
 	script := buildOpenVPNInitScript(vpn)
 
 	mustContain := []string{
+		"ip link set net0 address ${GW_VNI_MAC}",
 		"openvpn",
 		"dhclient net0",
 		"net.ipv4.ip_forward=1",
