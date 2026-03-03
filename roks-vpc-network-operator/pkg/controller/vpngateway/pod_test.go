@@ -235,7 +235,7 @@ func TestBuildWireGuardPod(t *testing.T) {
 	}
 }
 
-func TestBuildWireGuardPod_GWVNIMac(t *testing.T) {
+func TestBuildWireGuardPod_GWIdentity(t *testing.T) {
 	vpn := newTestWireGuardVPN()
 	gw := newTestVPNGateway()
 
@@ -244,8 +244,14 @@ func TestBuildWireGuardPod_GWVNIMac(t *testing.T) {
 	for _, env := range pod.Spec.Containers[0].Env {
 		envMap[env.Name] = env.Value
 	}
-	if envMap["GW_VNI_MAC"] != gw.Status.MACAddress {
-		t.Errorf("GW_VNI_MAC = %q, want %q", envMap["GW_VNI_MAC"], gw.Status.MACAddress)
+	if envMap["GW_RESERVED_IP"] != gw.Status.ReservedIP {
+		t.Errorf("GW_RESERVED_IP = %q, want %q", envMap["GW_RESERVED_IP"], gw.Status.ReservedIP)
+	}
+
+	// Verify Multus annotation includes MAC
+	multus := pod.Annotations["k8s.v1.cni.cncf.io/networks"]
+	if !strings.Contains(multus, strings.ToLower(gw.Status.MACAddress)) {
+		t.Errorf("Multus annotation should contain gateway MAC %q, got %q", gw.Status.MACAddress, multus)
 	}
 }
 
@@ -276,7 +282,7 @@ func TestBuildWireGuardInitScript(t *testing.T) {
 	script := buildWireGuardInitScript(vpn)
 
 	mustContain := []string{
-		"ip link set net0 address ${GW_VNI_MAC}",
+		"ip addr add ${GW_RESERVED_IP}/24 dev net0",
 		"ip link add dev wg0 type wireguard",
 		"wg set wg0 listen-port ${WG_LISTEN_PORT}",
 		"/run/secrets/wireguard/${WG_PRIVATE_KEY_FILE}",
@@ -407,7 +413,7 @@ func TestBuildStrongSwanPod(t *testing.T) {
 	}
 }
 
-func TestBuildStrongSwanPod_GWVNIMac(t *testing.T) {
+func TestBuildStrongSwanPod_GWIdentity(t *testing.T) {
 	vpn := newTestIPsecVPN()
 	gw := newTestVPNGateway()
 
@@ -416,8 +422,14 @@ func TestBuildStrongSwanPod_GWVNIMac(t *testing.T) {
 	for _, env := range pod.Spec.Containers[0].Env {
 		envMap[env.Name] = env.Value
 	}
-	if envMap["GW_VNI_MAC"] != gw.Status.MACAddress {
-		t.Errorf("GW_VNI_MAC = %q, want %q", envMap["GW_VNI_MAC"], gw.Status.MACAddress)
+	if envMap["GW_RESERVED_IP"] != gw.Status.ReservedIP {
+		t.Errorf("GW_RESERVED_IP = %q, want %q", envMap["GW_RESERVED_IP"], gw.Status.ReservedIP)
+	}
+
+	// Verify Multus annotation includes MAC
+	multus := pod.Annotations["k8s.v1.cni.cncf.io/networks"]
+	if !strings.Contains(multus, strings.ToLower(gw.Status.MACAddress)) {
+		t.Errorf("Multus annotation should contain gateway MAC %q, got %q", gw.Status.MACAddress, multus)
 	}
 }
 
@@ -675,7 +687,7 @@ func TestBuildOpenVPNPod(t *testing.T) {
 	}
 }
 
-func TestBuildOpenVPNPod_GWVNIMac(t *testing.T) {
+func TestBuildOpenVPNPod_GWIdentity(t *testing.T) {
 	vpn := newTestOpenVPNVPN()
 	gw := newTestVPNGateway()
 
@@ -684,8 +696,14 @@ func TestBuildOpenVPNPod_GWVNIMac(t *testing.T) {
 	for _, env := range pod.Spec.Containers[0].Env {
 		envMap[env.Name] = env.Value
 	}
-	if envMap["GW_VNI_MAC"] != gw.Status.MACAddress {
-		t.Errorf("GW_VNI_MAC = %q, want %q", envMap["GW_VNI_MAC"], gw.Status.MACAddress)
+	if envMap["GW_RESERVED_IP"] != gw.Status.ReservedIP {
+		t.Errorf("GW_RESERVED_IP = %q, want %q", envMap["GW_RESERVED_IP"], gw.Status.ReservedIP)
+	}
+
+	// Verify Multus annotation includes MAC
+	multus := pod.Annotations["k8s.v1.cni.cncf.io/networks"]
+	if !strings.Contains(multus, strings.ToLower(gw.Status.MACAddress)) {
+		t.Errorf("Multus annotation should contain gateway MAC %q, got %q", gw.Status.MACAddress, multus)
 	}
 }
 
@@ -727,9 +745,8 @@ func TestBuildOpenVPNInitScript(t *testing.T) {
 	script := buildOpenVPNInitScript(vpn)
 
 	mustContain := []string{
-		"ip link set net0 address ${GW_VNI_MAC}",
+		"ip addr add ${GW_RESERVED_IP}/24 dev net0",
 		"openvpn",
-		"dhclient net0",
 		"net.ipv4.ip_forward=1",
 		"server.conf",
 		"client-config-dir",

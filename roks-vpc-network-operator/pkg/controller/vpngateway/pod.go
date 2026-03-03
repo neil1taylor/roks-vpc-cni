@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultVPNImage        = "registry.access.redhat.com/ubi9/ubi:latest"
+	defaultVPNImage        = "quay.io/fedora/fedora:40"
 	defaultStrongSwanImage = "strongx509/strongswan:6.0.0"
 	defaultOpenVPNImage    = "quay.io/fedora/fedora:40"
 	defaultTunnelMTU       = int32(1420)
@@ -26,6 +26,7 @@ type multusNetworkAttachment struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
 	Interface string `json:"interface"`
+	MAC       string `json:"mac,omitempty"`
 }
 
 // vpnPodName returns the deterministic pod name for a VPCVPNGateway.
@@ -45,7 +46,7 @@ func buildWireGuardPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *co
 	image := resolveVPNImage(vpn)
 	script := buildWireGuardInitScript(vpn)
 	envVars := buildWireGuardEnvVars(vpn)
-	envVars = append(envVars, corev1.EnvVar{Name: "GW_VNI_MAC", Value: gw.Status.MACAddress})
+	envVars = append(envVars, corev1.EnvVar{Name: "GW_RESERVED_IP", Value: gw.Status.ReservedIP})
 	multusJSON := buildVPNMultusAnnotation(vpn, gw)
 
 	isTrue := true
@@ -139,11 +140,12 @@ func buildWireGuardInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("yum install -y iproute nftables wireguard-tools jq 2>/dev/null || ")
 	sb.WriteString("apt-get update && apt-get install -y iproute2 nftables wireguard-tools jq 2>/dev/null || true\n\n")
 
-	// Configure uplink with gateway VNI identity
-	sb.WriteString("# Configure uplink with gateway VNI identity\n")
-	sb.WriteString("ip link set net0 address ${GW_VNI_MAC}\n")
+	// Configure uplink with gateway VNI identity (MAC set via Multus annotation)
+	sb.WriteString("# Configure uplink with gateway VNI reserved IP\n")
+	sb.WriteString("GW_IP=$(echo ${GW_RESERVED_IP} | cut -d. -f1-3).1\n")
+	sb.WriteString("ip addr add ${GW_RESERVED_IP}/24 dev net0 2>/dev/null || true\n")
 	sb.WriteString("ip link set net0 up\n")
-	sb.WriteString("dhclient net0 2>/dev/null || true\n\n")
+	sb.WriteString("ip route add default via ${GW_IP} dev net0 metric 50 2>/dev/null || true\n\n")
 
 	// Enable IP forwarding
 	sb.WriteString("# Enable IP forwarding\n")
@@ -256,7 +258,7 @@ func buildStrongSwanPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *c
 					Image:        image,
 					Command:      []string{"/bin/sh", "-c", script},
 					Env: []corev1.EnvVar{
-						{Name: "GW_VNI_MAC", Value: gw.Status.MACAddress},
+						{Name: "GW_RESERVED_IP", Value: gw.Status.ReservedIP},
 					},
 					VolumeMounts: volumeMounts,
 					SecurityContext: &corev1.SecurityContext{
@@ -296,11 +298,12 @@ func buildStrongSwanInitScript(vpn *v1alpha1.VPCVPNGateway, swanctlConf string) 
 	var sb strings.Builder
 	sb.WriteString("set -e\n\n")
 
-	// Configure uplink with gateway VNI identity
-	sb.WriteString("# Configure uplink with gateway VNI identity\n")
-	sb.WriteString("ip link set net0 address ${GW_VNI_MAC}\n")
+	// Configure uplink with gateway VNI identity (MAC set via Multus annotation)
+	sb.WriteString("# Configure uplink with gateway VNI reserved IP\n")
+	sb.WriteString("GW_IP=$(echo ${GW_RESERVED_IP} | cut -d. -f1-3).1\n")
+	sb.WriteString("ip addr add ${GW_RESERVED_IP}/24 dev net0 2>/dev/null || true\n")
 	sb.WriteString("ip link set net0 up\n")
-	sb.WriteString("dhclient net0 2>/dev/null || true\n\n")
+	sb.WriteString("ip route add default via ${GW_IP} dev net0 metric 50 2>/dev/null || true\n\n")
 
 	// Enable IP forwarding
 	sb.WriteString("# Enable IP forwarding\n")
@@ -459,13 +462,15 @@ func buildTunnelsJSON(vpn *v1alpha1.VPCVPNGateway) string {
 }
 
 // buildVPNMultusAnnotation returns the JSON Multus network annotation for the
-// VPN gateway's uplink network (from the referenced VPCGateway).
+// VPN gateway's uplink network (from the referenced VPCGateway). Includes the
+// gateway VNI MAC so OVN creates the port with the correct MAC identity.
 func buildVPNMultusAnnotation(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) string {
 	attachments := []multusNetworkAttachment{
 		{
 			Name:      gw.Spec.Uplink.Network,
 			Namespace: gw.Spec.Uplink.Namespace,
 			Interface: "net0",
+			MAC:       strings.ToLower(gw.Status.MACAddress),
 		},
 	}
 	data, _ := json.Marshal(attachments)
@@ -563,13 +568,14 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 
 	// Install tools
 	sb.WriteString("# Install tools\n")
-	sb.WriteString("dnf install -y openvpn iptables jq python3 gettext procps-ng dhcp-client iproute 2>/dev/null || true\n\n")
+	sb.WriteString("dnf install -y openvpn iptables jq python3 gettext procps-ng iproute 2>/dev/null || true\n\n")
 
-	// Configure uplink with gateway VNI identity
-	sb.WriteString("# Configure uplink with gateway VNI identity\n")
-	sb.WriteString("ip link set net0 address ${GW_VNI_MAC}\n")
+	// Configure uplink with gateway VNI identity (MAC set via Multus annotation)
+	sb.WriteString("# Configure uplink with gateway VNI reserved IP\n")
+	sb.WriteString("GW_IP=$(echo ${GW_RESERVED_IP} | cut -d. -f1-3).1\n")
+	sb.WriteString("ip addr add ${GW_RESERVED_IP}/24 dev net0 2>/dev/null || true\n")
 	sb.WriteString("ip link set net0 up\n")
-	sb.WriteString("dhclient net0 2>/dev/null || true\n\n")
+	sb.WriteString("ip route add default via ${GW_IP} dev net0 metric 50 2>/dev/null || true\n\n")
 
 	// Enable IP forwarding
 	sb.WriteString("# Enable IP forwarding\n")
@@ -672,7 +678,7 @@ func buildOpenVPNPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *core
 	image := resolveOpenVPNImage(vpn)
 	script := buildOpenVPNInitScript(vpn)
 	envVars := buildOpenVPNEnvVars(vpn)
-	envVars = append(envVars, corev1.EnvVar{Name: "GW_VNI_MAC", Value: gw.Status.MACAddress})
+	envVars = append(envVars, corev1.EnvVar{Name: "GW_RESERVED_IP", Value: gw.Status.ReservedIP})
 	multusJSON := buildVPNMultusAnnotation(vpn, gw)
 
 	isTrue := true
