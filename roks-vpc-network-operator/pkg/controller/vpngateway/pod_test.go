@@ -505,3 +505,250 @@ func TestBuildWireGuardPod_DefaultMTU(t *testing.T) {
 		t.Errorf("MSS_CLAMP = %q, want %q (default)", envMap["MSS_CLAMP"], "true")
 	}
 }
+
+// newTestOpenVPNVPN creates a VPCVPNGateway for testing with OpenVPN config.
+func newTestOpenVPNVPN() *v1alpha1.VPCVPNGateway {
+	listenPort := int32(1194)
+	mssClamp := true
+	return &v1alpha1.VPCVPNGateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ovpn",
+			Namespace: "default",
+			UID:       "test-uid-ovpn",
+		},
+		Spec: v1alpha1.VPCVPNGatewaySpec{
+			Protocol:   "openvpn",
+			GatewayRef: "gw-prod",
+			OpenVPN: &v1alpha1.VPNOpenVPNConfig{
+				CA:           v1alpha1.SecretKeyRef{Name: "ovpn-ca-secret", Key: "ca.crt"},
+				Cert:         v1alpha1.SecretKeyRef{Name: "ovpn-cert-secret", Key: "server.crt"},
+				Key:          v1alpha1.SecretKeyRef{Name: "ovpn-key-secret", Key: "server.key"},
+				ListenPort:   &listenPort,
+				Proto:        "udp",
+				Cipher:       "AES-256-GCM",
+				ClientSubnet: "10.8.0.0/24",
+			},
+			Tunnels: []v1alpha1.VPNTunnel{
+				{
+					Name:           "to-dc",
+					RemoteEndpoint: "203.0.113.1",
+					RemoteNetworks: []string{"10.0.0.0/8"},
+				},
+			},
+			MTU: &v1alpha1.VPNGatewayMTU{
+				MSSClamp: &mssClamp,
+			},
+		},
+	}
+}
+
+func TestBuildOpenVPNPod(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildOpenVPNPod(vpn, gw)
+
+	// Pod metadata
+	if pod.Name != "vpngw-test-ovpn" {
+		t.Errorf("pod name = %q, want %q", pod.Name, "vpngw-test-ovpn")
+	}
+	if pod.Namespace != "default" {
+		t.Errorf("pod namespace = %q, want %q", pod.Namespace, "default")
+	}
+
+	// Labels
+	if pod.Labels["app"] != "vpngateway" {
+		t.Errorf("label app = %q, want %q", pod.Labels["app"], "vpngateway")
+	}
+	if pod.Labels["vpc.roks.ibm.com/vpngateway"] != "test-ovpn" {
+		t.Errorf("label vpngateway = %q, want %q", pod.Labels["vpc.roks.ibm.com/vpngateway"], "test-ovpn")
+	}
+
+	// Owner reference
+	if len(pod.OwnerReferences) != 1 {
+		t.Fatalf("expected 1 owner reference, got %d", len(pod.OwnerReferences))
+	}
+	if pod.OwnerReferences[0].Kind != "VPCVPNGateway" {
+		t.Errorf("owner ref kind = %q, want %q", pod.OwnerReferences[0].Kind, "VPCVPNGateway")
+	}
+
+	// Container
+	if len(pod.Spec.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(pod.Spec.Containers))
+	}
+	container := pod.Spec.Containers[0]
+	if container.Name != "vpn" {
+		t.Errorf("container name = %q, want %q", container.Name, "vpn")
+	}
+
+	// Default image
+	if container.Image != defaultVPNImage {
+		t.Errorf("image = %q, want default %q", container.Image, defaultVPNImage)
+	}
+
+	// Security context: privileged + NET_ADMIN + NET_RAW
+	if container.SecurityContext == nil || container.SecurityContext.Privileged == nil || !*container.SecurityContext.Privileged {
+		t.Error("container should be privileged")
+	}
+	caps := container.SecurityContext.Capabilities.Add
+	foundNetAdmin, foundNetRaw := false, false
+	for _, cap := range caps {
+		if cap == "NET_ADMIN" {
+			foundNetAdmin = true
+		}
+		if cap == "NET_RAW" {
+			foundNetRaw = true
+		}
+	}
+	if !foundNetAdmin || !foundNetRaw {
+		t.Errorf("expected NET_ADMIN and NET_RAW capabilities, got %v", caps)
+	}
+
+	// Volumes: 3 required (ca, cert, key)
+	if len(pod.Spec.Volumes) != 3 {
+		t.Fatalf("expected 3 volumes (ca, cert, key), got %d", len(pod.Spec.Volumes))
+	}
+	expectedVolumes := map[string]string{
+		"openvpn-ca":   "ovpn-ca-secret",
+		"openvpn-cert": "ovpn-cert-secret",
+		"openvpn-key":  "ovpn-key-secret",
+	}
+	for _, vol := range pod.Spec.Volumes {
+		expectedSecret, ok := expectedVolumes[vol.Name]
+		if !ok {
+			t.Errorf("unexpected volume %q", vol.Name)
+			continue
+		}
+		if vol.Secret == nil || vol.Secret.SecretName != expectedSecret {
+			t.Errorf("volume %q should reference secret %q, got %v", vol.Name, expectedSecret, vol.Secret)
+		}
+	}
+
+	// Env vars
+	envMap := make(map[string]string)
+	for _, env := range container.Env {
+		envMap[env.Name] = env.Value
+	}
+	if envMap["OVPN_LISTEN_PORT"] != "1194" {
+		t.Errorf("OVPN_LISTEN_PORT = %q, want %q", envMap["OVPN_LISTEN_PORT"], "1194")
+	}
+	if envMap["OVPN_PROTO"] != "udp" {
+		t.Errorf("OVPN_PROTO = %q, want %q", envMap["OVPN_PROTO"], "udp")
+	}
+	if envMap["OVPN_CIPHER"] != "AES-256-GCM" {
+		t.Errorf("OVPN_CIPHER = %q, want %q", envMap["OVPN_CIPHER"], "AES-256-GCM")
+	}
+	if envMap["OVPN_CLIENT_SUBNET"] != "10.8.0.0/24" {
+		t.Errorf("OVPN_CLIENT_SUBNET = %q, want %q", envMap["OVPN_CLIENT_SUBNET"], "10.8.0.0/24")
+	}
+	if envMap["VPN_TUNNELS"] == "" {
+		t.Error("VPN_TUNNELS env var should not be empty")
+	}
+}
+
+func TestBuildOpenVPNPod_OptionalVolumes(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	// Add optional DH and TLSAuth
+	vpn.Spec.OpenVPN.DH = &v1alpha1.SecretKeyRef{Name: "ovpn-dh-secret", Key: "dh.pem"}
+	vpn.Spec.OpenVPN.TLSAuth = &v1alpha1.SecretKeyRef{Name: "ovpn-ta-secret", Key: "ta.key"}
+	gw := newTestVPNGateway()
+
+	pod := buildOpenVPNPod(vpn, gw)
+
+	// Should have 5 volumes total: ca, cert, key, dh, tls-auth
+	if len(pod.Spec.Volumes) != 5 {
+		t.Fatalf("expected 5 volumes (ca, cert, key, dh, tls-auth), got %d", len(pod.Spec.Volumes))
+	}
+
+	// Verify the optional volume names exist
+	volNames := make(map[string]bool)
+	for _, vol := range pod.Spec.Volumes {
+		volNames[vol.Name] = true
+	}
+	if !volNames["openvpn-dh"] {
+		t.Error("missing openvpn-dh volume")
+	}
+	if !volNames["openvpn-tls-auth"] {
+		t.Error("missing openvpn-tls-auth volume")
+	}
+
+	// Verify volume mount count matches
+	container := pod.Spec.Containers[0]
+	if len(container.VolumeMounts) != 5 {
+		t.Fatalf("expected 5 volume mounts, got %d", len(container.VolumeMounts))
+	}
+}
+
+func TestBuildOpenVPNInitScript(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	script := buildOpenVPNInitScript(vpn)
+
+	mustContain := []string{
+		"openvpn",
+		"dhclient net0",
+		"net.ipv4.ip_forward=1",
+		"server.conf",
+		"client-config-dir",
+		"exec openvpn",
+		"iptables -t mangle",
+	}
+
+	for _, s := range mustContain {
+		if !strings.Contains(script, s) {
+			t.Errorf("init script missing expected content: %q", s)
+		}
+	}
+}
+
+func TestBuildOpenVPNInitScript_NoMSSClamp(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	mssClamp := false
+	vpn.Spec.MTU.MSSClamp = &mssClamp
+
+	script := buildOpenVPNInitScript(vpn)
+
+	if strings.Contains(script, "iptables -t mangle") {
+		t.Error("init script should NOT contain iptables MSS clamp rules when disabled")
+	}
+	if !strings.Contains(script, "openvpn") {
+		t.Error("init script missing OpenVPN setup")
+	}
+}
+
+func TestBuildOpenVPNPod_LivenessProbe(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildOpenVPNPod(vpn, gw)
+	container := pod.Spec.Containers[0]
+
+	if container.LivenessProbe == nil {
+		t.Fatal("expected liveness probe")
+	}
+	if container.LivenessProbe.Exec == nil {
+		t.Fatal("expected exec-based liveness probe")
+	}
+	cmd := container.LivenessProbe.Exec.Command
+	if len(cmd) != 2 || cmd[0] != "pgrep" || cmd[1] != "openvpn" {
+		t.Errorf("liveness command = %v, expected [pgrep openvpn]", cmd)
+	}
+}
+
+func TestBuildOpenVPNPod_ReadinessProbe(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildOpenVPNPod(vpn, gw)
+	container := pod.Spec.Containers[0]
+
+	if container.ReadinessProbe == nil {
+		t.Fatal("expected readiness probe")
+	}
+	if container.ReadinessProbe.Exec == nil {
+		t.Fatal("expected exec-based readiness probe")
+	}
+	cmd := container.ReadinessProbe.Exec.Command
+	if len(cmd) != 3 || cmd[0] != "test" || cmd[1] != "-f" || cmd[2] != "/run/openvpn/status.log" {
+		t.Errorf("readiness command = %v, expected [test -f /run/openvpn/status.log]", cmd)
+	}
+}
