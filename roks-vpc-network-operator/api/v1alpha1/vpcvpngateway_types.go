@@ -147,11 +147,58 @@ type VPNGatewayMTU struct {
 	MSSClamp *bool `json:"mssClamp,omitempty"`
 }
 
+// VPNOpenVPNConfig defines global OpenVPN configuration for the VPN gateway.
+type VPNOpenVPNConfig struct {
+	// CA is a reference to a Secret containing the CA certificate.
+	// +kubebuilder:validation:Required
+	CA SecretKeyRef `json:"ca"`
+
+	// Cert is a reference to a Secret containing the server certificate.
+	// +kubebuilder:validation:Required
+	Cert SecretKeyRef `json:"cert"`
+
+	// Key is a reference to a Secret containing the server private key.
+	// +kubebuilder:validation:Required
+	Key SecretKeyRef `json:"key"`
+
+	// DH is a reference to a Secret containing Diffie-Hellman parameters.
+	// Optional — omit to use ECDH.
+	// +optional
+	DH *SecretKeyRef `json:"dh,omitempty"`
+
+	// TLSAuth is a reference to a Secret containing the TLS-Auth HMAC key.
+	// +optional
+	TLSAuth *SecretKeyRef `json:"tlsAuth,omitempty"`
+
+	// ListenPort is the OpenVPN listen port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=1194
+	// +optional
+	ListenPort *int32 `json:"listenPort,omitempty"`
+
+	// Proto is the transport protocol: "udp" (default) or "tcp".
+	// +kubebuilder:validation:Enum=udp;tcp
+	// +kubebuilder:default=udp
+	// +optional
+	Proto string `json:"proto,omitempty"`
+
+	// Cipher is the data channel cipher.
+	// +kubebuilder:default="AES-256-GCM"
+	// +optional
+	Cipher string `json:"cipher,omitempty"`
+
+	// ClientSubnet is the CIDR for the remote-access client IP pool (e.g., "10.8.0.0/24").
+	// Required when remoteAccess is enabled.
+	// +optional
+	ClientSubnet string `json:"clientSubnet,omitempty"`
+}
+
 // VPCVPNGatewaySpec defines the desired state of a VPCVPNGateway.
 type VPCVPNGatewaySpec struct {
 	// Protocol is the VPN protocol to use.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=wireguard;ipsec
+	// +kubebuilder:validation:Enum=wireguard;ipsec;openvpn
 	Protocol string `json:"protocol"`
 
 	// GatewayRef is the name of the VPCGateway this VPN gateway is associated with.
@@ -168,6 +215,11 @@ type VPCVPNGatewaySpec struct {
 	// Required when protocol is "ipsec".
 	// +optional
 	IPsec *VPNIPsecConfig `json:"ipsec,omitempty"`
+
+	// OpenVPN contains global OpenVPN configuration.
+	// Required when protocol is "openvpn".
+	// +optional
+	OpenVPN *VPNOpenVPNConfig `json:"openVPN,omitempty"`
 
 	// Tunnels is the list of VPN tunnels to remote peers.
 	// +kubebuilder:validation:Required
