@@ -443,6 +443,153 @@ func TestReconcileDelete_CleanupPod(t *testing.T) {
 	}
 }
 
+func TestReconcileNormal_CreateOpenVPNGateway(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			FloatingIP: "169.48.3.3",
+			MACAddress: "fa:16:3e:cc:dd:ee",
+			ReservedIP: "10.240.1.10",
+		},
+	}
+
+	listenPort := int32(1194)
+	vpn := &v1alpha1.VPCVPNGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ovpn", Namespace: "default"},
+		Spec: v1alpha1.VPCVPNGatewaySpec{
+			Protocol:   "openvpn",
+			GatewayRef: "gw-test",
+			OpenVPN: &v1alpha1.VPNOpenVPNConfig{
+				CA:           v1alpha1.SecretKeyRef{Name: "ovpn-ca", Key: "ca.crt"},
+				Cert:         v1alpha1.SecretKeyRef{Name: "ovpn-cert", Key: "server.crt"},
+				Key:          v1alpha1.SecretKeyRef{Name: "ovpn-key", Key: "server.key"},
+				ListenPort:   &listenPort,
+				Proto:        "udp",
+				Cipher:       "AES-256-GCM",
+				ClientSubnet: "10.8.0.0/24",
+			},
+			Tunnels: []v1alpha1.VPNTunnel{
+				{
+					Name:           "to-dc",
+					RemoteEndpoint: "203.0.113.1",
+					RemoteNetworks: []string{"10.0.0.0/8"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, vpn).
+		WithStatusSubresource(gw, vpn).
+		Build()
+
+	r := &Reconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	result, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-ovpn", Namespace: "default"},
+	})
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter == 0 {
+		t.Error("expected requeue after pod creation")
+	}
+
+	// Verify pod was created with correct name and image
+	pod := &corev1.Pod{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "vpngw-test-ovpn", Namespace: "default"}, pod); err != nil {
+		t.Fatalf("Expected OpenVPN pod to be created: %v", err)
+	}
+	if pod.Spec.Containers[0].Image != defaultVPNImage {
+		t.Errorf("pod image = %q, want %q", pod.Spec.Containers[0].Image, defaultVPNImage)
+	}
+
+	// Verify status
+	updated := &v1alpha1.VPCVPNGateway{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-ovpn", Namespace: "default"}, updated); err != nil {
+		t.Fatalf("Failed to get updated VPCVPNGateway: %v", err)
+	}
+
+	if updated.Status.Phase != "Provisioning" {
+		t.Errorf("Phase = %q, want %q", updated.Status.Phase, "Provisioning")
+	}
+	if updated.Status.PodName != "vpngw-test-ovpn" {
+		t.Errorf("PodName = %q, want %q", updated.Status.PodName, "vpngw-test-ovpn")
+	}
+	if updated.Status.TunnelEndpoint != "169.48.3.3" {
+		t.Errorf("TunnelEndpoint = %q, want %q", updated.Status.TunnelEndpoint, "169.48.3.3")
+	}
+	if updated.Status.TotalTunnels != 1 {
+		t.Errorf("TotalTunnels = %d, want %d", updated.Status.TotalTunnels, 1)
+	}
+
+	// Verify advertised routes
+	if len(updated.Status.AdvertisedRoutes) != 1 || updated.Status.AdvertisedRoutes[0] != "10.0.0.0/8" {
+		t.Errorf("AdvertisedRoutes = %v, want [10.0.0.0/8]", updated.Status.AdvertisedRoutes)
+	}
+}
+
+func TestReconcileNormal_MissingOpenVPNConfig(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Status:     v1alpha1.VPCGatewayStatus{Phase: "Ready", FloatingIP: "1.2.3.4"},
+	}
+
+	vpn := &v1alpha1.VPCVPNGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "vpn-bad-ovpn", Namespace: "default"},
+		Spec: v1alpha1.VPCVPNGatewaySpec{
+			Protocol:   "openvpn",
+			GatewayRef: "gw-test",
+			OpenVPN:    nil, // Missing!
+			Tunnels: []v1alpha1.VPNTunnel{
+				{
+					Name:           "t1",
+					RemoteEndpoint: "1.2.3.4",
+					RemoteNetworks: []string{"10.0.0.0/8"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, vpn).
+		WithStatusSubresource(gw, vpn).
+		Build()
+
+	r := &Reconciler{Client: fakeClient, Scheme: scheme}
+
+	result, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "vpn-bad-ovpn", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter != 0 || result.Requeue {
+		t.Error("should not requeue on config error")
+	}
+
+	updated := &v1alpha1.VPCVPNGateway{}
+	_ = fakeClient.Get(context.Background(), types.NamespacedName{Name: "vpn-bad-ovpn", Namespace: "default"}, updated)
+	if updated.Status.Phase != "Error" {
+		t.Errorf("Phase = %q, want %q", updated.Status.Phase, "Error")
+	}
+}
+
 func TestCollectAdvertisedRoutes(t *testing.T) {
 	vpn := &v1alpha1.VPCVPNGateway{
 		Spec: v1alpha1.VPCVPNGatewaySpec{
