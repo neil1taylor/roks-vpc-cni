@@ -16,6 +16,10 @@ This tutorial builds a realistic enterprise network topology using every major f
 - [Part 10: Split routing verification](#part-10-split-routing-verification)
 - [Part 11: Firewall + DHCP reservations](#part-11-firewall--dhcp-reservations)
 - [Part 12: Full topology verification & cleanup](#part-12-full-topology-verification--cleanup)
+- [Part 13: Multi-tenant architecture — per-BU gateway isolation](#part-13-multi-tenant-architecture--per-bu-gateway-isolation)
+- [Part 14: Per-tenant egress and ingress](#part-14-per-tenant-egress-and-ingress)
+- [Part 15: Tenant isolation verification and RBAC](#part-15-tenant-isolation-verification-and-rbac)
+- [Part 16: Multi-tenant cleanup](#part-16-multi-tenant-cleanup)
 
 ---
 
@@ -69,6 +73,21 @@ This tutorial builds a realistic enterprise network topology using every major f
 ```
 
 A single VPCRouter connects all four workload L2 networks. The router pod gets the gateway's VNI MAC on its uplink interface for VPC fabric connectivity, plus Multus attachments to each workload network. A separate VPCVPNGateway pod handles WireGuard tunnels with its own identity on the uplink.
+
+### Enterprise multi-tenant extension
+
+Parts 1-12 build a **single-team** topology: one shared gateway and router serving all networks. Parts 13-16 extend this into a **multi-tenant** architecture where each business unit gets its own isolated gateway, router, egress IP, and RBAC boundary.
+
+| Concern | Shared (Parts 1-12) | Multi-Tenant (Parts 13-16) |
+|---------|---------------------|---------------------------|
+| Gateway | One `adv-gw` | Per-BU: `gw-bu-a`, `gw-bu-b` |
+| Router | One `adv-router` | Per-BU: `router-bu-a`, `router-bu-b` |
+| Egress IP | Shared FIP | Per-BU FIPs |
+| Blast radius | All networks | Isolated per BU |
+| RBAC | Cluster-wide | Namespace-scoped |
+| VPN | Shared `adv-vpn` | Per-BU VPN gateways |
+
+You can complete Parts 1-12 independently. Parts 13-16 build on that foundation by replacing the shared infrastructure with per-tenant pairs.
 
 ### Address plan
 
@@ -1071,7 +1090,7 @@ Add a WireGuard VPN gateway to provide encrypted connectivity to a simulated rem
                                     via VPN gateway pod
 ```
 
-The VPN gateway pod gets its own Multus attachment to the localnet-ext network (without MAC pinning — it uses its own VPC identity). The VPCGateway automatically creates a VPC route for `192.168.0.0/24` when the VPN gateway advertises it.
+The VPN gateway pod gets a Multus attachment to the localnet-ext network with the gateway VNI's MAC address pinned — the same pattern used by the router pod. It configures a static reserved IP and policy routing so return traffic exits via net0. The VPCGateway automatically creates a VPC route for `192.168.0.0/24` when the VPN gateway advertises it.
 
 ### 9.1 Generate WireGuard keys
 
@@ -1136,7 +1155,7 @@ oc apply -f adv-vpn.yaml
 **What the reconciler does:**
 1. Looks up `adv-gw` to obtain the floating IP as the tunnel endpoint
 2. Creates a VPN pod (`vpngw-adv-vpn`) with WireGuard configured using the tunnel spec
-3. The pod gets a Multus attachment to `localnet-ext` as its `net0` interface (no MAC pinning — it gets its own identity from VPC DHCP)
+3. The pod gets a Multus attachment to `localnet-ext` as its `net0` interface with the gateway VNI MAC pinned, and configures a static reserved IP with policy routing for return traffic
 4. Sets `status.advertisedRoutes: ["192.168.0.0/24"]`
 5. The VPCGateway reconciler detects the new advertised route and creates a VPC route for `192.168.0.0/24`
 
@@ -1519,6 +1538,8 @@ View the full topology in the OpenShift Console plugin:
 
 ### 12.4 Cleanup
 
+> **Note:** To continue to Part 13 (Multi-Tenant Architecture), **skip this cleanup**. Parts 13-16 replace the shared gateway and router with per-BU pairs, reusing the existing CUDNs and VMs.
+
 Delete resources in reverse dependency order to ensure finalizers clean up properly:
 
 ```bash
@@ -1564,6 +1585,781 @@ oc get cudn | grep -E 'app-l2|db-l2|web-l2|svc-l2|localnet-ext'
 # (no output)
 
 # Optionally verify VPC resources are cleaned up
+ibmcloud is subnets | grep roks-
+ibmcloud is floating-ips | grep roks-
+```
+
+---
+
+## Part 13: Multi-tenant architecture — per-BU gateway isolation
+
+Parts 1-12 built a single-team topology with one shared gateway and router. In this part, you replace them with **per-business-unit pairs** — each BU gets its own VPCGateway, VPCRouter, Floating IP, and VPC route table entries. The existing CUDNs and VMs remain untouched.
+
+### 13.1 Multi-tenant topology
+
+```
+                    Internet
+                   /        \
+              FIP-A          FIP-B
+                |              |
+          +-----------+  +-----------+
+          | gw-bu-a   |  | gw-bu-b   |
+          | NAT: 10.100|  | NAT: 10.200|
+          +-----+-----+  +-----+-----+
+                |              |
+           localnet-ext   localnet-ext   (shared VPC subnet, separate VNIs)
+                |              |
+          +-----+-----+  +-----+-----+
+          |router-bu-a |  |router-bu-b |
+          | app-l2     |  | web-l2     |
+          | db-l2      |  | svc-l2     |
+          +--+----+----+  +--+----+----+
+             |    |          |    |
+          app-l2 db-l2    web-l2 svc-l2
+           VM-1  VM-2     VM-3  VM-4
+          (ns-a) (ns-a)  (ns-b) (ns-b)
+```
+
+Each gateway creates its own VNI on the shared `localnet-ext` VPC subnet. The VPC fabric sees two distinct identities with separate FIPs and route entries. Routers inherit their gateway's VNI MAC, so BU-A traffic never touches BU-B's VPC identity.
+
+### 13.2 Multi-tenant address plan
+
+| Resource | Owner | CIDR / Address | Purpose |
+|----------|-------|---------------|---------|
+| `gw-bu-a` transit | BU-A | `10.99.0.1` | Gateway-A logical address |
+| `gw-bu-b` transit | BU-B | `10.99.0.5` | Gateway-B logical address |
+| `router-bu-a` app-l2 | BU-A | `10.100.0.1/24` | Router-A on app network |
+| `router-bu-a` db-l2 | BU-A | `10.100.1.1/24` | Router-A on db network |
+| `router-bu-b` web-l2 | BU-B | `10.200.0.1/24` | Router-B on web network |
+| `router-bu-b` svc-l2 | BU-B | `10.200.1.1/24` | Router-B on svc network |
+| BU-A NAT scope | BU-A | `10.100.0.0/16` | Only BU-A traffic gets SNAT via FIP-A |
+| BU-B NAT scope | BU-B | `10.200.0.0/16` | Only BU-B traffic gets SNAT via FIP-B |
+
+### 13.3 Delete shared infrastructure
+
+Remove the shared VPN gateway, router, and gateway from Parts 1-12. The CUDNs and VMs stay.
+
+```bash
+# Delete VPN gateway first (depends on gateway)
+oc delete vpcvpngateway adv-vpn -n roks-vpc-network-operator --wait
+
+# Delete shared router
+oc delete vpcrouter adv-router -n roks-vpc-network-operator --wait
+
+# Wait for router pod to terminate
+oc wait --for=delete pod/adv-router-pod -n roks-vpc-network-operator --timeout=120s
+
+# Delete shared gateway (finalizer cleans up FIP, PAR, VPC routes)
+oc delete vpcgateway adv-gw -n roks-vpc-network-operator --wait
+
+# Delete WireGuard secret (will recreate per-BU if needed)
+oc delete secret adv-wg-key -n roks-vpc-network-operator --ignore-not-found
+```
+
+Verify the shared infrastructure is gone:
+
+```bash
+oc get vgw,vrt,vvg -n roks-vpc-network-operator
+# No resources found
+
+# CUDNs and VMs should still exist
+oc get cudn
+# localnet-ext, app-l2, db-l2, web-l2, svc-l2
+
+oc get vm -A
+# ns-a: vm-app, vm-db
+# ns-b: vm-web, vm-svc
+```
+
+### 13.4 Create BU-A gateway
+
+```yaml
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCGateway
+metadata:
+  name: gw-bu-a
+  namespace: roks-vpc-network-operator
+spec:
+  zone: eu-de-1                     # adjust for your zone
+  uplink:
+    network: localnet-ext
+  transit:
+    address: 10.99.0.1
+    cidr: 10.100.0.0/16             # NAT scope: only BU-A subnets
+  floatingIP:
+    enabled: true
+  nat:
+    snat:
+      - source: 10.100.0.0/16       # BU-A workload subnets
+  firewall:
+    enabled: true
+    rules: []                        # open by default, tighten in Part 14
+```
+
+```bash
+oc apply -f - <<'EOF'
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCGateway
+metadata:
+  name: gw-bu-a
+  namespace: roks-vpc-network-operator
+spec:
+  zone: eu-de-1
+  uplink:
+    network: localnet-ext
+  transit:
+    address: 10.99.0.1
+    cidr: 10.100.0.0/16
+  floatingIP:
+    enabled: true
+  nat:
+    snat:
+      - source: 10.100.0.0/16
+  firewall:
+    enabled: true
+    rules: []
+EOF
+```
+
+### 13.5 Create BU-B gateway
+
+```bash
+oc apply -f - <<'EOF'
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCGateway
+metadata:
+  name: gw-bu-b
+  namespace: roks-vpc-network-operator
+spec:
+  zone: eu-de-1
+  uplink:
+    network: localnet-ext
+  transit:
+    address: 10.99.0.5
+    cidr: 10.200.0.0/16
+  floatingIP:
+    enabled: true
+  nat:
+    snat:
+      - source: 10.200.0.0/16
+  firewall:
+    enabled: true
+    rules: []
+EOF
+```
+
+Wait for both gateways to become Ready:
+
+```bash
+oc get vgw -n roks-vpc-network-operator -w
+# NAME       ZONE      PHASE   VNI IP         FIP            SYNC     AGE
+# gw-bu-a    eu-de-1   Ready   10.240.64.x    158.177.x.x    Synced   30s
+# gw-bu-b    eu-de-1   Ready   10.240.64.y    161.156.y.y    Synced   20s
+```
+
+Note the two **separate FIPs** — this is the key to per-tenant egress identity.
+
+### 13.6 Create BU-A router
+
+BU-A's router connects only to `app-l2` and `db-l2`. It references `gw-bu-a` and advertises only BU-A subnets.
+
+```bash
+oc apply -f - <<'EOF'
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCRouter
+metadata:
+  name: router-bu-a
+  namespace: roks-vpc-network-operator
+spec:
+  gateway: gw-bu-a
+  networks:
+    - name: app-l2
+      address: 10.100.0.1/24
+      dhcp:
+        enabled: true
+        range: 10.100.0.100-10.100.0.200
+        dns:
+          - 8.8.8.8
+    - name: db-l2
+      address: 10.100.1.1/24
+      dhcp:
+        enabled: true
+        range: 10.100.1.100-10.100.1.200
+        dns:
+          - 8.8.8.8
+  dhcp:
+    enabled: true
+  routeAdvertisement:
+    connectedSegments: true
+EOF
+```
+
+### 13.7 Create BU-B router
+
+BU-B's router connects only to `web-l2` and `svc-l2`, referencing `gw-bu-b`.
+
+```bash
+oc apply -f - <<'EOF'
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCRouter
+metadata:
+  name: router-bu-b
+  namespace: roks-vpc-network-operator
+spec:
+  gateway: gw-bu-b
+  networks:
+    - name: web-l2
+      address: 10.200.0.1/24
+      dhcp:
+        enabled: true
+        range: 10.200.0.100-10.200.0.200
+        dns:
+          - 8.8.8.8
+    - name: svc-l2
+      address: 10.200.1.1/24
+      dhcp:
+        enabled: true
+        range: 10.200.1.100-10.200.1.200
+        dns:
+          - 8.8.8.8
+  dhcp:
+    enabled: true
+  routeAdvertisement:
+    connectedSegments: true
+EOF
+```
+
+### 13.8 Verify multi-tenant infrastructure
+
+```bash
+# Both gateways Ready with separate FIPs
+oc get vgw -n roks-vpc-network-operator
+# NAME       ZONE      PHASE   VNI IP         FIP            SYNC     AGE
+# gw-bu-a    eu-de-1   Ready   10.240.64.x    158.177.x.x    Synced   2m
+# gw-bu-b    eu-de-1   Ready   10.240.64.y    161.156.y.y    Synced   2m
+
+# Both routers Ready, each referencing its own gateway
+oc get vrt -n roks-vpc-network-operator
+# NAME           GATEWAY    PHASE   SYNC     AGE
+# router-bu-a    gw-bu-a    Ready   Synced   1m
+# router-bu-b    gw-bu-b    Ready   Synced   1m
+
+# Router pods are running
+oc get pods -n roks-vpc-network-operator -l 'vpc.roks.ibm.com/router'
+# router-bu-a-pod   1/1   Running
+# router-bu-b-pod   1/1   Running
+
+# VMs should pick up DHCP from their new routers
+# (VMs may need a DHCP renewal — reboot if addresses don't appear within 60s)
+```
+
+Verify VMs got DHCP addresses from their respective routers:
+
+```bash
+# BU-A VMs (should have 10.100.x addresses)
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'ip -4 addr show eth0 | grep inet' vm/vm-app -n ns-a
+
+# BU-B VMs (should have 10.200.x addresses)
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'ip -4 addr show eth0 | grep inet' vm/vm-web -n ns-b
+```
+
+---
+
+## Part 14: Per-tenant egress and ingress
+
+With separate gateways and FIPs, each business unit now has its own egress identity and can be configured independently for ingress, firewall, IPS, and VPN.
+
+### 14.1 Verify per-tenant egress
+
+Each BU's outbound traffic exits through its own FIP. This is critical for compliance audit trails — you can attribute every outbound connection to a specific business unit.
+
+```bash
+# Record each gateway's FIP
+FIP_A=$(oc get vgw gw-bu-a -n roks-vpc-network-operator -o jsonpath='{.status.floatingIP}')
+FIP_B=$(oc get vgw gw-bu-b -n roks-vpc-network-operator -o jsonpath='{.status.floatingIP}')
+echo "BU-A FIP: $FIP_A"
+echo "BU-B FIP: $FIP_B"
+
+# BU-A VM egress — should show FIP_A
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'curl -s ifconfig.me' vm/vm-app -n ns-a
+# Expected: 158.177.x.x (FIP_A)
+
+# BU-B VM egress — should show FIP_B
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'curl -s ifconfig.me' vm/vm-web -n ns-b
+# Expected: 161.156.y.y (FIP_B)
+```
+
+The two FIPs are different — BU-A and BU-B have **completely separate egress identities**.
+
+### 14.2 Per-tenant DNAT ingress
+
+Add DNAT to BU-B's gateway so VM-3 (web tier) is reachable from the internet. BU-A's gateway is unaffected.
+
+```bash
+oc patch vpcgateway gw-bu-b -n roks-vpc-network-operator --type merge -p '
+spec:
+  publicAddressRange:
+    enabled: true
+  nat:
+    snat:
+      - source: 10.200.0.0/16
+    dnat:
+      - externalPort: 80
+        internalAddress: 10.200.0.100
+        internalPort: 80
+        protocol: tcp
+'
+```
+
+Start a web server on VM-3 (if not already running from Part 7):
+
+```bash
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'echo "BU-B Web Server" | sudo tee /var/www/html/index.html && sudo python3 -m http.server 80 &' \
+  vm/vm-web -n ns-b
+```
+
+Test DNAT from outside the cluster:
+
+```bash
+# Get BU-B's FIP
+FIP_B=$(oc get vgw gw-bu-b -n roks-vpc-network-operator -o jsonpath='{.status.floatingIP}')
+curl -s http://$FIP_B:80
+# Expected: BU-B Web Server
+
+# BU-A's FIP should NOT have DNAT — this should timeout or refuse
+FIP_A=$(oc get vgw gw-bu-a -n roks-vpc-network-operator -o jsonpath='{.status.floatingIP}')
+curl -s --max-time 5 http://$FIP_A:80
+# Expected: connection timeout (no DNAT configured on gw-bu-a)
+```
+
+### 14.3 Per-tenant firewall
+
+Block BU-A's database VMs from reaching the internet (compliance requirement) while leaving BU-B completely open.
+
+```bash
+oc patch vpcrouter router-bu-a -n roks-vpc-network-operator --type merge -p '
+spec:
+  firewall:
+    enabled: true
+    rules:
+      - name: allow-dns
+        source: 10.100.1.0/24
+        destination: 0.0.0.0/0
+        destinationPort: "53"
+        protocol: udp
+        action: accept
+      - name: block-db-internet
+        source: 10.100.1.0/24
+        destination: 0.0.0.0/0
+        protocol: tcp
+        action: drop
+'
+```
+
+Verify:
+
+```bash
+# BU-A db VM (vm-db) — internet should be blocked
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'curl -s --max-time 5 ifconfig.me; echo "exit: $?"' vm/vm-db -n ns-a
+# Expected: timeout, exit: 28
+
+# BU-A app VM (vm-app) — internet should still work
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'curl -s ifconfig.me' vm/vm-app -n ns-a
+# Expected: 158.177.x.x (FIP_A)
+
+# BU-B VMs — completely unaffected by BU-A's firewall
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'curl -s ifconfig.me' vm/vm-svc -n ns-b
+# Expected: 161.156.y.y (FIP_B)
+```
+
+### 14.4 Per-tenant IPS
+
+Enable Suricata IPS on BU-A's router only. BU-B runs without IPS overhead.
+
+```bash
+oc patch vpcrouter router-bu-a -n roks-vpc-network-operator --type merge -p '
+spec:
+  ids:
+    enabled: true
+    mode: ips
+    interfaces: all
+'
+```
+
+Verify the IPS sidecar is running on BU-A's router but not BU-B's:
+
+```bash
+# BU-A router should have 2 containers (router + suricata)
+oc get pod router-bu-a-pod -n roks-vpc-network-operator -o jsonpath='{.spec.containers[*].name}'
+# Expected: router suricata
+
+# BU-B router should have 1 container (router only)
+oc get pod router-bu-b-pod -n roks-vpc-network-operator -o jsonpath='{.spec.containers[*].name}'
+# Expected: router
+```
+
+### 14.5 Per-tenant VPN
+
+Create a WireGuard VPN for BU-A only. BU-B has no VPN connectivity.
+
+Generate a WireGuard key pair for BU-A:
+
+```bash
+wg genkey | tee /dev/stderr | wg pubkey
+# Save the private key and public key
+
+# Create the secret
+oc create secret generic wg-bu-a-key \
+  --from-literal=private-key='<BU_A_PRIVATE_KEY>' \
+  -n roks-vpc-network-operator
+```
+
+Create BU-A's VPN gateway:
+
+```bash
+oc apply -f - <<'EOF'
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCVPNGateway
+metadata:
+  name: vpn-bu-a
+  namespace: roks-vpc-network-operator
+spec:
+  protocol: wireguard
+  gatewayRef: gw-bu-a
+  wireGuard:
+    privateKey:
+      name: wg-bu-a-key
+      key: private-key
+    listenPort: 51820
+  tunnels:
+    - name: bu-a-remote-office
+      remoteEndpoint: 203.0.113.10
+      remoteNetworks:
+        - 192.168.100.0/24
+      peerPublicKey: <REMOTE_PUBLIC_KEY>
+      tunnelAddressLocal: 10.98.0.1/30
+      tunnelAddressRemote: 10.98.0.2/30
+  localNetworks:
+    - cidr: 10.100.0.0/16
+EOF
+```
+
+Verify:
+
+```bash
+# BU-A VPN gateway should be Ready
+oc get vvg -n roks-vpc-network-operator
+# NAME        PROTOCOL    GATEWAY    TUNNELS   PHASE   SYNC     AGE
+# vpn-bu-a    wireguard   gw-bu-a    1         Ready   Synced   30s
+
+# BU-A gateway should now have VPN routes
+oc get vgw gw-bu-a -n roks-vpc-network-operator -o jsonpath='{.status.vpcRoutes}' | jq .
+# Should include route to 192.168.100.0/24 via gw-bu-a's VNI
+
+# BU-B gateway should have NO VPN routes
+oc get vgw gw-bu-b -n roks-vpc-network-operator -o jsonpath='{.status.vpcRoutes}' | jq .
+# Should only have workload subnet routes (10.200.x)
+```
+
+---
+
+## Part 15: Tenant isolation verification and RBAC
+
+### 15.1 Network isolation
+
+The most important property of multi-tenant networking: **BU-A VMs cannot reach BU-B VMs**, and vice versa. This isolation comes from each router only having interfaces on its own BU's networks.
+
+```bash
+# Get VM IPs
+APP_IP=$(sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'hostname -I | awk "{print \$1}"' vm/vm-app -n ns-a 2>/dev/null | tail -1)
+
+WEB_IP=$(sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'hostname -I | awk "{print \$1}"' vm/vm-web -n ns-b 2>/dev/null | tail -1)
+
+echo "VM-App (BU-A): $APP_IP"
+echo "VM-Web (BU-B): $WEB_IP"
+
+# BU-A → BU-B: MUST FAIL
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c "ping -c 2 -W 3 $WEB_IP; echo exit:\$?" vm/vm-app -n ns-a
+# Expected: 100% packet loss, exit:1
+
+# BU-B → BU-A: MUST FAIL
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c "ping -c 2 -W 3 $APP_IP; echo exit:\$?" vm/vm-web -n ns-b
+# Expected: 100% packet loss, exit:1
+```
+
+Why this works: `router-bu-a` has no interface on `web-l2` or `svc-l2`, so it has no route to `10.200.x.x`. The packet is dropped at the routing layer — there is no path between BU-A and BU-B at L3.
+
+### 15.2 VPC route isolation
+
+Each gateway creates VPC routes only for its own tenant's subnets. Verify the VPC route tables are separate:
+
+```bash
+# BU-A gateway routes — should only contain 10.100.x subnets
+oc get vgw gw-bu-a -n roks-vpc-network-operator -o jsonpath='{.status.vpcRoutes[*].destination}'
+# Expected: 10.100.0.0/24 10.100.1.0/24
+
+# BU-B gateway routes — should only contain 10.200.x subnets
+oc get vgw gw-bu-b -n roks-vpc-network-operator -o jsonpath='{.status.vpcRoutes[*].destination}'
+# Expected: 10.200.0.0/24 10.200.1.0/24
+```
+
+This means even at the VPC fabric level, traffic for BU-A's subnets is routed to BU-A's VNI, and traffic for BU-B's subnets is routed to BU-B's VNI. There is no cross-contamination.
+
+### 15.3 RBAC — namespace-scoped access
+
+Create Kubernetes RBAC so BU-A operators can only manage their own gateway and router, and BU-B operators can only manage theirs.
+
+```bash
+# BU-A Role — scoped to gw-bu-a and router-bu-a by resourceNames
+oc apply -f - <<'EOF'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bu-a-network-admin
+  namespace: roks-vpc-network-operator
+rules:
+  - apiGroups: ["vpc.roks.ibm.com"]
+    resources: ["vpcgateways"]
+    resourceNames: ["gw-bu-a"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["vpc.roks.ibm.com"]
+    resources: ["vpcrouters"]
+    resourceNames: ["router-bu-a"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["vpc.roks.ibm.com"]
+    resources: ["vpcvpngateways"]
+    resourceNames: ["vpn-bu-a"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["vpc.roks.ibm.com"]
+    resources: ["vpcgateways/status", "vpcrouters/status", "vpcvpngateways/status"]
+    verbs: ["get"]
+EOF
+
+# BU-B Role — scoped to gw-bu-b and router-bu-b
+oc apply -f - <<'EOF'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bu-b-network-admin
+  namespace: roks-vpc-network-operator
+rules:
+  - apiGroups: ["vpc.roks.ibm.com"]
+    resources: ["vpcgateways"]
+    resourceNames: ["gw-bu-b"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["vpc.roks.ibm.com"]
+    resources: ["vpcrouters"]
+    resourceNames: ["router-bu-b"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["vpc.roks.ibm.com"]
+    resources: ["vpcgateways/status", "vpcrouters/status"]
+    verbs: ["get"]
+EOF
+
+# Bind to groups (adjust group names to match your identity provider)
+oc create rolebinding bu-a-network-admin \
+  --role=bu-a-network-admin \
+  --group=bu-a-admins \
+  -n roks-vpc-network-operator
+
+oc create rolebinding bu-b-network-admin \
+  --role=bu-b-network-admin \
+  --group=bu-b-admins \
+  -n roks-vpc-network-operator
+```
+
+Additionally, scope VM management to each BU's namespace:
+
+```bash
+# BU-A can manage VMs in ns-a only
+oc create rolebinding bu-a-vm-admin \
+  --clusterrole=kubevirt.io:admin \
+  --group=bu-a-admins \
+  -n ns-a
+
+# BU-B can manage VMs in ns-b only
+oc create rolebinding bu-b-vm-admin \
+  --clusterrole=kubevirt.io:admin \
+  --group=bu-b-admins \
+  -n ns-b
+```
+
+### 15.4 Cost attribution
+
+Each BU's VPC resources (VNIs, FIPs, VPC routes) are tagged with the gateway name, making cost attribution straightforward:
+
+```bash
+# List FIPs — each is tagged with its gateway name
+ibmcloud is floating-ips --output json | jq '.[] | select(.name | startswith("roks-")) | {name, address, tags: [.tags[]]}'
+
+# List VPC routes by gateway tag
+ibmcloud is vpc-routing-table-routes <VPC_ID> <ROUTING_TABLE_ID> --output json | \
+  jq '.[] | select(.name | startswith("roks-")) | {name, destination, next_hop}'
+```
+
+Map resources to BUs:
+- Resources tagged with `gw-bu-a` → charge to BU-A cost center
+- Resources tagged with `gw-bu-b` → charge to BU-B cost center
+
+### 15.5 Full isolation matrix
+
+| # | Source | Destination | Expected | Reason |
+|---|--------|-------------|----------|--------|
+| 1 | VM-1 (BU-A app) | VM-2 (BU-A db) | Allow | Same router (`router-bu-a`) |
+| 2 | VM-1 (BU-A app) | Internet | Allow (SNAT via FIP-A) | `gw-bu-a` NAT |
+| 3 | VM-2 (BU-A db) | Internet | Deny | Firewall rule on `router-bu-a` |
+| 4 | VM-3 (BU-B web) | VM-4 (BU-B svc) | Allow | Same router (`router-bu-b`) |
+| 5 | VM-3 (BU-B web) | Internet | Allow (SNAT via FIP-B) | `gw-bu-b` NAT |
+| 6 | Internet | VM-3:80 | Allow (DNAT) | PAR + DNAT on `gw-bu-b` |
+| 7 | VM-1 (BU-A) | VM-3 (BU-B) | Deny | No route — routers are isolated |
+| 8 | VM-3 (BU-B) | VM-1 (BU-A) | Deny | No route — routers are isolated |
+| 9 | VPN remote | BU-A 10.100.x | Allow | `vpn-bu-a` tunnel |
+
+Run the full matrix:
+
+```bash
+echo "=== Test 1: BU-A app → BU-A db (expect: PASS) ==="
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'ping -c 1 -W 3 10.100.1.100 && echo PASS || echo FAIL' vm/vm-app -n ns-a
+
+echo "=== Test 2: BU-A app → Internet (expect: PASS with FIP-A) ==="
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'curl -s ifconfig.me' vm/vm-app -n ns-a
+
+echo "=== Test 3: BU-A db → Internet (expect: FAIL — firewall) ==="
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'curl -s --max-time 5 ifconfig.me || echo BLOCKED' vm/vm-db -n ns-a
+
+echo "=== Test 4: BU-B web → BU-B svc (expect: PASS) ==="
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'ping -c 1 -W 3 10.200.1.100 && echo PASS || echo FAIL' vm/vm-web -n ns-b
+
+echo "=== Test 5: BU-B web → Internet (expect: PASS with FIP-B) ==="
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'curl -s ifconfig.me' vm/vm-web -n ns-b
+
+echo "=== Test 6: Internet → VM-3:80 DNAT (expect: PASS) ==="
+FIP_B=$(oc get vgw gw-bu-b -n roks-vpc-network-operator -o jsonpath='{.status.floatingIP}')
+curl -s --max-time 5 http://$FIP_B:80
+
+echo "=== Test 7: BU-A → BU-B (expect: FAIL — isolated) ==="
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'ping -c 1 -W 3 10.200.0.100; echo exit:$?' vm/vm-app -n ns-a
+
+echo "=== Test 8: BU-B → BU-A (expect: FAIL — isolated) ==="
+sshpass -p fedora virtctl ssh --username=fedora \
+  -t '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password' \
+  -c 'ping -c 1 -W 3 10.100.0.100; echo exit:$?' vm/vm-web -n ns-b
+
+echo "=== Test 9: VPN routes exist for BU-A only ==="
+oc get vgw gw-bu-a -n roks-vpc-network-operator -o jsonpath='{.status.vpcRoutes}' | jq '.[].destination' | grep 192.168 && echo "PASS: VPN route exists on gw-bu-a"
+oc get vgw gw-bu-b -n roks-vpc-network-operator -o jsonpath='{.status.vpcRoutes}' | jq '.[].destination' | grep 192.168 || echo "PASS: No VPN route on gw-bu-b"
+```
+
+---
+
+## Part 16: Multi-tenant cleanup
+
+Delete all multi-tenant resources in reverse dependency order.
+
+### 16.1 Delete VPN gateway
+
+```bash
+oc delete vpcvpngateway vpn-bu-a -n roks-vpc-network-operator --wait
+oc delete secret wg-bu-a-key -n roks-vpc-network-operator --ignore-not-found
+```
+
+### 16.2 Delete routers
+
+```bash
+oc delete vpcrouter router-bu-a router-bu-b -n roks-vpc-network-operator --wait
+
+# Wait for router pods to terminate
+oc wait --for=delete pod/router-bu-a-pod pod/router-bu-b-pod \
+  -n roks-vpc-network-operator --timeout=120s
+```
+
+### 16.3 Delete gateways
+
+```bash
+oc delete vpcgateway gw-bu-a gw-bu-b -n roks-vpc-network-operator --wait
+```
+
+### 16.4 Delete VMs
+
+```bash
+oc delete vm vm-app vm-db -n ns-a
+oc delete vm vm-web vm-svc -n ns-b
+
+oc wait --for=delete vmi/vm-app vmi/vm-db -n ns-a --timeout=120s
+oc wait --for=delete vmi/vm-web vmi/vm-svc -n ns-b --timeout=120s
+```
+
+### 16.5 Delete CUDNs
+
+```bash
+oc delete cudn localnet-ext app-l2 db-l2 web-l2 svc-l2
+```
+
+### 16.6 Delete RBAC and namespaces
+
+```bash
+# RBAC (roles, bindings)
+oc delete role bu-a-network-admin bu-b-network-admin -n roks-vpc-network-operator --ignore-not-found
+oc delete rolebinding bu-a-network-admin bu-b-network-admin -n roks-vpc-network-operator --ignore-not-found
+oc delete rolebinding bu-a-vm-admin -n ns-a --ignore-not-found
+oc delete rolebinding bu-b-vm-admin -n ns-b --ignore-not-found
+
+# Namespaces
+oc delete namespace ns-a ns-b
+```
+
+### 16.7 Verify cleanup
+
+```bash
+# No operator resources
+oc get vgw,vrt,vvg,vsn,vla -n roks-vpc-network-operator
+# No resources found
+
+# No CUDNs
+oc get cudn | grep -E 'app-l2|db-l2|web-l2|svc-l2|localnet-ext'
+# (no output)
+
+# No tutorial namespaces
+oc get ns | grep -E 'ns-a|ns-b'
+# (no output)
+
+# VPC resources cleaned up
 ibmcloud is subnets | grep roks-
 ibmcloud is floating-ips | grep roks-
 ```

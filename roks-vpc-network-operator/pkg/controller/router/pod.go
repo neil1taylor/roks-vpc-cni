@@ -286,11 +286,22 @@ func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) string
 	sb.WriteString("yum install -y iproute nftables procps-ng dnsmasq dhcp-client 2>/dev/null || ")
 	sb.WriteString("apt-get update && apt-get install -y iproute2 nftables dnsmasq isc-dhcp-client 2>/dev/null || true\n\n")
 
-	// Configure uplink interface via DHCP — the VNI MAC is set by Multus,
-	// so VPC's DHCP server will assign the reserved IP and gateway, just like a VM.
-	sb.WriteString("# Configure uplink interface via DHCP\n")
+	// Configure uplink interface via DHCP with static IP fallback.
+	// The VNI MAC is set by Multus, so VPC's DHCP server will assign the reserved IP.
+	// If DHCP fails, fall back to static assignment from gateway status.
+	sb.WriteString("# Configure uplink interface via DHCP (with static fallback)\n")
 	sb.WriteString("ip link set uplink up\n")
-	sb.WriteString("dhclient -v uplink\n")
+	sb.WriteString("if ! dhclient -v -timeout 30 uplink 2>/dev/null; then\n")
+	sb.WriteString("  echo 'DHCP failed on uplink, falling back to static IP from gateway'\n")
+	sb.WriteString("  if [ -n \"${GW_RESERVED_IP}\" ]; then\n")
+	sb.WriteString("    GW_SUBNET=$(echo ${GW_RESERVED_IP} | cut -d. -f1-3)\n")
+	sb.WriteString("    ip addr add ${GW_RESERVED_IP}/24 dev uplink 2>/dev/null || true\n")
+	sb.WriteString("    ip route add default via ${GW_SUBNET}.1 dev uplink metric 50 2>/dev/null || true\n")
+	sb.WriteString("  else\n")
+	sb.WriteString("    echo 'ERROR: DHCP failed and no GW_RESERVED_IP set'\n")
+	sb.WriteString("    exit 1\n")
+	sb.WriteString("  fi\n")
+	sb.WriteString("fi\n")
 	sb.WriteString("echo 'Uplink DHCP complete:'\n")
 	sb.WriteString("ip addr show dev uplink\n")
 	sb.WriteString("ip route show dev uplink\n\n")
@@ -401,6 +412,14 @@ func buildEnvVars(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) []corev1.
 		})
 	}
 
+	// Gateway reserved IP — used as DHCP fallback for uplink configuration
+	if gw.Status.ReservedIP != "" {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "GW_RESERVED_IP",
+			Value: gw.Status.ReservedIP,
+		})
+	}
+
 	return envVars
 }
 
@@ -442,9 +461,16 @@ func generateFirewallConfig(fw *v1alpha1.GatewayFirewall) string {
 			}
 		}
 
-		// Counter + Action
+		// Counter + Action (map CRD values to nftables syntax)
 		sb.WriteString("counter ")
-		sb.WriteString(rule.Action)
+		switch rule.Action {
+		case "deny":
+			sb.WriteString("drop")
+		case "allow":
+			sb.WriteString("accept")
+		default:
+			sb.WriteString(rule.Action) // pass through accept/drop if already nftables syntax
+		}
 		sb.WriteString("\n")
 	}
 
@@ -534,14 +560,17 @@ func computeDHCPRangeWithLease(address, leaseTime string) string {
 func generateDnsmasqCommand(ifName, address string, cfg *resolvedDHCP) string {
 	var args []string
 
-	// Interface binding
+	// Interface binding — port=0 disables DNS listener to avoid conflicts
+	// when multiple dnsmasq instances run for different networks.
 	args = append(args,
 		fmt.Sprintf("--interface=%s", ifName),
 		"--bind-interfaces",
+		"--port=0",
 		"--no-daemon",
 		"--log-dhcp",
 		"--no-resolv",
 		fmt.Sprintf("--pid-file=/var/run/dnsmasq-%s.pid", ifName),
+		fmt.Sprintf("--dhcp-leasefile=/var/lib/dnsmasq/dnsmasq-%s.leases", ifName),
 	)
 
 	// DHCP range

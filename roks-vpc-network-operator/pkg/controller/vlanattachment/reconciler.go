@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
+	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	"github.com/IBM/roks-vpc-network-operator/pkg/finalizers"
 	operatormetrics "github.com/IBM/roks-vpc-network-operator/pkg/metrics"
 	"github.com/IBM/roks-vpc-network-operator/pkg/roks"
@@ -122,7 +123,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, vlanAtt *v1alpha1.VLAN
 
 		createOpts := vpc.CreateVLANAttachmentOptions{
 			BMServerID: vlanAtt.Spec.BMServerID,
-			Name:       fmt.Sprintf("roks-%s-%s", r.ClusterID, vlanAtt.Name),
+			Name:       network.TruncateVPCName(fmt.Sprintf("roks-%s-%s", r.ClusterID, vlanAtt.Name)),
 			VLANID:     vlanAtt.Spec.VLANID,
 			SubnetID:   subnetID,
 		}

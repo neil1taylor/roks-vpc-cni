@@ -51,26 +51,39 @@ func EnsureVPCSubnet(ctx context.Context, k8sClient client.Client, vpcClient vpc
 	// Clear any previous error annotation on retry
 	delete(annots, annotations.SubnetError)
 
-	// Validate CIDR against VPC address prefixes before calling CreateSubnet
+	// Validate CIDR against VPC address prefixes before calling CreateSubnet.
+	// If no matching prefix exists, auto-create one.
 	vpcID := annots[annotations.VPCID]
 	cidr := strings.TrimSpace(annots[annotations.CIDR])
+	zone := annots[annotations.Zone]
 	if vpcID != "" && cidr != "" {
 		prefixes, err := vpcClient.ListVPCAddressPrefixes(ctx, vpcID)
 		if err != nil {
 			logger.Error(err, "Failed to list VPC address prefixes for CIDR validation")
 			// Non-fatal: proceed to CreateSubnet and let VPC API validate
 		} else if !cidrFitsPrefix(cidr, prefixes) {
-			errMsg := fmt.Sprintf("CIDR %s does not fit any VPC address prefix. Available prefixes: %s",
-				cidr, formatPrefixes(prefixes))
-			logger.Error(nil, errMsg)
-			annots[annotations.SubnetStatus] = "error"
-			annots[annotations.SubnetError] = errMsg
-			obj.SetAnnotations(annots)
-			if updateErr := k8sClient.Update(ctx, obj); updateErr != nil {
-				logger.Error(updateErr, "Failed to update error annotation")
+			logger.Info("CIDR does not fit any existing VPC address prefix, auto-creating prefix", "cidr", cidr, "zone", zone)
+			prefixName := TruncateVPCName(fmt.Sprintf("roks-%s-%s", clusterID, obj.GetName()))
+			_, prefixErr := vpcClient.CreateVPCAddressPrefix(ctx, vpc.CreateAddressPrefixOptions{
+				VPCID: vpcID,
+				CIDR:  cidr,
+				Zone:  zone,
+				Name:  prefixName,
+			})
+			if prefixErr != nil {
+				errMsg := fmt.Sprintf("CIDR %s does not fit any VPC address prefix and auto-creation failed: %v. Available prefixes: %s",
+					cidr, prefixErr, formatPrefixes(prefixes))
+				logger.Error(prefixErr, "Failed to auto-create VPC address prefix", "cidr", cidr)
+				annots[annotations.SubnetStatus] = "error"
+				annots[annotations.SubnetError] = errMsg
+				obj.SetAnnotations(annots)
+				if updateErr := k8sClient.Update(ctx, obj); updateErr != nil {
+					logger.Error(updateErr, "Failed to update error annotation")
+				}
+				operatormetrics.ReconcileOpsTotal.WithLabelValues(metricsLabel, "create_subnet", "error").Inc()
+				return false, fmt.Errorf("%s", errMsg)
 			}
-			operatormetrics.ReconcileOpsTotal.WithLabelValues(metricsLabel, "create_subnet", "error").Inc()
-			return false, fmt.Errorf("%s", errMsg)
+			logger.Info("Auto-created VPC address prefix", "cidr", cidr, "name", prefixName)
 		}
 	}
 

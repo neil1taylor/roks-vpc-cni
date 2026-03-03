@@ -381,7 +381,7 @@ spec:
 
 1. The VPCVPNGateway reconciler looks up the referenced VPCGateway to obtain the floating IP (tunnel endpoint)
 2. It builds a privileged pod with WireGuard, StrongSwan, or OpenVPN configured using the tunnel spec
-3. The pod obtains an uplink interface via Multus and sets up VPN tunnels to all configured remote peers
+3. The pod obtains an uplink interface (net0) via Multus with the gateway VNI's MAC address pinned. It configures a static reserved IP from the gateway and policy routing (source-based rules) to ensure return traffic exits via net0, then sets up VPN tunnels to all configured remote peers
 4. Remote networks from all tunnels are collected as `advertisedRoutes` in the VPN gateway status
 5. The VPCGateway reconciler watches VPN gateway status and creates VPC routes for the advertised routes
 6. Traffic from VMs destined for remote networks flows: VM -> OVN -> VPC route -> VPN gateway pod -> encrypted tunnel -> remote site

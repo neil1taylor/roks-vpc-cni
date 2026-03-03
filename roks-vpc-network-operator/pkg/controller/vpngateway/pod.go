@@ -136,9 +136,12 @@ func buildWireGuardInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 
 	// Install tools
 	sb.WriteString("# Install tools\n")
-	sb.WriteString("dnf install -y iproute nftables wireguard-tools jq 2>/dev/null || ")
-	sb.WriteString("yum install -y iproute nftables wireguard-tools jq 2>/dev/null || ")
-	sb.WriteString("apt-get update && apt-get install -y iproute2 nftables wireguard-tools jq 2>/dev/null || true\n\n")
+	sb.WriteString("dnf install -y iproute nftables wireguard-tools jq procps-ng 2>/dev/null || ")
+	sb.WriteString("yum install -y iproute nftables wireguard-tools jq procps-ng 2>/dev/null || ")
+	sb.WriteString("apt-get update && apt-get install -y iproute2 nftables wireguard-tools jq procps 2>/dev/null || true\n\n")
+
+	// Ensure /usr/sbin is in PATH (needed for sysctl on Fedora)
+	sb.WriteString("export PATH=$PATH:/usr/sbin\n\n")
 
 	// Configure uplink with gateway VNI identity (MAC set via Multus annotation)
 	sb.WriteString("# Configure uplink with gateway VNI reserved IP\n")
@@ -147,12 +150,19 @@ func buildWireGuardInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("ip link set net0 up\n")
 	sb.WriteString("ip route add default via ${GW_IP} dev net0 metric 50 2>/dev/null || true\n\n")
 
+	// Policy routing: replies to inbound FIP traffic must exit via net0 (not eth0)
+	sb.WriteString("# Policy routing for return traffic via net0\n")
+	sb.WriteString("ip route add ${GW_RESERVED_IP%.*}.0/24 dev net0 table 100 2>/dev/null || true\n")
+	sb.WriteString("ip route add default via ${GW_IP} dev net0 table 100 2>/dev/null || true\n")
+	sb.WriteString("ip rule add from ${GW_RESERVED_IP}/32 lookup 100 priority 100 2>/dev/null || true\n\n")
+
 	// Enable IP forwarding
 	sb.WriteString("# Enable IP forwarding\n")
 	sb.WriteString("sysctl -w net.ipv4.ip_forward=1\n\n")
 
-	// Create WireGuard interface
+	// Create WireGuard interface (delete first in case of container restart)
 	sb.WriteString("# Create WireGuard interface\n")
+	sb.WriteString("ip link del dev wg0 2>/dev/null || true\n")
 	sb.WriteString("ip link add dev wg0 type wireguard\n")
 	sb.WriteString("wg set wg0 listen-port ${WG_LISTEN_PORT} private-key /run/secrets/wireguard/${WG_PRIVATE_KEY_FILE}\n\n")
 
@@ -163,7 +173,9 @@ func buildWireGuardInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("  ENDPOINT=$(echo \"$tunnel\" | jq -r '.remoteEndpoint')\n")
 	sb.WriteString("  ALLOWED_IPS=$(echo \"$tunnel\" | jq -r '.remoteNetworks | join(\",\")')\n")
 	sb.WriteString("  LOCAL_ADDR=$(echo \"$tunnel\" | jq -r '.tunnelAddressLocal')\n")
-	sb.WriteString("  wg set wg0 peer \"$PEER_KEY\" endpoint \"${ENDPOINT}:${WG_LISTEN_PORT}\" allowed-ips \"$ALLOWED_IPS\" persistent-keepalive 25\n")
+	sb.WriteString("  # Append port only if endpoint doesn't already contain one\n")
+	sb.WriteString("  if echo \"$ENDPOINT\" | grep -q ':'; then WG_ENDPOINT=\"$ENDPOINT\"; else WG_ENDPOINT=\"${ENDPOINT}:${WG_LISTEN_PORT}\"; fi\n")
+	sb.WriteString("  wg set wg0 peer \"$PEER_KEY\" endpoint \"$WG_ENDPOINT\" allowed-ips \"$ALLOWED_IPS\" persistent-keepalive 25\n")
 	sb.WriteString("  ip addr add \"$LOCAL_ADDR\" dev wg0 2>/dev/null || true\n")
 	sb.WriteString("done\n\n")
 
@@ -298,12 +310,21 @@ func buildStrongSwanInitScript(vpn *v1alpha1.VPCVPNGateway, swanctlConf string) 
 	var sb strings.Builder
 	sb.WriteString("set -e\n\n")
 
+	// Ensure /usr/sbin is in PATH (needed for sysctl on some distros)
+	sb.WriteString("export PATH=$PATH:/usr/sbin\n\n")
+
 	// Configure uplink with gateway VNI identity (MAC set via Multus annotation)
 	sb.WriteString("# Configure uplink with gateway VNI reserved IP\n")
 	sb.WriteString("GW_IP=$(echo ${GW_RESERVED_IP} | cut -d. -f1-3).1\n")
 	sb.WriteString("ip addr add ${GW_RESERVED_IP}/24 dev net0 2>/dev/null || true\n")
 	sb.WriteString("ip link set net0 up\n")
 	sb.WriteString("ip route add default via ${GW_IP} dev net0 metric 50 2>/dev/null || true\n\n")
+
+	// Policy routing: replies to inbound FIP traffic must exit via net0 (not eth0)
+	sb.WriteString("# Policy routing for return traffic via net0\n")
+	sb.WriteString("ip route add ${GW_RESERVED_IP%.*}.0/24 dev net0 table 100 2>/dev/null || true\n")
+	sb.WriteString("ip route add default via ${GW_IP} dev net0 table 100 2>/dev/null || true\n")
+	sb.WriteString("ip rule add from ${GW_RESERVED_IP}/32 lookup 100 priority 100 2>/dev/null || true\n\n")
 
 	// Enable IP forwarding
 	sb.WriteString("# Enable IP forwarding\n")
@@ -594,12 +615,21 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("# Install tools\n")
 	sb.WriteString("dnf install -y openvpn iptables jq python3 gettext procps-ng iproute 2>/dev/null || true\n\n")
 
+	// Ensure /usr/sbin is in PATH (needed for sysctl on Fedora)
+	sb.WriteString("export PATH=$PATH:/usr/sbin\n\n")
+
 	// Configure uplink with gateway VNI identity (MAC set via Multus annotation)
 	sb.WriteString("# Configure uplink with gateway VNI reserved IP\n")
 	sb.WriteString("GW_IP=$(echo ${GW_RESERVED_IP} | cut -d. -f1-3).1\n")
 	sb.WriteString("ip addr add ${GW_RESERVED_IP}/24 dev net0 2>/dev/null || true\n")
 	sb.WriteString("ip link set net0 up\n")
 	sb.WriteString("ip route add default via ${GW_IP} dev net0 metric 50 2>/dev/null || true\n\n")
+
+	// Policy routing: replies to inbound FIP traffic must exit via net0 (not eth0)
+	sb.WriteString("# Policy routing for return traffic via net0\n")
+	sb.WriteString("ip route add ${GW_RESERVED_IP%.*}.0/24 dev net0 table 100 2>/dev/null || true\n")
+	sb.WriteString("ip route add default via ${GW_IP} dev net0 table 100 2>/dev/null || true\n")
+	sb.WriteString("ip rule add from ${GW_RESERVED_IP}/32 lookup 100 priority 100 2>/dev/null || true\n\n")
 
 	// Enable IP forwarding
 	sb.WriteString("# Enable IP forwarding\n")

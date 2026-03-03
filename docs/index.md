@@ -38,7 +38,7 @@ Need to deploy VMs with VPC networking?
 3. [Creating VMs](user-guide/creating-vms.md) — Detailed VM deployment guide
 4. [Floating IPs](user-guide/floating-ips.md) — Public IP management
 5. [End-to-End Tutorial](tutorials/end-to-end-vm-deployment.md) — Full walkthrough
-6. [Advanced Networking Tutorial](tutorials/advanced-networking.md) — Multi-namespace enterprise topology
+6. [Advanced Networking Tutorial](tutorials/advanced-networking.md) — Multi-namespace enterprise topology with multi-tenant isolation
 7. [Annotations Reference](user-guide/annotations-reference.md) — All operator annotations
 8. [Console Plugin Overview](console-guide/overview.md) — Using the web UI
 

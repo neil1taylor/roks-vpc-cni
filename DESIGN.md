@@ -92,7 +92,7 @@ The VPC auto-generates a MAC when a VNI is created. This MAC is the critical lin
 
 When the VM boots, it uses this MAC on its localnet interface. The VPC fabric sees traffic with this MAC on the VLAN attachment and associates it with the correct VNI, applying security groups and routing to/from the reserved IP.
 
-The reserved IP is injected via cloud-init network-config, or served via DHCP from the MAC-to-reserved-IP binding.
+For VMs, the reserved IP is injected via cloud-init network-config. For gateway service pods (router, VPN, L2 bridge), the gateway VNI MAC is set via the Multus annotation and the reserved IP is statically assigned with source-based policy routing to ensure return traffic exits the correct interface.
 
 ---
 
