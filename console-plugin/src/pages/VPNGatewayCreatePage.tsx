@@ -79,6 +79,15 @@ const VPNGatewayCreatePage: React.FC = () => {
   // Tunnels
   const [tunnels, setTunnels] = useState<TunnelEntry[]>([emptyTunnel()]);
 
+  // Local Networks (push routes to clients)
+  const [localNetworks, setLocalNetworks] = useState<string[]>(['']);
+
+  // Remote Access
+  const [remoteAccessEnabled, setRemoteAccessEnabled] = useState(false);
+  const [addressPool, setAddressPool] = useState('');
+  const [dnsServers, setDnsServers] = useState('');
+  const [maxClients, setMaxClients] = useState('10');
+
   // MTU
   const [tunnelMTU, setTunnelMTU] = useState('1420');
   const [mssClamp, setMssClamp] = useState(true);
@@ -160,6 +169,22 @@ const VPNGatewayCreatePage: React.FC = () => {
         proto: ovpnProto,
         cipher: ovpnCipher.trim(),
         clientSubnet: ovpnClientSubnet.trim() || undefined,
+      };
+    }
+
+    // Local networks
+    const filteredNetworks = localNetworks.map((n) => n.trim()).filter(Boolean);
+    if (filteredNetworks.length > 0) {
+      req.localNetworks = filteredNetworks.map((cidr) => ({ cidr }));
+    }
+
+    // Remote access
+    if (remoteAccessEnabled) {
+      req.remoteAccess = {
+        enabled: true,
+        addressPool: addressPool.trim() || undefined,
+        dnsServers: dnsServers.split(',').map((s) => s.trim()).filter(Boolean),
+        maxClients: parseInt(maxClients, 10) || 10,
       };
     }
 
@@ -413,6 +438,73 @@ const VPNGatewayCreatePage: React.FC = () => {
               <Button variant="secondary" onClick={addTunnel} style={{ marginBottom: '16px' }}>
                 Add Tunnel
               </Button>
+
+              {/* Local Networks (push routes to clients) */}
+              <Title headingLevel="h3" style={{ marginTop: '16px', marginBottom: '8px' }}>Local Networks</Title>
+              <Text component={TextVariants.small} style={{ marginBottom: '8px', color: 'var(--pf-v5-global--Color--200)' }}>
+                CIDRs of local networks to advertise to VPN peers. These are pushed as routes to connecting clients.
+              </Text>
+
+              {localNetworks.map((cidr, idx) => (
+                <FormGroup key={idx} label={`Network ${idx + 1}`} fieldId={`ln-${idx}`}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <TextInput
+                      id={`ln-${idx}`}
+                      value={cidr}
+                      onChange={(_e, v) => {
+                        setLocalNetworks((prev) => {
+                          const updated = [...prev];
+                          updated[idx] = v;
+                          return updated;
+                        });
+                      }}
+                      placeholder="e.g. 10.240.0.0/24"
+                      style={{ flex: 1 }}
+                    />
+                    {localNetworks.length > 1 && (
+                      <Button variant="plain" isDanger onClick={() => setLocalNetworks((prev) => prev.filter((_, i) => i !== idx))}>
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                </FormGroup>
+              ))}
+              <Button variant="secondary" onClick={() => setLocalNetworks((prev) => [...prev, ''])} style={{ marginBottom: '16px' }}>
+                Add Network
+              </Button>
+
+              {/* Remote Access */}
+              <Title headingLevel="h3" style={{ marginTop: '16px', marginBottom: '8px' }}>Remote Access (Client-to-Site)</Title>
+
+              <FormGroup label="Enable Remote Access" fieldId="vpn-remote-access">
+                <Switch
+                  id="vpn-remote-access"
+                  label="Enabled"
+                  labelOff="Disabled"
+                  isChecked={remoteAccessEnabled}
+                  onChange={(_e, checked) => setRemoteAccessEnabled(checked)}
+                />
+                <FormHelperText>
+                  <HelperText><HelperTextItem>Allow individual clients to connect to the VPN (client-to-site mode)</HelperTextItem></HelperText>
+                </FormHelperText>
+              </FormGroup>
+
+              {remoteAccessEnabled && (
+                <>
+                  <FormGroup label="Address Pool" fieldId="vpn-ra-pool">
+                    <TextInput id="vpn-ra-pool" value={addressPool} onChange={(_e, v) => setAddressPool(v)} placeholder="e.g. 10.200.0.0/24" />
+                    <FormHelperText><HelperText><HelperTextItem>IP pool for remote access clients. Leave empty to use the OpenVPN client subnet.</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+                  <FormGroup label="DNS Servers" fieldId="vpn-ra-dns">
+                    <TextInput id="vpn-ra-dns" value={dnsServers} onChange={(_e, v) => setDnsServers(v)} placeholder="e.g. 8.8.8.8, 8.8.4.4" />
+                    <FormHelperText><HelperText><HelperTextItem>Comma-separated DNS servers pushed to connecting clients</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+                  <FormGroup label="Max Clients" fieldId="vpn-ra-max">
+                    <TextInput id="vpn-ra-max" type="number" value={maxClients} onChange={(_e, v) => setMaxClients(v)} />
+                    <FormHelperText><HelperText><HelperTextItem>Maximum concurrent remote access clients (default: 10)</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+                </>
+              )}
 
               {/* MTU Settings */}
               <Title headingLevel="h3" style={{ marginTop: '16px', marginBottom: '8px' }}>MTU Settings</Title>

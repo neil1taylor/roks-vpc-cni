@@ -835,4 +835,11 @@ export interface CreateVPNGatewayRequest {
     tunnelMTU?: number;
     mssClamp?: boolean;
   };
+  remoteAccess?: {
+    enabled: boolean;
+    addressPool?: string;
+    dnsServers?: string[];
+    maxClients?: number;
+  };
+  localNetworks?: { cidr: string }[];
 }

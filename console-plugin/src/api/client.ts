@@ -612,6 +612,17 @@ class VPCNetworkClient {
     const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
     return this.request<void>('DELETE', `/vpn-gateways/${encodeURIComponent(name)}${params}`);
   }
+
+  async generateClientConfig(
+    name: string,
+    clientName: string,
+    namespace?: string,
+  ): Promise<ApiResponse<{ clientName: string; secretName: string; ovpnConfig: string }>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request('POST', `/vpn-gateways/${encodeURIComponent(name)}/client-config${params}`, {
+      clientName,
+    } as unknown as Record<string, unknown>);
+  }
 }
 
 // Export singleton instance

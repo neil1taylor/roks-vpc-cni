@@ -161,6 +161,12 @@ type VPNOpenVPNConfig struct {
 	// +kubebuilder:validation:Required
 	Key SecretKeyRef `json:"key"`
 
+	// CAKey is a reference to a Secret containing the CA private key.
+	// Required for automatic client certificate generation.
+	// If not set, the BFF will look for a key named "ca.key" in the same secret as CA.
+	// +optional
+	CAKey *SecretKeyRef `json:"caKey,omitempty"`
+
 	// DH is a reference to a Secret containing Diffie-Hellman parameters.
 	// Optional — omit to use ECDH.
 	// +optional

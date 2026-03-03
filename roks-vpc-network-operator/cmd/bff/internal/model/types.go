@@ -767,14 +767,61 @@ type VPNMTUReq struct {
 	MSSClamp  *bool  `json:"mssClamp,omitempty"`
 }
 
+// VPNOpenVPNReq represents OpenVPN config in a VPN gateway create request.
+type VPNOpenVPNReq struct {
+	CASecret         string `json:"caSecret"`
+	CASecretKey      string `json:"caSecretKey"`
+	CertSecret       string `json:"certSecret"`
+	CertSecretKey    string `json:"certSecretKey"`
+	KeySecret        string `json:"keySecret"`
+	KeySecretKey     string `json:"keySecretKey"`
+	DHSecret         string `json:"dhSecret,omitempty"`
+	DHSecretKey      string `json:"dhSecretKey,omitempty"`
+	TLSAuthSecret    string `json:"tlsAuthSecret,omitempty"`
+	TLSAuthSecretKey string `json:"tlsAuthSecretKey,omitempty"`
+	ListenPort       *int32 `json:"listenPort,omitempty"`
+	Proto            string `json:"proto,omitempty"`
+	Cipher           string `json:"cipher,omitempty"`
+	ClientSubnet     string `json:"clientSubnet,omitempty"`
+	Image            string `json:"image,omitempty"`
+}
+
+// VPNRemoteAccessReq represents remote access config in a VPN gateway create request.
+type VPNRemoteAccessReq struct {
+	Enabled     bool     `json:"enabled"`
+	AddressPool string   `json:"addressPool,omitempty"`
+	DNSServers  []string `json:"dnsServers,omitempty"`
+	MaxClients  *int32   `json:"maxClients,omitempty"`
+}
+
+// VPNLocalNetworkReq represents a local network in a VPN gateway create request.
+type VPNLocalNetworkReq struct {
+	CIDR string `json:"cidr,omitempty"`
+}
+
 // VPNGatewayRequest represents a request to create a VPCVPNGateway.
 type VPNGatewayRequest struct {
-	Name       string           `json:"name"`
-	Namespace  string           `json:"namespace,omitempty"`
-	Protocol   string           `json:"protocol"`
-	GatewayRef string           `json:"gatewayRef"`
-	WireGuard  *VPNWireGuardReq `json:"wireGuard,omitempty"`
-	IPsec      *VPNIPsecReq     `json:"ipsec,omitempty"`
-	Tunnels    []VPNTunnelReq   `json:"tunnels"`
-	MTU        *VPNMTUReq       `json:"mtu,omitempty"`
+	Name          string              `json:"name"`
+	Namespace     string              `json:"namespace,omitempty"`
+	Protocol      string              `json:"protocol"`
+	GatewayRef    string              `json:"gatewayRef"`
+	WireGuard     *VPNWireGuardReq    `json:"wireGuard,omitempty"`
+	IPsec         *VPNIPsecReq        `json:"ipsec,omitempty"`
+	OpenVPN       *VPNOpenVPNReq      `json:"openVPN,omitempty"`
+	Tunnels       []VPNTunnelReq      `json:"tunnels"`
+	MTU           *VPNMTUReq          `json:"mtu,omitempty"`
+	RemoteAccess  *VPNRemoteAccessReq  `json:"remoteAccess,omitempty"`
+	LocalNetworks []VPNLocalNetworkReq `json:"localNetworks,omitempty"`
+}
+
+// ClientConfigRequest represents a request to generate a client .ovpn config.
+type ClientConfigRequest struct {
+	ClientName string `json:"clientName"`
+}
+
+// ClientConfigResponse represents a generated client config.
+type ClientConfigResponse struct {
+	ClientName string `json:"clientName"`
+	SecretName string `json:"secretName"`
+	OVPNConfig string `json:"ovpnConfig"`
 }

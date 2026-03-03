@@ -24,9 +24,15 @@ import {
   EmptyStateHeader,
   EmptyStateIcon,
   Label,
+  Modal,
+  TextInput,
+  FormGroup,
+  FormHelperText,
+  HelperText,
+  HelperTextItem,
 } from '@patternfly/react-core';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
-import { CubesIcon } from '@patternfly/react-icons';
+import { CubesIcon, DownloadIcon } from '@patternfly/react-icons';
 import { Link, useNavigate } from 'react-router-dom-v5-compat';
 import { useVPNGateway } from '../api/hooks';
 import { apiClient } from '../api/client';
@@ -47,6 +53,8 @@ const tunnelStatusColors: Record<string, 'green' | 'red' | 'orange'> = {
   Connecting: 'orange',
 };
 
+const clientNamePattern = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/;
+
 const VPNGatewayDetailPage: React.FC = () => {
   const { name } = useParams<{ name: string }>();
   const [searchParams] = useSearchParams();
@@ -57,6 +65,13 @@ const VPNGatewayDetailPage: React.FC = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Client config generation state
+  const [isClientConfigModalOpen, setIsClientConfigModalOpen] = useState(false);
+  const [clientName, setClientName] = useState('');
+  const [clientConfigLoading, setClientConfigLoading] = useState(false);
+  const [clientConfigError, setClientConfigError] = useState<string | null>(null);
+  const [clientConfigSuccess, setClientConfigSuccess] = useState<string | null>(null);
 
   const handleDelete = async () => {
     if (!name) return;
@@ -71,6 +86,36 @@ const VPNGatewayDetailPage: React.FC = () => {
       navigate('/vpc-networking/vpn-gateways');
     }
   };
+
+  const handleGenerateClientConfig = async () => {
+    if (!name || !clientName.trim()) return;
+    setClientConfigLoading(true);
+    setClientConfigError(null);
+    setClientConfigSuccess(null);
+
+    const resp = await apiClient.generateClientConfig(name, clientName.trim(), ns);
+    if (resp.error) {
+      setClientConfigError(resp.error.message);
+      setClientConfigLoading(false);
+    } else if (resp.data) {
+      // Trigger browser download
+      const blob = new Blob([resp.data.ovpnConfig], { type: 'application/x-openvpn-profile' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${clientName.trim()}.ovpn`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setClientConfigSuccess(`Client config generated. Certificate stored in secret "${resp.data.secretName}".`);
+      setClientConfigLoading(false);
+      setClientName('');
+    }
+  };
+
+  const isClientNameValid = clientName.trim() !== '' && clientNamePattern.test(clientName.trim());
 
   return (
     <VPCNetworkingShell>
@@ -98,6 +143,22 @@ const VPNGatewayDetailPage: React.FC = () => {
                     <Split hasGutter>
                       <SplitItem isFilled>Overview</SplitItem>
                       <SplitItem>
+                        {vpnGateway.protocol === 'openvpn' && (
+                          <Button
+                            variant="secondary"
+                            icon={<DownloadIcon />}
+                            onClick={() => {
+                              setClientConfigError(null);
+                              setClientConfigSuccess(null);
+                              setClientName('');
+                              setIsClientConfigModalOpen(true);
+                            }}
+                            isDisabled={actionLoading}
+                            style={{ marginRight: '8px' }}
+                          >
+                            Generate .ovpn
+                          </Button>
+                        )}
                         <Button
                           variant="danger"
                           onClick={() => { setActionError(null); setIsDeleteModalOpen(true); }}
@@ -256,6 +317,36 @@ const VPNGatewayDetailPage: React.FC = () => {
                   </CardBody>
                 </Card>
               </GridItem>
+
+              {/* Card 5: Client Configuration (OpenVPN only) */}
+              {vpnGateway.protocol === 'openvpn' && (
+                <GridItem span={12}>
+                  <Card>
+                    <CardTitle>Client Configuration</CardTitle>
+                    <CardBody>
+                      {clientConfigSuccess && (
+                        <Alert variant="success" title={clientConfigSuccess} isInline style={{ marginBottom: '1rem' }} />
+                      )}
+                      <p style={{ marginBottom: '1rem', color: 'var(--pf-v5-global--Color--200)' }}>
+                        Generate a .ovpn client configuration file with an automatically signed client certificate.
+                        The generated file can be imported directly into any OpenVPN client (Tunnelblick, OpenVPN Connect, etc.).
+                      </p>
+                      <Button
+                        variant="primary"
+                        icon={<DownloadIcon />}
+                        onClick={() => {
+                          setClientConfigError(null);
+                          setClientConfigSuccess(null);
+                          setClientName('');
+                          setIsClientConfigModalOpen(true);
+                        }}
+                      >
+                        Generate Client Config
+                      </Button>
+                    </CardBody>
+                  </Card>
+                </GridItem>
+              )}
             </Grid>
           </>
         ) : (
@@ -280,6 +371,55 @@ const VPNGatewayDetailPage: React.FC = () => {
         onCancel={() => { setIsDeleteModalOpen(false); setActionError(null); }}
         isLoading={actionLoading}
       />
+
+      {/* Client Config Generation Modal */}
+      <Modal
+        title="Generate Client Configuration"
+        isOpen={isClientConfigModalOpen}
+        onClose={() => setIsClientConfigModalOpen(false)}
+        actions={[
+          <Button
+            key="generate"
+            variant="primary"
+            onClick={handleGenerateClientConfig}
+            isLoading={clientConfigLoading}
+            isDisabled={!isClientNameValid || clientConfigLoading}
+          >
+            Generate &amp; Download
+          </Button>,
+          <Button
+            key="cancel"
+            variant="link"
+            onClick={() => setIsClientConfigModalOpen(false)}
+            isDisabled={clientConfigLoading}
+          >
+            Cancel
+          </Button>,
+        ]}
+      >
+        {clientConfigError && (
+          <Alert variant="danger" title={clientConfigError} isInline style={{ marginBottom: '1rem' }} />
+        )}
+        <FormGroup label="Client Name" isRequired fieldId="client-name">
+          <TextInput
+            id="client-name"
+            value={clientName}
+            onChange={(_e, v) => setClientName(v)}
+            isRequired
+            placeholder="e.g. alice"
+            validated={clientName && !isClientNameValid ? 'error' : 'default'}
+          />
+          <FormHelperText>
+            <HelperText>
+              <HelperTextItem variant={clientName && !isClientNameValid ? 'error' : 'default'}>
+                {clientName && !isClientNameValid
+                  ? 'Must be alphanumeric with optional hyphens (e.g. "alice", "laptop-1")'
+                  : 'A unique name for this client. Used as the certificate CN and secret name suffix.'}
+              </HelperTextItem>
+            </HelperText>
+          </FormHelperText>
+        </FormGroup>
+      </Modal>
     </VPCNetworkingShell>
   );
 };

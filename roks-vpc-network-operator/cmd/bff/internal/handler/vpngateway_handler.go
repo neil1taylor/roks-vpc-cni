@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 )
 
 var vpcVPNGatewayGVR = schema.GroupVersionResource{
@@ -25,13 +26,15 @@ var vpcVPNGatewayGVR = schema.GroupVersionResource{
 type VPNGatewayHandler struct {
 	dynClient dynamic.Interface
 	rbac      *auth.RBACChecker
+	k8sClient kubernetes.Interface
 }
 
 // NewVPNGatewayHandler creates a new VPN gateway handler.
-func NewVPNGatewayHandler(dynClient dynamic.Interface, rbac *auth.RBACChecker) *VPNGatewayHandler {
+func NewVPNGatewayHandler(dynClient dynamic.Interface, rbac *auth.RBACChecker, k8sClient kubernetes.Interface) *VPNGatewayHandler {
 	return &VPNGatewayHandler{
 		dynClient: dynClient,
 		rbac:      rbac,
+		k8sClient: k8sClient,
 	}
 }
 
@@ -324,6 +327,71 @@ func buildVPNGatewayUnstructured(req model.VPNGatewayRequest) *unstructured.Unst
 			ipsec["image"] = req.IPsec.Image
 		}
 		spec["ipsec"] = ipsec
+	}
+
+	// OpenVPN config
+	if req.OpenVPN != nil {
+		ovpn := map[string]interface{}{
+			"ca":   map[string]interface{}{"name": req.OpenVPN.CASecret, "key": req.OpenVPN.CASecretKey},
+			"cert": map[string]interface{}{"name": req.OpenVPN.CertSecret, "key": req.OpenVPN.CertSecretKey},
+			"key":  map[string]interface{}{"name": req.OpenVPN.KeySecret, "key": req.OpenVPN.KeySecretKey},
+		}
+		if req.OpenVPN.DHSecret != "" {
+			ovpn["dh"] = map[string]interface{}{"name": req.OpenVPN.DHSecret, "key": req.OpenVPN.DHSecretKey}
+		}
+		if req.OpenVPN.TLSAuthSecret != "" {
+			ovpn["tlsAuth"] = map[string]interface{}{"name": req.OpenVPN.TLSAuthSecret, "key": req.OpenVPN.TLSAuthSecretKey}
+		}
+		if req.OpenVPN.ListenPort != nil {
+			ovpn["listenPort"] = int64(*req.OpenVPN.ListenPort)
+		}
+		if req.OpenVPN.Proto != "" {
+			ovpn["proto"] = req.OpenVPN.Proto
+		}
+		if req.OpenVPN.Cipher != "" {
+			ovpn["cipher"] = req.OpenVPN.Cipher
+		}
+		if req.OpenVPN.ClientSubnet != "" {
+			ovpn["clientSubnet"] = req.OpenVPN.ClientSubnet
+		}
+		if req.OpenVPN.Image != "" {
+			ovpn["image"] = req.OpenVPN.Image
+		}
+		spec["openVPN"] = ovpn
+	}
+
+	// Remote access
+	if req.RemoteAccess != nil {
+		ra := map[string]interface{}{
+			"enabled": req.RemoteAccess.Enabled,
+		}
+		if req.RemoteAccess.AddressPool != "" {
+			ra["addressPool"] = req.RemoteAccess.AddressPool
+		}
+		if len(req.RemoteAccess.DNSServers) > 0 {
+			dns := make([]interface{}, len(req.RemoteAccess.DNSServers))
+			for i, d := range req.RemoteAccess.DNSServers {
+				dns[i] = d
+			}
+			ra["dnsServers"] = dns
+		}
+		if req.RemoteAccess.MaxClients != nil {
+			ra["maxClients"] = int64(*req.RemoteAccess.MaxClients)
+		}
+		spec["remoteAccess"] = ra
+	}
+
+	// Local networks
+	if len(req.LocalNetworks) > 0 {
+		nets := make([]interface{}, 0, len(req.LocalNetworks))
+		for _, ln := range req.LocalNetworks {
+			entry := map[string]interface{}{}
+			if ln.CIDR != "" {
+				entry["cidr"] = ln.CIDR
+			}
+			nets = append(nets, entry)
+		}
+		spec["localNetworks"] = nets
 	}
 
 	// Tunnels

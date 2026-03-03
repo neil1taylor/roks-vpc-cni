@@ -550,7 +550,7 @@ func buildOpenVPNEnvVars(vpn *v1alpha1.VPCVPNGateway) []corev1.EnvVar {
 		mssClamp = "false"
 	}
 
-	return []corev1.EnvVar{
+	envs := []corev1.EnvVar{
 		{Name: "OVPN_LISTEN_PORT", Value: fmt.Sprintf("%d", listenPort)},
 		{Name: "OVPN_PROTO", Value: proto},
 		{Name: "OVPN_CIPHER", Value: cipher},
@@ -559,6 +559,30 @@ func buildOpenVPNEnvVars(vpn *v1alpha1.VPCVPNGateway) []corev1.EnvVar {
 		{Name: "TUNNEL_MTU", Value: fmt.Sprintf("%d", tunnelMTU)},
 		{Name: "MSS_CLAMP", Value: mssClamp},
 	}
+
+	// Local networks for push routes
+	if len(vpn.Spec.LocalNetworks) > 0 {
+		cidrs := make([]string, 0, len(vpn.Spec.LocalNetworks))
+		for _, ln := range vpn.Spec.LocalNetworks {
+			if ln.CIDR != "" {
+				cidrs = append(cidrs, ln.CIDR)
+			}
+		}
+		if len(cidrs) > 0 {
+			data, _ := json.Marshal(cidrs)
+			envs = append(envs, corev1.EnvVar{Name: "OVPN_LOCAL_NETWORKS", Value: string(data)})
+		}
+	}
+
+	// DNS servers for push
+	if vpn.Spec.RemoteAccess != nil && len(vpn.Spec.RemoteAccess.DNSServers) > 0 {
+		envs = append(envs, corev1.EnvVar{
+			Name:  "OVPN_DNS_SERVERS",
+			Value: strings.Join(vpn.Spec.RemoteAccess.DNSServers, ","),
+		})
+	}
+
+	return envs
 }
 
 // buildOpenVPNInitScript generates the bash init script for the OpenVPN pod.
@@ -649,6 +673,25 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("  NETMASK=$(python3 -c \"import ipaddress; print(ipaddress.IPv4Network('${cidr}', strict=False).netmask)\" 2>/dev/null || echo \"255.255.255.0\")\n")
 	sb.WriteString("  echo \"route ${NETWORK} ${NETMASK}\" >> /etc/openvpn/server.conf\n")
 	sb.WriteString("done\n\n")
+
+	// Push local network routes to clients
+	sb.WriteString("# Push local network routes to clients\n")
+	sb.WriteString("if [ -n \"${OVPN_LOCAL_NETWORKS}\" ] && [ \"${OVPN_LOCAL_NETWORKS}\" != \"[]\" ]; then\n")
+	sb.WriteString("  echo \"${OVPN_LOCAL_NETWORKS}\" | jq -r '.[]' | while read -r cidr; do\n")
+	sb.WriteString("    NETWORK=$(echo \"$cidr\" | cut -d/ -f1)\n")
+	sb.WriteString("    NETMASK=$(python3 -c \"import ipaddress; print(ipaddress.IPv4Network('${cidr}', strict=False).netmask)\" 2>/dev/null || echo \"255.255.255.0\")\n")
+	sb.WriteString("    echo \"push \\\"route ${NETWORK} ${NETMASK}\\\"\" >> /etc/openvpn/server.conf\n")
+	sb.WriteString("  done\n")
+	sb.WriteString("fi\n\n")
+
+	// Push DNS servers to clients
+	sb.WriteString("# Push DNS servers to clients\n")
+	sb.WriteString("if [ -n \"${OVPN_DNS_SERVERS}\" ]; then\n")
+	sb.WriteString("  IFS=',' read -ra DNS_LIST <<< \"${OVPN_DNS_SERVERS}\"\n")
+	sb.WriteString("  for dns in \"${DNS_LIST[@]}\"; do\n")
+	sb.WriteString("    echo \"push \\\"dhcp-option DNS ${dns}\\\"\" >> /etc/openvpn/server.conf\n")
+	sb.WriteString("  done\n")
+	sb.WriteString("fi\n\n")
 
 	// Expand env vars in server.conf using envsubst
 	sb.WriteString("# Expand environment variables in server.conf\n")

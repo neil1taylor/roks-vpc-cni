@@ -350,7 +350,7 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 	})
 
 	// VPCVPNGateway routes
-	vpnHandler := NewVPNGatewayHandler(dynClient, rbacChecker)
+	vpnHandler := NewVPNGatewayHandler(dynClient, rbacChecker, k8sClient)
 	mux.HandleFunc("/api/v1/vpn-gateways", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -362,6 +362,12 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 		}
 	})
 	mux.HandleFunc("/api/v1/vpn-gateways/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		// Check for /client-config suffix
+		if strings.HasSuffix(path, "/client-config") && r.Method == http.MethodPost {
+			authMiddleware(vpnHandler.GenerateClientConfig).ServeHTTP(w, r)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			authMiddleware(vpnHandler.GetVPNGateway).ServeHTTP(w, r)

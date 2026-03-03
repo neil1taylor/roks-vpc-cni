@@ -203,6 +203,21 @@ spec:
                       key:
                         type: string
                         minLength: 1
+                  caKey:
+                    description: >-
+                      CAKey is a reference to a Secret containing the CA private key.
+                      Required for automatic client certificate generation.
+                    type: object
+                    required:
+                    - name
+                    - key
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      key:
+                        type: string
+                        minLength: 1
                   dh:
                     description: DH is a reference to a Secret containing DH parameters. Optional.
                     type: object
