@@ -338,6 +338,11 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 	existing := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: router.Namespace}, existing)
 	if err == nil {
+		// Pod is being deleted — wait for it to fully terminate before creating a new one
+		if existing.DeletionTimestamp != nil {
+			logger.Info("Router pod is terminating, waiting", "pod", podName)
+			return false, nil
+		}
 		// Pod exists — check if it needs recreation
 		if r.podNeedsRecreation(existing, router, gw) {
 			logger.Info("Router pod spec changed, recreating", "pod", podName)
@@ -345,20 +350,24 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 				return false, fmt.Errorf("delete stale pod %s: %w", podName, delErr)
 			}
 			r.emitEvent(router, "Normal", "PodDeleted", "Deleted stale router pod %s for recreation", podName)
-			// Fall through to create
-		} else {
-			// Pod exists and is current — update PodIP in status
-			router.Status.PodIP = existing.Status.PodIP
-			// Check if it's running
-			isRunning := existing.Status.Phase == corev1.PodRunning
-			return isRunning, nil
+			return false, nil // wait for deletion to complete before creating
 		}
+		// Pod exists and is current — update PodIP in status
+		router.Status.PodIP = existing.Status.PodIP
+		// Check if it's running
+		isRunning := existing.Status.Phase == corev1.PodRunning
+		return isRunning, nil
 	} else if !errors.IsNotFound(err) {
 		return false, fmt.Errorf("get pod %s: %w", podName, err)
 	}
 
 	// Create the pod
-	pod := buildRouterPod(router, gw)
+	var pod *corev1.Pod
+	if router.Spec.Mode == "fast-path" {
+		pod = buildFastpathRouterPod(router, gw)
+	} else {
+		pod = buildRouterPod(router, gw)
+	}
 	if err := r.Create(ctx, pod); err != nil {
 		if errors.IsAlreadyExists(err) {
 			return false, nil // race — will reconcile again
@@ -376,7 +385,12 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 // would be generated for the current router/gateway spec. Compares Multus
 // annotations, container count, images, and env vars for all containers.
 func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) bool {
-	desired := buildRouterPod(router, gw)
+	var desired *corev1.Pod
+	if router.Spec.Mode == "fast-path" {
+		desired = buildFastpathRouterPod(router, gw)
+	} else {
+		desired = buildRouterPod(router, gw)
+	}
 
 	// Compare Multus annotations
 	existingMultus := existing.Annotations["k8s.v1.cni.cncf.io/networks"]
@@ -413,7 +427,10 @@ func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.V
 	if !reflect.DeepEqual(existing.Spec.NodeSelector, desired.Spec.NodeSelector) {
 		return true
 	}
-	if !reflect.DeepEqual(existing.Spec.Tolerations, desired.Spec.Tolerations) {
+	// Only compare tolerations when explicitly set on the router spec.
+	// K8s injects default tolerations (not-ready, unreachable) onto all pods,
+	// so comparing a nil desired list against injected defaults would always drift.
+	if desired.Spec.Tolerations != nil && !reflect.DeepEqual(existing.Spec.Tolerations, desired.Spec.Tolerations) {
 		return true
 	}
 	if !equalStringPtr(existing.Spec.RuntimeClassName, desired.Spec.RuntimeClassName) {
