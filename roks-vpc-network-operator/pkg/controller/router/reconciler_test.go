@@ -1459,6 +1459,159 @@ func TestPodNeedsRecreation_NoPodSpecChanges(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Fast-Path Mode Reconciler Tests
+// ---------------------------------------------------------------------------
+
+func TestReconcileNormal_FastpathMode(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone: "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{
+				Network: "uplink-net",
+			},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "router-fp", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test",
+			Mode:    "fast-path",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, router).
+		WithStatusSubresource(gw, router).
+		Build()
+
+	r := &Reconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "router-fp", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	// Verify status
+	updated := &v1alpha1.VPCRouter{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "router-fp", Namespace: "default"}, updated); err != nil {
+		t.Fatalf("Failed to get updated router: %v", err)
+	}
+
+	// Mode should be "fast-path"
+	if updated.Status.Mode != "fast-path" {
+		t.Errorf("expected Status.Mode = 'fast-path', got %q", updated.Status.Mode)
+	}
+
+	// XDPEnabled should be true
+	if !updated.Status.XDPEnabled {
+		t.Error("expected Status.XDPEnabled = true")
+	}
+
+	// Should have XDPReady condition
+	foundXDP := false
+	for _, c := range updated.Status.Conditions {
+		if c.Type == "XDPReady" {
+			foundXDP = true
+			// Pod not running yet, so condition should be False
+			if c.Status != metav1.ConditionFalse {
+				t.Errorf("XDPReady condition should be False (pod not running), got %s", c.Status)
+			}
+		}
+	}
+	if !foundXDP {
+		t.Error("expected XDPReady condition to be set")
+	}
+}
+
+func TestReconcileNormal_StandardModeNoXDP(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test2", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone: "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{
+				Network: "uplink-net",
+			},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase:      "Ready",
+			MACAddress: "fa:16:3e:aa:bb:cc",
+			ReservedIP: "10.240.1.5",
+		},
+	}
+
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "router-std", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway: "gw-test2",
+			Mode:    "standard",
+			Networks: []v1alpha1.RouterNetwork{
+				{Name: "l2-app", Address: "10.100.0.1/24"},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, router).
+		WithStatusSubresource(gw, router).
+		Build()
+
+	r := &Reconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "router-std", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	updated := &v1alpha1.VPCRouter{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "router-std", Namespace: "default"}, updated); err != nil {
+		t.Fatalf("Failed to get updated router: %v", err)
+	}
+
+	// Mode should be "standard"
+	if updated.Status.Mode != "standard" {
+		t.Errorf("expected Status.Mode = 'standard', got %q", updated.Status.Mode)
+	}
+
+	// XDPEnabled should be false
+	if updated.Status.XDPEnabled {
+		t.Error("expected Status.XDPEnabled = false for standard mode")
+	}
+
+	// Should NOT have XDPReady condition
+	for _, c := range updated.Status.Conditions {
+		if c.Type == "XDPReady" {
+			t.Error("standard mode should NOT have XDPReady condition")
+		}
+	}
+}
+
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
 }

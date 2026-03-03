@@ -15,6 +15,7 @@ import {
   Text,
   TextVariants,
   SearchInput,
+  Label,
 } from '@patternfly/react-core';
 import { CubesIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
@@ -118,6 +119,7 @@ const RoutersListPage: React.FC = () => {
                 <Th>Gateway</Th>
                 <Th>Networks</Th>
                 <Th>Transit IP</Th>
+                <Th>Mode</Th>
                 <Th>Functions</Th>
                 <Th>Status</Th>
                 <Th>Age</Th>
@@ -139,6 +141,16 @@ const RoutersListPage: React.FC = () => {
                   </Td>
                   <Td>{router.networks?.length ?? 0}</Td>
                   <Td>{router.transitIP || '-'}</Td>
+                  <Td>
+                    {router.mode === 'fast-path' ? (
+                      <>
+                        <Label color="purple" isCompact>Fast-path</Label>
+                        {router.xdpEnabled && <Label color="green" isCompact style={{ marginLeft: 4 }}>XDP</Label>}
+                      </>
+                    ) : (
+                      <Label color="blue" isCompact>Standard</Label>
+                    )}
+                  </Td>
                   <Td>{router.functions && router.functions.length > 0 ? router.functions.join(', ') : '-'}</Td>
                   <Td><StatusBadge status={router.syncStatus} /></Td>
                   <Td>{formatRelativeTime(router.createdAt)}</Td>

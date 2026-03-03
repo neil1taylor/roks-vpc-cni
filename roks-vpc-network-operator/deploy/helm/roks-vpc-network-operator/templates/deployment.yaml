@@ -49,6 +49,8 @@ spec:
           value: "unmanaged"  # Always VPC API until ROKS platform API ships
         - name: ROUTER_POD_IMAGE
           value: {{ ((.Values.routerPod).image) | default "quay.io/fedora/fedora:40" | quote }}
+        - name: ROUTER_POD_FASTPATH_IMAGE
+          value: {{ ((.Values.routerPod).fastpathImage) | default "de.icr.io/roks/vpc-router-fastpath:latest" | quote }}
         - name: METRICS_EXPORTER_IMAGE
           value: {{ .Values.metricsExporter.image | quote }}
         - name: NNCP_ENABLED

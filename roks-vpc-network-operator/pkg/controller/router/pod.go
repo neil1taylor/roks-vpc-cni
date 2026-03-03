@@ -18,6 +18,9 @@ import (
 const (
 	defaultRouterImage = "quay.io/fedora/fedora:40"
 	routerPodImageEnv  = "ROUTER_POD_IMAGE"
+
+	defaultFastpathImage    = "de.icr.io/roks/vpc-router-fastpath:latest"
+	routerPodFastpathImgEnv = "ROUTER_POD_FASTPATH_IMAGE"
 )
 
 // multusNetworkAttachment represents one entry in the Multus
@@ -48,6 +51,11 @@ func routerPodName(router *v1alpha1.VPCRouter) string {
 //  5. Applies firewall rules (if any)
 //  6. Starts dnsmasq for DHCP (if enabled)
 func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) *corev1.Pod {
+	// Dispatch to fast-path mode if configured
+	if router.Spec.Mode == "fast-path" {
+		return buildFastpathRouterPod(router, gw)
+	}
+
 	podName := routerPodName(router)
 
 	// Build Multus network attachments
@@ -635,4 +643,13 @@ func broadcastIP(ipNet *net.IPNet) net.IP {
 		ip[i] = ipNet.IP[i] | ^ipNet.Mask[i]
 	}
 	return ip
+}
+
+// resolveFastpathImage determines the fast-path container image.
+// Priority: ROUTER_POD_FASTPATH_IMAGE env > default
+func resolveFastpathImage() string {
+	if img := os.Getenv(routerPodFastpathImgEnv); img != "" {
+		return img
+	}
+	return defaultFastpathImage
 }

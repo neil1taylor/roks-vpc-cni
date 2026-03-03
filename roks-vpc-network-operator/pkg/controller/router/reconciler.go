@@ -281,6 +281,33 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		meta.RemoveStatusCondition(&router.Status.Conditions, "MetricsReady")
 	}
 
+	// Mode and XDP status
+	mode := router.Spec.Mode
+	if mode == "" {
+		mode = "standard"
+	}
+	router.Status.Mode = mode
+	router.Status.XDPEnabled = mode == "fast-path"
+	if mode == "fast-path" {
+		xdpCondStatus := metav1.ConditionTrue
+		xdpCondReason := "XDPConfigured"
+		xdpCondMessage := "XDP/eBPF fast-path forwarding is configured"
+		if !podReady {
+			xdpCondStatus = metav1.ConditionFalse
+			xdpCondReason = "PodNotReady"
+			xdpCondMessage = "XDP/eBPF fast-path forwarding waiting for pod"
+		}
+		meta.SetStatusCondition(&router.Status.Conditions, metav1.Condition{
+			Type:               "XDPReady",
+			Status:             xdpCondStatus,
+			Reason:             xdpCondReason,
+			Message:            xdpCondMessage,
+			LastTransitionTime: now,
+		})
+	} else {
+		meta.RemoveStatusCondition(&router.Status.Conditions, "XDPReady")
+	}
+
 	if err := r.Status().Update(ctx, router); err != nil {
 		logger.Error(err, "Failed to update VPCRouter status")
 		return ctrl.Result{}, err

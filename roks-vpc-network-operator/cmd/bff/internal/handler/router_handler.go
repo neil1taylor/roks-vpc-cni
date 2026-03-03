@@ -487,6 +487,8 @@ func unstructuredToRouter(obj *unstructured.Unstructured) model.RouterResponse {
 	rt.SyncStatus, _, _ = unstructured.NestedString(obj.Object, "status", "syncStatus")
 	rt.IDSMode, _, _ = unstructured.NestedString(obj.Object, "status", "idsMode")
 	rt.MetricsEnabled, _, _ = unstructured.NestedBool(obj.Object, "status", "metricsEnabled")
+	rt.Mode, _, _ = unstructured.NestedString(obj.Object, "status", "mode")
+	rt.XDPEnabled, _, _ = unstructured.NestedBool(obj.Object, "status", "xdpEnabled")
 
 	// Extract IDS config from spec
 	rt.IDS = extractIDS(obj)
@@ -753,6 +755,10 @@ func buildRouterUnstructured(req model.RouterRequest) *unstructured.Unstructured
 
 	if req.IDS != nil {
 		spec["ids"] = buildIDSMap(req.IDS)
+	}
+
+	if req.Mode != "" {
+		spec["mode"] = req.Mode
 	}
 
 	obj.Object["spec"] = spec

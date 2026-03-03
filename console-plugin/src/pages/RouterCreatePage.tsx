@@ -61,6 +61,7 @@ const RouterCreatePage: React.FC = () => {
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [namespace, setNamespace] = useState('default');
+  const [mode, setMode] = useState('standard');
   const [gateway, setGateway] = useState('');
   const [networks, setNetworks] = useState<NetworkEntry[]>([emptyNetwork()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -197,6 +198,7 @@ const RouterCreatePage: React.FC = () => {
     const req: CreateRouterRequest = {
       name: name.trim(),
       namespace: namespace.trim() || undefined,
+      mode: mode !== 'standard' ? mode : undefined,
       gateway: gateway.trim(),
       networks: validNetworks,
     };
@@ -305,6 +307,26 @@ const RouterCreatePage: React.FC = () => {
                       {namespaceFromGateway
                         ? `Auto-set to match the selected gateway's namespace (${selectedGateway?.namespace})`
                         : 'Namespace for the VPCRouter resource'}
+                    </HelperTextItem>
+                  </HelperText>
+                </FormHelperText>
+              </FormGroup>
+
+              <FormGroup label="Mode" fieldId="rt-mode">
+                <FormSelect
+                  id="rt-mode"
+                  value={mode}
+                  onChange={(_e, val) => setMode(val)}
+                >
+                  <FormSelectOption value="standard" label="Standard" />
+                  <FormSelectOption value="fast-path" label="Fast-path (Go + XDP)" />
+                </FormSelect>
+                <FormHelperText>
+                  <HelperText>
+                    <HelperTextItem>
+                      {mode === 'fast-path'
+                        ? 'Uses a purpose-built Go binary with XDP/eBPF acceleration. ~2s startup, ~50MB image.'
+                        : 'Uses a Fedora container with bash init script. Full compatibility, ~30s startup.'}
                     </HelperTextItem>
                   </HelperText>
                 </FormHelperText>

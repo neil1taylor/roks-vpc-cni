@@ -285,6 +285,14 @@ type VPCRouterSpec struct {
 	// Pod defines pod-level overrides for the router pod.
 	// +optional
 	Pod *RouterPodSpec `json:"pod,omitempty"`
+
+	// Mode selects the router runtime mode.
+	// "standard" uses a Fedora container with bash init script.
+	// "fast-path" uses a purpose-built Go binary with optional XDP/eBPF acceleration.
+	// +kubebuilder:validation:Enum=standard;fast-path
+	// +kubebuilder:default=standard
+	// +optional
+	Mode string `json:"mode,omitempty"`
 }
 
 // VPCRouterStatus defines the observed state of a VPCRouter.
@@ -304,6 +312,12 @@ type VPCRouterStatus struct {
 
 	// MetricsEnabled reports whether the metrics exporter sidecar is active.
 	MetricsEnabled bool `json:"metricsEnabled,omitempty"`
+
+	// Mode reports the active router mode ("standard" or "fast-path").
+	Mode string `json:"mode,omitempty"`
+
+	// XDPEnabled reports whether XDP/eBPF fast-path forwarding is active.
+	XDPEnabled bool `json:"xdpEnabled,omitempty"`
 
 	// Networks reports the status of each attached network.
 	// +optional
@@ -334,6 +348,7 @@ type VPCRouterStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Sync",type=string,JSONPath=`.status.syncStatus`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`,priority=1
 // +kubebuilder:printcolumn:name="IDS",type=string,JSONPath=`.status.idsMode`,priority=1
 
 // VPCRouter is the Schema for the vpcrouters API.

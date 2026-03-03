@@ -40,6 +40,10 @@ spec:
       type: string
       jsonPath: .status.idsMode
       priority: 1
+    - name: Mode
+      type: string
+      jsonPath: .spec.mode
+      priority: 1
     schema:
       openAPIV3Schema:
         description: VPCRouter is the Schema for the vpcrouters API.
@@ -407,6 +411,13 @@ spec:
                   priorityClassName:
                     description: PriorityClassName specifies the priority class for pod scheduling priority.
                     type: string
+              mode:
+                description: "Mode selects the router runtime: standard (bash init) or fast-path (Go binary + XDP)."
+                type: string
+                enum:
+                - standard
+                - fast-path
+                default: standard
           status:
             description: VPCRouterStatus defines the observed state of a VPCRouter.
             type: object
@@ -427,6 +438,12 @@ spec:
                 type: string
               metricsEnabled:
                 description: MetricsEnabled reports whether the metrics exporter sidecar is active.
+                type: boolean
+              mode:
+                description: "Mode reports the active router mode."
+                type: string
+              xdpEnabled:
+                description: "XDPEnabled reports whether XDP fast-path forwarding is active."
                 type: boolean
               transitIP:
                 description: TransitIP is the router's IP address on the transit network.

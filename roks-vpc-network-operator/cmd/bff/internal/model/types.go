@@ -460,6 +460,8 @@ type RouterResponse struct {
 	IDSMode          string              `json:"idsMode,omitempty"`
 	IDS              *RouterIDSResp      `json:"ids,omitempty"`
 	MetricsEnabled   bool                `json:"metricsEnabled"`
+	Mode             string              `json:"mode,omitempty"`
+	XDPEnabled       bool                `json:"xdpEnabled"`
 	DHCP             *RouterDHCPResp     `json:"dhcp,omitempty"`
 	SyncStatus       string              `json:"syncStatus"`
 	CreatedAt        string              `json:"createdAt,omitempty"`
@@ -488,6 +490,7 @@ type RouterRequest struct {
 	Networks  []RouterNetworkReq `json:"networks,omitempty"`
 	DHCP      *RouterDHCPReq     `json:"dhcp,omitempty"`
 	IDS       *RouterIDSReq      `json:"ids,omitempty"`
+	Mode      string             `json:"mode,omitempty"`
 }
 
 // ── Router DHCP Types ──

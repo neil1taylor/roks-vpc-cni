@@ -64,7 +64,7 @@ Twelve reconciliation loops + one mutating webhook + orphan GC:
 | VLANAttachment Reconciler | `pkg/controller/vlanattachment/` | `VLANAttachment` CRD | Dual-mode like VNI |
 | FloatingIP Reconciler | `pkg/controller/floatingip/` | `FloatingIP` CRD | Full FIP lifecycle via VPC API |
 | VPCGateway Reconciler | `pkg/controller/gateway/` | `VPCGateway` CRD | VPC uplink VNI, FIP, PAR, VPC routes |
-| VPCRouter Reconciler | `pkg/controller/router/` | `VPCRouter` CRD | Router pod with IP forwarding, NAT, DHCP, Suricata IDS/IPS sidecar |
+| VPCRouter Reconciler | `pkg/controller/router/` | `VPCRouter` CRD | Dual-mode router pod (standard bash/fast-path Go+XDP), NAT, DHCP, Suricata IDS/IPS sidecar |
 | VPCL2Bridge Reconciler | `pkg/controller/l2bridge/` | `VPCL2Bridge` CRD | L2 bridge pod lifecycle for NSX-T/OVN tunneling |
 | VPCVPNGateway Reconciler | `pkg/controller/vpngateway/` | `VPCVPNGateway` CRD | VPN pod lifecycle (WireGuard/IPsec), tunnel management |
 | VM Webhook | `pkg/webhook/` | `VirtualMachine` CREATE | Creates VNI, injects MAC+IP into VM spec |

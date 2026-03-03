@@ -567,6 +567,8 @@ export interface Router {
   idsMode?: string;
   ids?: RouterIDS;
   metricsEnabled?: boolean;
+  mode?: string;
+  xdpEnabled?: boolean;
   dhcp?: RouterDHCPConfig;
   syncStatus: string;
   createdAt?: string;
@@ -592,6 +594,7 @@ export interface CreateRouterNetworkDHCP {
 export interface CreateRouterRequest {
   name: string;
   namespace?: string;
+  mode?: string;
   gateway: string;
   networks?: { name: string; address: string; dhcp?: CreateRouterNetworkDHCP }[];
   dhcp?: {

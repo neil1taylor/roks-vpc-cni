@@ -66,6 +66,7 @@ nncp:
 # Router pod image
 routerPod:
   image: "quay.io/fedora/fedora:40"
+  fastpathImage: "de.icr.io/roks/vpc-router-fastpath:latest"
 
 # Metrics exporter sidecar for router pods
 metricsExporter:

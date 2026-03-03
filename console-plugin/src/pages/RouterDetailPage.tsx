@@ -177,7 +177,7 @@ const RouterDetailPage: React.FC = () => {
 // ── Overview Tab ──
 
 interface OverviewTabProps {
-  router: { name: string; namespace: string; gateway: string; phase: string; transitIP?: string; advertisedRoutes?: string[]; idsMode?: string; ids?: RouterIDS; metricsEnabled?: boolean; syncStatus: string; createdAt?: string; dhcp?: { enabled: boolean; leaseTime?: string; dns?: { nameservers?: string[]; searchDomains?: string[]; localDomain?: string }; options?: { mtu?: number; ntpServers?: string[] } } };
+  router: { name: string; namespace: string; gateway: string; phase: string; transitIP?: string; advertisedRoutes?: string[]; idsMode?: string; ids?: RouterIDS; metricsEnabled?: boolean; mode?: string; xdpEnabled?: boolean; syncStatus: string; createdAt?: string; dhcp?: { enabled: boolean; leaseTime?: string; dns?: { nameservers?: string[]; searchDomains?: string[]; localDomain?: string }; options?: { mtu?: number; ntpServers?: string[] } } };
   gatewayDetail: { zone: string; phase: string } | null;
   hasDHCP: boolean;
   hasMetrics: boolean;
@@ -237,6 +237,15 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ router, gatewayDetail, hasDHC
             <DescriptionListGroup>
               <DescriptionListTerm>Transit IP</DescriptionListTerm>
               <DescriptionListDescription>{router.transitIP || '-'}</DescriptionListDescription>
+            </DescriptionListGroup>
+            <DescriptionListGroup>
+              <DescriptionListTerm>Mode</DescriptionListTerm>
+              <DescriptionListDescription>
+                <Label color={router.mode === 'fast-path' ? 'purple' : 'blue'} isCompact>
+                  {router.mode === 'fast-path' ? 'Fast-path' : 'Standard'}
+                </Label>
+                {router.xdpEnabled && <Label color="green" isCompact style={{ marginLeft: 4 }}>XDP</Label>}
+              </DescriptionListDescription>
             </DescriptionListGroup>
             <DescriptionListGroup>
               <DescriptionListTerm>Advertised Routes</DescriptionListTerm>
