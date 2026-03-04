@@ -29,6 +29,8 @@ import {
   DHCPPoolMetrics,
   NFTRuleMetrics,
   DHCPLease,
+  AlertTimelineEntry,
+  SubnetMetrics,
   ApiResponse,
   ApiError,
 } from './types';
@@ -185,6 +187,17 @@ export function useSubnetReservedIPs(subnetId: string): {
     [subnetId],
   );
   return { reservedIPs, loading, error };
+}
+
+// Subnet Metrics Hook (polling)
+const SUBNET_METRICS_POLL_INTERVAL = 30000;
+
+export function useSubnetMetrics(name: string, namespace?: string, range = '1h') {
+  return useBFFDataPolling<SubnetMetrics>(
+    () => name ? apiClient.getSubnetMetrics(name, namespace, range) : Promise.resolve({ data: undefined }),
+    SUBNET_METRICS_POLL_INTERVAL,
+    [name, namespace, range],
+  );
 }
 
 // Virtual Network Interface Hooks
@@ -557,6 +570,17 @@ export function useDNSPolicy(name: string, namespace?: string) {
     [name, namespace],
   );
   return { dnsPolicy, loading, error };
+}
+
+// Alert Timeline Hook (auto-refresh every 30s)
+const ALERT_POLL_INTERVAL = 30000;
+
+export function useAlertTimeline(range?: string) {
+  return useBFFDataPolling<AlertTimelineEntry[]>(
+    () => apiClient.getAlertTimeline(range),
+    ALERT_POLL_INTERVAL,
+    [range],
+  );
 }
 
 // Kubernetes CR Hooks

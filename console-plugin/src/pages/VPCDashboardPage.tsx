@@ -34,6 +34,7 @@ import {
   useDNSPolicies,
 } from '../api/hooks';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
+import AlertTimelineCard from '../components/AlertTimelineCard';
 import { Router } from '../api/types';
 
 /**
@@ -348,6 +349,17 @@ const VPCDashboardPage: React.FC = () => {
           </Grid>
         </PageSection>
       )}
+
+      <PageSection>
+        <Title headingLevel="h2" size="lg" style={{ marginBottom: '16px' }}>
+          Recent Alerts
+        </Title>
+        <Grid hasGutter>
+          <GridItem span={12}>
+            <AlertTimelineCard />
+          </GridItem>
+        </Grid>
+      </PageSection>
     </VPCNetworkingShell>
   );
 };
