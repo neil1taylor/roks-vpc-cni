@@ -96,10 +96,13 @@ func loadFromSecret(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to get secret %s/%s: %w", namespace, secretName, err)
 	}
 
-	// Extract API key from secret data
+	// Extract API key from secret data (try common key names)
 	apiKeyData, exists := secret.Data["apikey"]
 	if !exists {
-		return "", fmt.Errorf("apikey not found in secret %s/%s", namespace, secretName)
+		apiKeyData, exists = secret.Data["IBMCLOUD_API_KEY"]
+	}
+	if !exists {
+		return "", fmt.Errorf("apikey/IBMCLOUD_API_KEY not found in secret %s/%s", namespace, secretName)
 	}
 
 	apiKey := strings.TrimSpace(string(apiKeyData))

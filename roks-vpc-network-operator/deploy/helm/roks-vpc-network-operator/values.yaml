@@ -84,7 +84,7 @@ bff:
     pullPolicy: Always
   replicas: 2
   port: 8443
-  apiKeySecretName: "ibm-vpc-api-key"
+  apiKeySecretName: "roks-vpc-network-operator-credentials"
   csiMountPath: ""  # Set to mount path (e.g. /var/run/ibm-vpc-credentials) to enable CSI credential loading
   logLevel: "info"
   resources:

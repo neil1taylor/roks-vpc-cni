@@ -58,6 +58,8 @@ spec:
           value: "{{ .Values.vpc.region }}"
         - name: VPC_ID
           value: "{{ .Values.vpc.id }}"
+        - name: VPC_RESOURCE_GROUP_ID
+          value: "{{ .Values.vpc.resourceGroupID }}"
         - name: CLUSTER_ID
           value: "{{ .Values.cluster.id }}"
         - name: BFF_SECRET_NAME

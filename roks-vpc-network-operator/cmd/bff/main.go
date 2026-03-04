@@ -40,8 +40,9 @@ func main() {
 
 	// Create VPC client
 	vpcClient, err := vpc.NewExtendedClient(vpc.ClientConfig{
-		APIKey: apiKey,
-		Region: os.Getenv("VPC_REGION"),
+		APIKey:          apiKey,
+		Region:          os.Getenv("VPC_REGION"),
+		ResourceGroupID: os.Getenv("VPC_RESOURCE_GROUP_ID"),
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to create VPC client", "error", err)

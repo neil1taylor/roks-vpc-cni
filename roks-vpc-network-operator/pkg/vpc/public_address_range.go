@@ -96,7 +96,9 @@ func (c *vpcClient) CreatePublicAddressRange(ctx context.Context, opts CreatePub
 			VPC:  &idRef{ID: opts.VPCID},
 			Zone: &nameRef{Name: opts.Zone},
 		},
-		ResourceGroup: &idRef{ID: c.resourceGroupID},
+	}
+	if c.resourceGroupID != "" {
+		body.ResourceGroup = &idRef{ID: c.resourceGroupID}
 	}
 
 	resp, err := c.doREST(ctx, http.MethodPost, "/public_address_ranges", body)
