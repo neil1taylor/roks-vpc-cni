@@ -30,6 +30,7 @@ type nameRef struct {
 
 type parResponse struct {
 	ID             string  `json:"id"`
+	CRN            string  `json:"crn"`
 	Name           string  `json:"name"`
 	CIDR           string  `json:"cidr"`
 	LifecycleState string  `json:"lifecycle_state"`
@@ -52,6 +53,7 @@ type parListResponse struct {
 func parFromResponse(r *parResponse) PublicAddressRange {
 	par := PublicAddressRange{
 		ID:             r.ID,
+		CRN:            r.CRN,
 		Name:           r.Name,
 		CIDR:           r.CIDR,
 		LifecycleState: r.LifecycleState,
@@ -91,6 +93,12 @@ func (c *vpcClient) CreatePublicAddressRange(ctx context.Context, opts CreatePub
 	}
 
 	par := parFromResponse(&result)
+
+	// Tag for traceability and orphan GC
+	if par.CRN != "" && (opts.ClusterID != "" || opts.OwnerKind != "") {
+		c.tagResource(ctx, par.CRN, BuildTags(opts.ClusterID, "par", opts.OwnerKind, opts.OwnerName))
+	}
+
 	return &par, nil
 }
 

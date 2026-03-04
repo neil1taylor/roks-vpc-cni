@@ -55,18 +55,22 @@ func (c *vpcClient) CreateVNI(ctx context.Context, opts CreateVNIOptions) (*VNI,
 	}
 
 	// Tag for idempotency and orphan GC
-	if opts.ClusterID != "" || opts.Namespace != "" || opts.VMName != "" {
-		var tagNames []string
-		if opts.ClusterID != "" {
-			tagNames = append(tagNames, fmt.Sprintf("roks-cluster:%s", opts.ClusterID))
-		}
+	ownerKind := opts.OwnerKind
+	ownerName := opts.OwnerName
+	if ownerKind == "" && opts.VMName != "" {
+		ownerKind = "vm"
+		ownerName = opts.VMName
+	}
+	if opts.ClusterID != "" || ownerKind != "" {
+		tags := BuildTags(opts.ClusterID, "vni", ownerKind, ownerName)
+		// Preserve legacy namespace/vm tags for orphan GC backward compatibility
 		if opts.Namespace != "" {
-			tagNames = append(tagNames, fmt.Sprintf("roks-ns:%s", opts.Namespace))
+			tags = append(tags, fmt.Sprintf("roks-ns:%s", opts.Namespace))
 		}
 		if opts.VMName != "" {
-			tagNames = append(tagNames, fmt.Sprintf("roks-vm:%s", opts.VMName))
+			tags = append(tags, fmt.Sprintf("roks-vm:%s", opts.VMName))
 		}
-		c.tagResource(ctx, derefString(result.CRN), tagNames)
+		c.tagResource(ctx, derefString(result.CRN), tags)
 	}
 
 	vni := vniFromSDK(result)

@@ -184,7 +184,7 @@ oc apply -f demo-vm-localnet.yaml
 
 **What the webhook does:**
 1. Looks up `demo-localnet` CUDN for VPC subnet ID and security groups
-2. Creates a VNI with `allow_ip_spoofing: true`, `enable_infrastructure_nat: false`, `auto_delete: false`
+2. Creates a per-VM VLAN attachment with inline VNI (`allow_ip_spoofing: true`, `enable_infrastructure_nat: true`, `auto_delete: true`)
 3. Creates a floating IP and binds it to the VNI
 4. Injects the MAC address into `interfaces[0].macAddress`
 5. Injects cloud-init network-config with the reserved IP
@@ -244,11 +244,15 @@ A `VPCGateway` provides a shared uplink to the VPC fabric. Unlike per-VM VNIs, a
                      +--------------------------------------+
 ```
 
+> **Progressive examples:** Sections 3.1–3.7 show gateway features incrementally. You do not need to create every example gateway. **For the rest of this tutorial (Parts 4–10), we use `demo-gw` from Section 3.1.** Create only `demo-gw` and skip the other variants unless you want to experiment.
+
 ### 3.1 Basic gateway
 
 A minimal gateway needs a zone, an uplink network (a LocalNet CUDN), and a transit address.
 
 > **Multus namespace isolation:** If your cluster has `namespaceIsolation: true` in the Multus config (common on ROKS), the router pod in `roks-vpc-network-operator` can only reference NADs from its own namespace or Multus global namespaces. Use `namespace: default` (a global namespace) for the uplink and network references. Ensure your CUDNs include `default` in their `namespaceSelector`.
+
+This gateway includes a floating IP, a VPC route for the L2 network, and SNAT — everything needed for Parts 4–5.
 
 ```yaml
 # demo-gateway.yaml
@@ -268,6 +272,17 @@ spec:
 
   transit:
     address: "172.16.100.1/24"    # IP on the transit network (inter-router link)
+
+  floatingIP:
+    enabled: true                 # Public IP for outbound SNAT
+
+  vpcRoutes:
+  - destination: "10.100.0.0/24"  # Route L2 traffic back to this gateway
+
+  nat:
+    snat:
+    - source: "10.100.0.0/24"    # SNAT L2 traffic for outbound internet
+      priority: 100
 ```
 
 ```bash
@@ -277,16 +292,18 @@ oc apply -f demo-gateway.yaml
 **What the reconciler does:**
 1. Adds the `vpc.roks.ibm.com/gateway-cleanup` finalizer
 2. Picks a bare metal server and creates a VLAN attachment with an inline VNI
-3. Stores the VNI ID, MAC address, reserved IP, attachment ID in status
-4. Sets phase to `Ready`
+3. Allocates a floating IP and binds it to the VNI
+4. Creates VPC routes (`action: deliver` to the VNI's reserved IP)
+5. Stores the VNI ID, MAC address, reserved IP, FIP, attachment ID in status
+6. Sets phase to `Ready`
 
 ```bash
 # Check gateway status
 oc get vpcgateway demo-gw -n roks-vpc-network-operator
 
 # Example output:
-# NAME      ZONE      PHASE   VNI IP           FIP   SYNC     AGE
-# demo-gw   eu-de-1   Ready   172.16.100.34          Synced   30s
+# NAME      ZONE      PHASE   VNI IP           FIP              SYNC     AGE
+# demo-gw   eu-de-1   Ready   10.240.64.8      158.177.12.94    Synced   30s
 
 # Detailed status
 oc get vpcgateway demo-gw -n roks-vpc-network-operator -o yaml

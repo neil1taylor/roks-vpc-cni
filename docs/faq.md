@@ -57,7 +57,7 @@ Yes. If you pre-create the VPC subnet, you can set the `vpc.roks.ibm.com/subnet-
 
 ### Can I run the operator in multiple clusters sharing the same VPC?
 
-Yes. Each operator instance uses a unique `cluster.id` for tagging VPC resources. Resources created by different clusters are distinguished by their tags and do not interfere with each other.
+Yes. Each operator instance uses a unique `cluster.id` for tagging VPC resources. All VPC resources are tagged with `roks-operator:true` and `roks-cluster:<cluster-id>`, plus `roks-resource-type:<type>` and `roks-owner:<kind>/<name>`. Resources created by different clusters are distinguished by their cluster tag and do not interfere with each other. You can filter resources in the IBM Cloud console by the `roks-cluster:<cluster-id>` tag to see all resources for a specific cluster.
 
 ### How many VMs and networks can the operator handle?
 

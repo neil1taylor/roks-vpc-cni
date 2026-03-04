@@ -71,6 +71,7 @@ func (c *vpcClient) CreateVPCAddressPrefix(ctx context.Context, opts CreateAddre
 		return nil, fmt.Errorf("VPC API CreateVPCAddressPrefix(%s, %s): %w", opts.VPCID, opts.CIDR, err)
 	}
 
+	// Note: VPC address prefixes don't expose CRN, so tagging is not possible.
 	return &AddressPrefix{
 		ID:        derefString(result.ID),
 		Name:      derefString(result.Name),

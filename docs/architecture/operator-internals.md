@@ -402,6 +402,25 @@ The grace period prevents deleting resources that are still being set up (e.g., 
 
 A channel-based rate limiter allows a maximum of 10 concurrent VPC API calls. This prevents overwhelming the VPC API during bulk operations (e.g., Node Reconciler creating VLAN attachments on all nodes).
 
+### Resource Tagging via Global Tagging API
+
+All operator-created VPC resources are tagged via the IBM Cloud Global Tagging API (`github.com/IBM/platform-services-go-sdk/globaltaggingv1`). The `vpcClient` initializes a `GlobalTaggingV1` client alongside the VPC SDK client, using the same IAM API key.
+
+After each `Create*` call, `tagResource()` attaches standardized user tags:
+
+| Tag | Purpose |
+|-----|---------|
+| `roks-operator:true` | Marks resource as operator-managed |
+| `roks-cluster:<clusterID>` | Identifies the owning cluster (used by orphan GC) |
+| `roks-resource-type:<type>` | Resource type: `subnet`, `vni`, `fip`, `par`, `routing-table` |
+| `roks-owner:<kind>/<name>` | K8s object owner (e.g., `gateway/my-gw`, `cudn/localnet-1`) |
+
+**Design decisions:**
+- **Best-effort** — tagging failures are logged but never block resource creation
+- **Separate API** — uses Global Tagging API (not VPC API), so does not consume VPC rate limit tokens
+- **CRN guarding** — resources without CRN (routes, address prefixes) are skipped
+- **VLAN attachments** — identified by naming convention (`roks-{clusterID}-{networkName}-vlan{vlanID}`) instead of tags, as they are BM sub-resources without standalone CRNs
+
 ### Retry Strategy
 
 - Reconcilers: controller-runtime's built-in work queue with exponential backoff

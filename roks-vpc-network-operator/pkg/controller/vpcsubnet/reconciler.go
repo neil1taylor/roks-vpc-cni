@@ -99,6 +99,8 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, subnet *v1alpha1.VPCSu
 			ResourceGroupID: subnet.Spec.ResourceGroupID,
 			ClusterID:       subnet.Spec.ClusterID,
 			CUDNName:        subnet.Spec.CUDNName,
+			OwnerKind:       "vpcsubnet",
+			OwnerName:       subnet.Name,
 		}
 
 		var err error

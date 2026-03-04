@@ -42,15 +42,14 @@ func (c *vpcClient) CreateSubnet(ctx context.Context, opts CreateSubnetOptions) 
 	}
 
 	// Tag the subnet for traceability and orphan GC
-	if opts.ClusterID != "" || opts.CUDNName != "" {
-		var tagNames []string
-		if opts.ClusterID != "" {
-			tagNames = append(tagNames, fmt.Sprintf("roks-cluster:%s", opts.ClusterID))
-		}
-		if opts.CUDNName != "" {
-			tagNames = append(tagNames, fmt.Sprintf("roks-cudn:%s", opts.CUDNName))
-		}
-		c.tagResource(ctx, derefString(result.CRN), tagNames)
+	ownerKind := opts.OwnerKind
+	ownerName := opts.OwnerName
+	if ownerKind == "" && opts.CUDNName != "" {
+		ownerKind = "cudn"
+		ownerName = opts.CUDNName
+	}
+	if opts.ClusterID != "" || ownerKind != "" {
+		c.tagResource(ctx, derefString(result.CRN), BuildTags(opts.ClusterID, "subnet", ownerKind, ownerName))
 	}
 
 	return subnetFromSDK(result), nil

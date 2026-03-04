@@ -371,7 +371,7 @@ POST /v1/subnets
 ```json
 POST /v1/bare_metal_servers/{bm-id}/network_attachments
 {
-  "name": "roks-{cudn-name}-vlan{vlan-id}",
+  "name": "roks-{cluster-id}-{cudn-name}-vlan{vlan-id}",
   "interface_type": "vlan",
   "vlan": {vlan-id},
   "virtual_network_interface": {
@@ -552,6 +552,7 @@ roks-vpc-network-operator/
 |------------|---------|---------|
 | `sigs.k8s.io/controller-runtime` | >= 0.18 | Controller framework, webhook server, reconciler base |
 | `github.com/IBM/vpc-go-sdk` | latest | IBM Cloud VPC API client |
+| `github.com/IBM/platform-services-go-sdk` | latest | Global Tagging API for VPC resource tagging |
 | `kubevirt.io/client-go` | >= 1.3 | VirtualMachine types and client |
 | `k8s.ovn.org` types | 4.20+ | ClusterUserDefinedNetwork types |
 
@@ -571,6 +572,7 @@ The VPC service ID needs (scoped to cluster resource group):
 
 - **VPC Infrastructure Services: Editor** — subnet, VNI, VLAN attachment, FIP, reserved IP CRUD
 - **VPC Infrastructure Services: IP Spoofing Operator** — for `allow_ip_spoofing` on VNIs
+- **Global Tagging: Editor** — for attaching user tags to VPC resources (tagging is best-effort; failures are logged but do not block resource creation)
 
 ---
 
@@ -588,15 +590,43 @@ Every 5 minutes, verify VPC resources referenced in CUDN/VM annotations still ex
 
 Runs every 10 minutes. Scans for VPC resources tagged with the cluster ID that have no corresponding K8s object. Grace period: 15 minutes before deletion. Covers all operator-managed VPC resource types: VNIs, floating IPs, public address ranges (PARs), and VPC routes.
 
-### 11.4 Scaling Considerations
+### 11.4 VPC Resource Tagging
+
+All operator-created VPC resources are tagged via the IBM Cloud Global Tagging API (`github.com/IBM/platform-services-go-sdk/globaltaggingv1`). Tags are applied synchronously after resource creation as a best-effort operation — tagging failures are logged but never block resource creation.
+
+**Standardized tag schema:**
+
+| Tag | Example | Purpose |
+|-----|---------|---------|
+| `roks-operator:true` | `roks-operator:true` | Marks as operator-managed |
+| `roks-cluster:<clusterID>` | `roks-cluster:d62edtlf054` | Which cluster owns this resource |
+| `roks-resource-type:<type>` | `roks-resource-type:subnet` | Resource type (`subnet`, `vni`, `fip`, `par`, `routing-table`) |
+| `roks-owner:<kind>/<name>` | `roks-owner:gateway/my-gw` | K8s object owner |
+
+**Resource tagging coverage:**
+
+| Resource | Tagged | Notes |
+|----------|--------|-------|
+| VPC Subnets | Yes | Via CRN after creation |
+| VNIs | Yes | Via CRN, includes legacy `roks-ns:` and `roks-vm:` tags for backward compatibility |
+| Floating IPs | Yes | Via CRN after creation |
+| Public Address Ranges | Yes | Via CRN after creation |
+| Routing Tables | Yes | Via CRN after creation |
+| VPC Routes | No | Routes don't expose CRN in the VPC API |
+| Address Prefixes | No | Address prefixes don't expose CRN in the VPC API |
+| VLAN Attachments | No | BM sub-resources without standalone CRN; identified by naming convention |
+
+**VLAN attachment naming convention:** `roks-{clusterID}-{networkName}-vlan{vlanID}` (includes cluster ID for multi-cluster disambiguation).
+
+### 11.5 Scaling Considerations
 
 N nodes × M CUDNs = N×M VLAN attachments + 1 VNI per VM. For 20 nodes and 5 CUDNs: 100 VLAN attachments. Node reconciler batches creation with rate limiting.
 
-### 11.5 Live Migration
+### 11.6 Live Migration
 
 `floatable: true` VLAN attachments + `auto_delete: false` VNIs = transparent KubeVirt live migration. VNI with its MAC/IP follows the VM. No operator intervention needed — destination node already has the VLAN attachment (guaranteed by Node Reconciler).
 
-### 11.6 Observability
+### 11.7 Observability
 
 #### Operator Metrics
 

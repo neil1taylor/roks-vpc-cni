@@ -65,7 +65,8 @@ All annotation keys are constants prefixed with `vpc.roks.ibm.com/`. See DESIGN.
 
 ### VPC Client (`pkg/vpc/`)
 Wraps `github.com/IBM/vpc-go-sdk`. Each file handles one resource type:
-- `client.go` — constructor, auth (reads API key from K8s Secret), base config, rate limiter
+- `client.go` — constructor, auth (reads API key from K8s Secret), base config, rate limiter, Global Tagging API client
+- `tags.go` — tag constants (`roks-operator:true`, `roks-cluster:`, `roks-resource-type:`, `roks-owner:`), `BuildTags()` helper, `sanitizeTagValue()`
 - `subnet.go` — `CreateSubnet`, `DeleteSubnet`, `GetSubnet`
 - `vni.go` — `CreateVNI`, `DeleteVNI`, `GetVNI`, `ListVNIsByTag`
 - `vlan_attachment.go` — `CreateVLANAttachment`, `DeleteVLANAttachment`, `ListAttachments`, `CreateVMAttachment`
@@ -76,6 +77,10 @@ Wraps `github.com/IBM/vpc-go-sdk`. Each file handles one resource type:
 - `instrumented.go` — `InstrumentedClient` wrapper for Prometheus metrics
 
 **All VPC operations must be idempotent.** Use resource tags (cluster ID + namespace + name) to detect existing resources before creating duplicates.
+
+**Resource Tagging:** All Create methods accept `ClusterID`, `OwnerKind`, `OwnerName` fields and call `tagResource()` after creation via the IBM Cloud Global Tagging API (`github.com/IBM/platform-services-go-sdk/globaltaggingv1`). Tagging is best-effort — failures are logged but never block resource creation. Tags are: `roks-operator:true`, `roks-cluster:<id>`, `roks-resource-type:<type>`, `roks-owner:<kind>/<name>`.
+
+**VLAN attachment naming:** `roks-{clusterID}-{networkName}-vlan{vlanID}` (includes cluster ID for multi-cluster disambiguation).
 
 ### Finalizers (`pkg/finalizers/`)
 Six finalizer names:

@@ -39,7 +39,14 @@ func (c *vpcClient) CreateFloatingIP(ctx context.Context, opts CreateFloatingIPO
 		return nil, fmt.Errorf("VPC API CreateFloatingIP: %w", err)
 	}
 
-	return fipFromSDK(result), nil
+	fip := fipFromSDK(result)
+
+	// Tag for traceability and orphan GC
+	if opts.ClusterID != "" || opts.OwnerKind != "" {
+		c.tagResource(ctx, derefString(result.CRN), BuildTags(opts.ClusterID, "fip", opts.OwnerKind, opts.OwnerName))
+	}
+
+	return fip, nil
 }
 
 // GetFloatingIP retrieves a floating IP by ID.

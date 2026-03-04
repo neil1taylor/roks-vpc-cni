@@ -100,17 +100,17 @@ kubectl get floatingips --all-namespaces
 ### Verify in IBM Cloud
 
 ```bash
-# Check for subnets tagged with your cluster ID
+# Check for subnets tagged by the operator for your cluster
 ibmcloud is subnets --vpc <vpc-id> --output json | \
-  jq '.[] | select(.tags[]? | contains("<cluster-id>"))'
+  jq '.[] | select(.tags[]? == "roks-operator:true") | select(.tags[]? == "roks-cluster:<cluster-id>")'
 
-# Check for floating IPs tagged with your cluster ID
+# Check for floating IPs tagged by the operator for your cluster
 ibmcloud is floating-ips --output json | \
-  jq '.[] | select(.tags[]? | contains("<cluster-id>"))'
+  jq '.[] | select(.tags[]? == "roks-operator:true") | select(.tags[]? == "roks-cluster:<cluster-id>")'
 
-# Check for VNIs tagged with your cluster ID
+# Check for VNIs tagged by the operator for your cluster
 ibmcloud is virtual-network-interfaces --output json | \
-  jq '.[] | select(.tags[]? | contains("<cluster-id>"))'
+  jq '.[] | select(.tags[]? == "roks-operator:true") | select(.tags[]? == "roks-cluster:<cluster-id>")'
 ```
 
 If any tagged resources remain, wait for the orphan GC to clean them up (up to the GC interval plus grace period), or delete them manually.
@@ -179,20 +179,26 @@ If VPC resources were not properly cleaned up (for example, due to manually remo
 
 ### Find orphaned resources
 
-All VPC resources created by the operator are tagged with the cluster ID. Use this to identify orphaned resources:
+All VPC resources created by the operator are tagged with standardized tags:
+- `roks-operator:true` — marks the resource as operator-managed
+- `roks-cluster:<cluster-id>` — identifies which cluster owns the resource
+- `roks-resource-type:<type>` — the resource type (subnet, vni, fip, par, route, routing-table)
+- `roks-owner:<kind>/<name>` — the Kubernetes owner (e.g., `gateway/my-gw`, `cudn/localnet-1`)
+
+Use these tags to identify orphaned resources:
 
 ```bash
 # Find orphaned subnets
 ibmcloud is subnets --vpc <vpc-id> --output json | \
-  jq -r '.[] | select(.tags[]? | contains("<cluster-id>")) | "\(.id)\t\(.name)\t\(.ipv4_cidr_block)"'
+  jq -r '.[] | select(.tags[]? == "roks-operator:true") | select(.tags[]? == "roks-cluster:<cluster-id>") | "\(.id)\t\(.name)\t\(.ipv4_cidr_block)"'
 
 # Find orphaned floating IPs
 ibmcloud is floating-ips --output json | \
-  jq -r '.[] | select(.tags[]? | contains("<cluster-id>")) | "\(.id)\t\(.name)\t\(.address)"'
+  jq -r '.[] | select(.tags[]? == "roks-operator:true") | select(.tags[]? == "roks-cluster:<cluster-id>") | "\(.id)\t\(.name)\t\(.address)"'
 
 # Find orphaned virtual network interfaces
 ibmcloud is virtual-network-interfaces --output json | \
-  jq -r '.[] | select(.tags[]? | contains("<cluster-id>")) | "\(.id)\t\(.name)"'
+  jq -r '.[] | select(.tags[]? == "roks-operator:true") | select(.tags[]? == "roks-cluster:<cluster-id>") | "\(.id)\t\(.name)"'
 ```
 
 ### Delete orphaned resources

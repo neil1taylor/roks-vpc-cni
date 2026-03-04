@@ -152,6 +152,74 @@ func TestCollectOrphanedFloatingIPs(t *testing.T) {
 	}
 }
 
+func TestCollectOrphanedFloatingIPs_VMFIPsPreserved(t *testing.T) {
+	scheme := newTestScheme()
+
+	// VM with legacy fip-id annotation
+	vmLegacy := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "kubevirt.io/v1",
+			"kind":       "VirtualMachine",
+			"metadata": map[string]interface{}{
+				"name":      "vm-legacy",
+				"namespace": "vm-demo",
+				"annotations": map[string]interface{}{
+					"vpc.roks.ibm.com/fip-id": "fip-vm-legacy",
+				},
+			},
+		},
+	}
+
+	// VM with multi-network annotation containing FIP
+	vmMulti := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "kubevirt.io/v1",
+			"kind":       "VirtualMachine",
+			"metadata": map[string]interface{}{
+				"name":      "vm-multi",
+				"namespace": "vm-demo",
+				"annotations": map[string]interface{}{
+					"vpc.roks.ibm.com/network-interfaces": `[{"networkName":"localnet","fipId":"fip-vm-multi"}]`,
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(vmLegacy, vmMulti).
+		Build()
+
+	mockVPC := vpc.NewMockClient()
+	mockVPC.ListFloatingIPsFn = func(ctx context.Context) ([]vpc.FloatingIP, error) {
+		return []vpc.FloatingIP{
+			{ID: "fip-vm-legacy", Name: "roks-cluster-abc-vm-demo-vm-legacy-fip", Address: "1.2.3.4"},
+			{ID: "fip-vm-multi", Name: "roks-cluster-abc-vm-demo-vm-multi-fip", Address: "5.6.7.8"},
+			{ID: "fip-orphan", Name: "roks-cluster-abc-vm-demo-deleted-vm-fip", Address: "9.9.9.9"},
+		}, nil
+	}
+	var deletedFIPs []string
+	mockVPC.DeleteFloatingIPFn = func(ctx context.Context, fipID string) error {
+		deletedFIPs = append(deletedFIPs, fipID)
+		return nil
+	}
+
+	collector := &OrphanCollector{
+		K8sClient: fakeClient,
+		VPC:       mockVPC,
+		ClusterID: "cluster-abc",
+		VPCID:     "vpc-123",
+	}
+
+	count := collector.collectOrphanedFloatingIPs(context.Background(), testLogger())
+	if count != 1 {
+		t.Errorf("expected 1 orphaned FIP deleted, got %d", count)
+	}
+	if len(deletedFIPs) != 1 || deletedFIPs[0] != "fip-orphan" {
+		t.Errorf("expected to delete only fip-orphan, got %v", deletedFIPs)
+	}
+}
+
 func TestCollectOrphanedPARs(t *testing.T) {
 	scheme := newTestScheme()
 

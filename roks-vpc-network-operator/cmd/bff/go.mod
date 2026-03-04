@@ -11,6 +11,7 @@ require (
 
 require (
 	github.com/IBM/go-sdk-core/v5 v5.21.2 // indirect
+	github.com/IBM/platform-services-go-sdk v0.95.0 // indirect
 	github.com/IBM/vpc-go-sdk v0.80.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

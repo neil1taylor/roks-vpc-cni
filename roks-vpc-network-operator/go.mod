@@ -4,8 +4,11 @@ go 1.24.0
 
 require (
 	github.com/IBM/go-sdk-core/v5 v5.21.2
+	github.com/IBM/platform-services-go-sdk v0.95.0
 	github.com/IBM/vpc-go-sdk v0.80.0
+	github.com/go-logr/logr v1.4.2
 	github.com/prometheus/client_golang v1.19.1
+	github.com/prometheus/client_model v0.6.1
 	k8s.io/api v0.31.0
 	k8s.io/apimachinery v0.31.0
 	k8s.io/client-go v0.31.0
@@ -21,7 +24,6 @@ require (
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.11 // indirect
-	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-openapi/errors v0.22.4 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect
@@ -51,7 +53,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect

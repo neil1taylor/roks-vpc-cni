@@ -85,6 +85,12 @@ func (c *vpcClient) CreateRoutingTable(ctx context.Context, vpcID string, opts C
 	}
 
 	rt := routingTableFromSDK(result)
+
+	// Tag for traceability (guard: routing tables may not have CRN)
+	if result.CRN != nil && (opts.ClusterID != "" || opts.OwnerKind != "") {
+		c.tagResource(ctx, *result.CRN, BuildTags(opts.ClusterID, "routing-table", opts.OwnerKind, opts.OwnerName))
+	}
+
 	return &rt, nil
 }
 
@@ -179,6 +185,7 @@ func (c *vpcClient) CreateRoute(ctx context.Context, vpcID, routingTableID strin
 	}
 
 	route := routeFromSDK(result)
+	// Note: VPC routes don't expose CRN, so tagging is not possible.
 	return &route, nil
 }
 

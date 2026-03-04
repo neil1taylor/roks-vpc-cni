@@ -84,9 +84,12 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, fip *v1alpha1.Floating
 
 		// Build floating IP creation options
 		createOpts := vpc.CreateFloatingIPOptions{
-			Name:   fip.Spec.Name,
-			Zone:   fip.Spec.Zone,
-			VNIID:  vniID,
+			Name:      fip.Spec.Name,
+			Zone:      fip.Spec.Zone,
+			VNIID:     vniID,
+			ClusterID: r.ClusterID,
+			OwnerKind: "floatingip",
+			OwnerName: fip.Name,
 		}
 
 		// If no name specified, generate one

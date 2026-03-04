@@ -493,6 +493,9 @@ func (r *Reconciler) ensureVPCRoutes(ctx context.Context, gw *v1alpha1.VPCGatewa
 			Action:      "deliver",
 			NextHopIP:   gw.Status.ReservedIP,
 			Zone:        gw.Spec.Zone,
+			ClusterID:   r.ClusterID,
+			OwnerKind:   "gateway",
+			OwnerName:   gw.Name,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("CreateRoute(%s): %w", dest, err)
@@ -591,9 +594,12 @@ func (r *Reconciler) ensureFloatingIP(ctx context.Context, gw *v1alpha1.VPCGatew
 	// Create new FIP bound to the gateway's VNI
 	fipName := network.TruncateVPCName(fmt.Sprintf("roks-%s-gw-%s-fip", r.ClusterID, gw.Name))
 	fip, err := r.VPC.CreateFloatingIP(ctx, vpc.CreateFloatingIPOptions{
-		Name:  fipName,
-		Zone:  gw.Spec.Zone,
-		VNIID: gw.Status.VNIID,
+		Name:      fipName,
+		Zone:      gw.Spec.Zone,
+		VNIID:     gw.Status.VNIID,
+		ClusterID: r.ClusterID,
+		OwnerKind: "gateway",
+		OwnerName: gw.Name,
 	})
 	if err != nil {
 		return fmt.Errorf("CreateFloatingIP(%s): %w", fipName, err)
@@ -636,6 +642,9 @@ func (r *Reconciler) ensurePAR(ctx context.Context, gw *v1alpha1.VPCGateway) err
 				VPCID:        r.VPCID,
 				Zone:         gw.Spec.Zone,
 				PrefixLength: prefixLen,
+				ClusterID:    r.ClusterID,
+				OwnerKind:    "gateway",
+				OwnerName:    gw.Name,
 			})
 			if err != nil {
 				return fmt.Errorf("CreatePublicAddressRange: %w", err)
@@ -671,6 +680,9 @@ func (r *Reconciler) ensurePAR(ctx context.Context, gw *v1alpha1.VPCGateway) err
 		rt, err := r.VPC.CreateRoutingTable(ctx, r.VPCID, vpc.CreateRoutingTableOptions{
 			Name:                 rtName,
 			RouteInternetIngress: true,
+			ClusterID:            r.ClusterID,
+			OwnerKind:            "gateway",
+			OwnerName:            gw.Name,
 		})
 		if err != nil {
 			return fmt.Errorf("CreateRoutingTable(ingress): %w", err)
@@ -689,6 +701,9 @@ func (r *Reconciler) ensurePAR(ctx context.Context, gw *v1alpha1.VPCGateway) err
 			Action:      "deliver",
 			NextHopIP:   gw.Status.ReservedIP,
 			Zone:        gw.Spec.Zone,
+			ClusterID:   r.ClusterID,
+			OwnerKind:   "gateway",
+			OwnerName:   gw.Name,
 		})
 		if err != nil {
 			return fmt.Errorf("CreateRoute(ingress, %s): %w", gw.Status.PublicAddressRangeCIDR, err)

@@ -250,8 +250,9 @@ ibmcloud is quotas
 # Check orphan GC logs
 oc logs -n roks-vpc-network-operator deployment/vpc-network-operator-manager | grep "orphan-gc"
 
-# Manually list VPC resources tagged with your cluster
-ibmcloud is virtual-network-interfaces --output json | jq '.[] | select(.tags[] | contains("<cluster-id>"))'
+# Manually list VPC resources tagged by the operator
+ibmcloud is virtual-network-interfaces --output json | \
+  jq '.[] | select(.tags[]? == "roks-operator:true") | select(.tags[]? == "roks-cluster:<cluster-id>")'
 
 # If needed, manually delete orphaned resources
 ibmcloud is virtual-network-interface-delete <vni-id>

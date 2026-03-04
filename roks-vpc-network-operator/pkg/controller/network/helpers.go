@@ -64,11 +64,18 @@ func EnsureVPCSubnet(ctx context.Context, k8sClient client.Client, vpcClient vpc
 		} else if !cidrFitsPrefix(cidr, prefixes) {
 			logger.Info("CIDR does not fit any existing VPC address prefix, auto-creating prefix", "cidr", cidr, "zone", zone)
 			prefixName := TruncateVPCName(fmt.Sprintf("roks-%s-%s", clusterID, obj.GetName()))
+			ownerKind := "cudn"
+			if obj.GetNamespace() != "" {
+				ownerKind = "udn"
+			}
 			_, prefixErr := vpcClient.CreateVPCAddressPrefix(ctx, vpc.CreateAddressPrefixOptions{
-				VPCID: vpcID,
-				CIDR:  cidr,
-				Zone:  zone,
-				Name:  prefixName,
+				VPCID:     vpcID,
+				CIDR:      cidr,
+				Zone:      zone,
+				Name:      prefixName,
+				ClusterID: clusterID,
+				OwnerKind: ownerKind,
+				OwnerName: obj.GetName(),
 			})
 			if prefixErr != nil {
 				errMsg := fmt.Sprintf("CIDR %s does not fit any VPC address prefix and auto-creation failed: %v. Available prefixes: %s",
@@ -127,6 +134,10 @@ func EnsureVPCSubnet(ctx context.Context, k8sClient client.Client, vpcClient vpc
 		logger.Error(listErr, "Failed to list subnets for idempotency check, proceeding with create")
 	}
 
+	subnetOwnerKind := "cudn"
+	if obj.GetNamespace() != "" {
+		subnetOwnerKind = "udn"
+	}
 	subnet, err := vpcClient.CreateSubnet(ctx, vpc.CreateSubnetOptions{
 		Name:            subnetName,
 		VPCID:           annots[annotations.VPCID],
@@ -136,6 +147,8 @@ func EnsureVPCSubnet(ctx context.Context, k8sClient client.Client, vpcClient vpc
 		PublicGatewayID: annots[annotations.PublicGatewayID],
 		ClusterID:       clusterID,
 		CUDNName:        obj.GetName(),
+		OwnerKind:       subnetOwnerKind,
+		OwnerName:       obj.GetName(),
 	})
 	if err != nil {
 		logger.Error(err, "Failed to create VPC subnet")
@@ -213,7 +226,7 @@ func ensureVLANAttachments(ctx context.Context, k8sClient client.Client, vpcClie
 
 		att, err := vpcClient.CreateVLANAttachment(ctx, vpc.CreateVLANAttachmentOptions{
 			BMServerID: bmServerID,
-			Name:       fmt.Sprintf("roks-%s-vlan%d", obj.GetName(), vlanID),
+			Name:       TruncateVPCName(fmt.Sprintf("roks-%s-%s-vlan%d", clusterID, obj.GetName(), vlanID)),
 			VLANID:     vlanID,
 			SubnetID:   subnetID,
 		})

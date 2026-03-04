@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/platform-services-go-sdk/globaltaggingv1"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 )
 
@@ -162,10 +163,13 @@ type AddressPrefixService interface {
 
 // CreateAddressPrefixOptions holds parameters for creating a VPC address prefix.
 type CreateAddressPrefixOptions struct {
-	VPCID string
-	CIDR  string
-	Zone  string
-	Name  string
+	VPCID     string
+	CIDR      string
+	Zone      string
+	Name      string
+	ClusterID string // for tagging
+	OwnerKind string // for tagging: e.g. "cudn", "udn"
+	OwnerName string // for tagging: K8s object name
 }
 
 // SubnetReservedIPService lists reserved IPs for a subnet.
@@ -184,7 +188,9 @@ type CreateSubnetOptions struct {
 	PublicGatewayID string // optional: attach pre-existing PGW for outbound internet
 	ResourceGroupID string
 	ClusterID       string // for tagging
-	CUDNName        string // for tagging
+	CUDNName        string // for tagging (deprecated — use OwnerKind/OwnerName)
+	OwnerKind       string // for tagging: e.g. "cudn", "udn", "vpcsubnet"
+	OwnerName       string // for tagging: K8s object name
 }
 
 type CreateVNIOptions struct {
@@ -195,6 +201,8 @@ type CreateVNIOptions struct {
 	ClusterID               string // for tagging
 	Namespace               string // for tagging
 	VMName                  string // for tagging
+	OwnerKind               string // for tagging: e.g. "vm", "gateway"
+	OwnerName               string // for tagging: K8s object name
 }
 
 type CreateVLANAttachmentOptions struct {
@@ -224,9 +232,12 @@ type VMAttachmentResult struct {
 }
 
 type CreateFloatingIPOptions struct {
-	Name   string
-	Zone   string
-	VNIID  string
+	Name      string
+	Zone      string
+	VNIID     string
+	ClusterID string // for tagging
+	OwnerKind string // for tagging: e.g. "gateway", "floatingip"
+	OwnerName string // for tagging: K8s object name
 }
 
 type UpdateFloatingIPOptions struct {
@@ -460,6 +471,7 @@ type AddressPrefix struct {
 type PublicAddressRange struct {
 	ID             string
 	Name           string
+	CRN            string
 	CIDR           string
 	Zone           string
 	VPCID          string
@@ -472,7 +484,10 @@ type CreatePublicAddressRangeOptions struct {
 	Name         string
 	VPCID        string
 	Zone         string
-	PrefixLength int // CIDR prefix: 28, 29, 30, 31, or 32
+	PrefixLength int    // CIDR prefix: 28, 29, 30, 31, or 32
+	ClusterID    string // for tagging
+	OwnerKind    string // for tagging: e.g. "gateway"
+	OwnerName    string // for tagging: K8s object name
 }
 
 // ── Routing Table and Route types ──
@@ -480,7 +495,10 @@ type CreatePublicAddressRangeOptions struct {
 // CreateRoutingTableOptions holds parameters for creating a routing table.
 type CreateRoutingTableOptions struct {
 	Name                 string
-	RouteInternetIngress bool // true = ingress routing table for PAR traffic
+	RouteInternetIngress bool   // true = ingress routing table for PAR traffic
+	ClusterID            string // for tagging
+	OwnerKind            string // for tagging: e.g. "gateway"
+	OwnerName            string // for tagging: K8s object name
 }
 
 type RoutingTable struct {
@@ -513,6 +531,9 @@ type CreateRouteOptions struct {
 	NextHopIP   string
 	Zone        string
 	Priority    *int64
+	ClusterID   string // for tagging
+	OwnerKind   string // for tagging: e.g. "gateway"
+	OwnerName   string // for tagging: K8s object name
 }
 
 // ── Implementation ──
@@ -520,6 +541,7 @@ type CreateRouteOptions struct {
 // vpcClient implements Client using the IBM VPC Go SDK.
 type vpcClient struct {
 	service         *vpcv1.VpcV1
+	tagger          *globaltaggingv1.GlobalTaggingV1
 	resourceGroupID string
 	clusterID       string
 	limiter         *RateLimiter
@@ -567,8 +589,18 @@ func NewClient(cfg ClientConfig) (Client, error) {
 		return nil, fmt.Errorf("failed to create VPC SDK service: %w", err)
 	}
 
+	// Initialize Global Tagging client (best-effort — nil tagger disables tagging)
+	var tagger *globaltaggingv1.GlobalTaggingV1
+	tagService, tagErr := globaltaggingv1.NewGlobalTaggingV1(&globaltaggingv1.GlobalTaggingV1Options{
+		Authenticator: &core.IamAuthenticator{ApiKey: cfg.APIKey},
+	})
+	if tagErr == nil {
+		tagger = tagService
+	}
+
 	return &vpcClient{
 		service:         service,
+		tagger:          tagger,
 		resourceGroupID: cfg.ResourceGroupID,
 		clusterID:       cfg.ClusterID,
 		limiter:         NewRateLimiter(maxConcurrent),
@@ -578,12 +610,23 @@ func NewClient(cfg ClientConfig) (Client, error) {
 // tagResource attaches user tags to a VPC resource via the Global Tagging API.
 // This is best-effort — tagging failures are logged but not returned as errors.
 func (c *vpcClient) tagResource(ctx context.Context, crn string, tagNames []string) {
-	// The VPC Go SDK doesn't have a built-in tagging method for user tags.
-	// In production, use the Global Tagging API (github.com/IBM/platform-services-go-sdk/globaltaggingv1).
-	// For now, this is a placeholder — tags can be set via the IBM Cloud CLI or API separately.
-	_ = ctx
-	_ = crn
-	_ = tagNames
+	if c.tagger == nil || crn == "" || len(tagNames) == 0 {
+		return
+	}
+
+	resources := []globaltaggingv1.Resource{{
+		ResourceID: &crn,
+	}}
+	tagType := "user"
+
+	_, _, err := c.tagger.AttachTagWithContext(ctx, &globaltaggingv1.AttachTagOptions{
+		Resources: resources,
+		TagNames:  tagNames,
+		TagType:   &tagType,
+	})
+	if err != nil {
+		fmt.Printf("WARN: failed to tag resource %s: %v\n", crn, err)
+	}
 }
 
 // derefString safely dereferences a *string, returning "" if nil.

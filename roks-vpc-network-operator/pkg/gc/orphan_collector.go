@@ -337,10 +337,11 @@ func (gc *OrphanCollector) buildReferencedVNISet(ctx context.Context) map[string
 }
 
 // buildReferencedFIPSet returns a set of floating IP IDs that are actively
-// referenced by VPCGateway statuses or FloatingIP CRDs.
+// referenced by VPCGateway statuses, FloatingIP CRDs, or VM annotations.
 func (gc *OrphanCollector) buildReferencedFIPSet(ctx context.Context) map[string]bool {
 	result := map[string]bool{}
 
+	// 1. FIPs referenced by VPCGateway statuses
 	gwList := &unstructured.UnstructuredList{}
 	gwList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   gatewayGVK.Group,
@@ -359,7 +360,7 @@ func (gc *OrphanCollector) buildReferencedFIPSet(ctx context.Context) map[string
 		}
 	}
 
-	// Also check FloatingIP CRDs
+	// 2. FIPs referenced by FloatingIP CRDs
 	fipList := &unstructured.UnstructuredList{}
 	fipList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "vpc.roks.ibm.com",
@@ -374,6 +375,39 @@ func (gc *OrphanCollector) buildReferencedFIPSet(ctx context.Context) map[string
 			}
 			if fipID, ok := status["floatingIPID"].(string); ok && fipID != "" {
 				result[fipID] = true
+			}
+		}
+	}
+
+	// 3. FIPs referenced by VM annotations (webhook-created per-VM FIPs)
+	vmList := &unstructured.UnstructuredList{}
+	vmList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   vmGVK.Group,
+		Version: vmGVK.Version,
+		Kind:    "VirtualMachineList",
+	})
+	if err := gc.K8sClient.List(ctx, vmList); err == nil {
+		for _, vm := range vmList.Items {
+			annots := vm.GetAnnotations()
+			if annots == nil {
+				continue
+			}
+
+			// Check legacy single-network FIP annotation
+			if fipID := annots[annotations.FIPID]; fipID != "" {
+				result[fipID] = true
+			}
+
+			// Check multi-network annotation for per-interface FIPs
+			if raw := annots[annotations.NetworkInterfaces]; raw != "" {
+				var interfaces []network.VMNetworkInterface
+				if err := json.Unmarshal([]byte(raw), &interfaces); err == nil {
+					for _, iface := range interfaces {
+						if iface.FIPID != "" {
+							result[iface.FIPID] = true
+						}
+					}
+				}
 			}
 		}
 	}
