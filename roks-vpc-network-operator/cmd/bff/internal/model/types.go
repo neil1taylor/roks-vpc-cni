@@ -135,6 +135,8 @@ type SubnetResponse struct {
 	VPC                       RefResponse  `json:"vpc"`
 	Zone                      RefResponse  `json:"zone"`
 	NetworkACL                *RefResponse `json:"networkAcl,omitempty"`
+	FlowLogCollectorID        string       `json:"flowLogCollectorId,omitempty"`
+	FlowLogActive             bool         `json:"flowLogActive,omitempty"`
 	CreatedAt                 string       `json:"createdAt,omitempty"`
 }
 
