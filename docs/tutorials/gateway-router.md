@@ -1066,6 +1066,7 @@ spec:
             memory: 2Gi
             cpu: "1"
         devices:
+          autoattachPodInterface: false
           interfaces:
           - name: l2net
             bridge: {}
@@ -1091,7 +1092,7 @@ spec:
             network:
               version: 2
               ethernets:
-                enp1s0:
+                eth0:
                   addresses:
                   - 10.100.0.50/24
                   routes:
@@ -1121,6 +1122,7 @@ spec:
             memory: 2Gi
             cpu: "1"
         devices:
+          autoattachPodInterface: false
           interfaces:
           - name: l2net
             bridge: {}
@@ -1146,7 +1148,7 @@ spec:
             network:
               version: 2
               ethernets:
-                enp1s0:
+                eth0:
                   addresses:
                   - 10.100.0.60/24
                   routes:
