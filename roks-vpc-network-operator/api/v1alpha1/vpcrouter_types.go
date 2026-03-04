@@ -71,6 +71,10 @@ type RouterDHCP struct {
 	// Options configures additional DHCP options.
 	// +optional
 	Options *DHCPOptions `json:"options,omitempty"`
+
+	// LeasePersistence configures persistent storage for DHCP lease files.
+	// +optional
+	LeasePersistence *DHCPLeasePersistence `json:"leasePersistence,omitempty"`
 }
 
 // NetworkDHCP provides per-network DHCP overrides.
@@ -158,6 +162,22 @@ type DHCPOptions struct {
 	// Custom is a list of raw dnsmasq --dhcp-option values for passthrough.
 	// +optional
 	Custom []string `json:"custom,omitempty"`
+}
+
+// DHCPLeasePersistence configures persistent storage for DHCP lease files.
+type DHCPLeasePersistence struct {
+	// Enabled controls whether DHCP leases are persisted across pod restarts.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// StorageSize is the PVC size for lease storage.
+	// +kubebuilder:default="100Mi"
+	// +optional
+	StorageSize string `json:"storageSize,omitempty"`
+
+	// StorageClassName is the StorageClass to use. Empty string uses the cluster default.
+	// +optional
+	StorageClassName string `json:"storageClassName,omitempty"`
 }
 
 // DHCPNetworkStatus reports the DHCP status of a single network.
@@ -318,6 +338,9 @@ type VPCRouterStatus struct {
 
 	// XDPEnabled reports whether XDP/eBPF fast-path forwarding is active.
 	XDPEnabled bool `json:"xdpEnabled,omitempty"`
+
+	// LeasePersistenceReady reports whether the DHCP lease PVC is bound.
+	LeasePersistenceReady bool `json:"leasePersistenceReady,omitempty"`
 
 	// Networks reports the status of each attached network.
 	// +optional
