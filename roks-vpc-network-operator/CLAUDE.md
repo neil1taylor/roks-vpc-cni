@@ -30,7 +30,7 @@ On deletion, finalizers clean up all VPC resources.
 
 ## Architecture
 
-Eleven reconciliation loops + one mutating webhook + orphan GC:
+Twelve reconciliation loops + one mutating webhook + orphan GC:
 
 ### Network Reconcilers
 - **CUDN Reconciler** (`pkg/controller/cudn/reconciler.go`) — watches `ClusterUserDefinedNetwork` with LocalNet topology. Creates VPC subnet + VLAN attachments on all BM nodes.
@@ -50,7 +50,8 @@ Eleven reconciliation loops + one mutating webhook + orphan GC:
 
 ### Gateway + Router Reconcilers
 - **VPCGateway** (`pkg/controller/gateway/reconciler.go`) — creates uplink VNI via VLAN attachment, manages FIP, PAR, VPC routes. Also watches VPCRouter status to auto-collect `advertisedRoutes` and create/delete VPC routes. See `api/v1alpha1/vpcgateway_types.go`.
-- **VPCRouter** (`pkg/controller/router/reconciler.go`) — dual-mode router: `spec.mode: standard` (Fedora + bash init) or `spec.mode: fast-path` (Go binary + XDP/eBPF at `cmd/vpc-router/`). Both modes share: Multus attachments, IP forwarding, nftables NAT/firewall, dnsmasq DHCP, Suricata IDS/IPS sidecar (`suricata.go`), metrics-exporter sidecar. Fast-path pod built by `pod_fastpath.go` with HTTP health probes and NETWORK_CONFIG JSON env. Reports `status.mode`, `status.xdpEnabled`, and `XDPReady` condition. Also watches VPCGateway for config drift. See `api/v1alpha1/vpcrouter_types.go`.
+- **VPCRouter** (`pkg/controller/router/reconciler.go`) — dual-mode router: `spec.mode: standard` (Fedora + bash init) or `spec.mode: fast-path` (Go binary + XDP/eBPF at `cmd/vpc-router/`). Both modes share: Multus attachments, IP forwarding, nftables NAT/firewall, dnsmasq DHCP, Suricata IDS/IPS sidecar (`suricata.go`), AdGuard Home DNS sidecar (`adguardhome.go`), metrics-exporter sidecar. Fast-path pod built by `pod_fastpath.go` with HTTP health probes and NETWORK_CONFIG JSON env. Reports `status.mode`, `status.xdpEnabled`, and `XDPReady` condition. Also watches VPCGateway for config drift. See `api/v1alpha1/vpcrouter_types.go`.
+- **VPCDNSPolicy** (`pkg/controller/dnspolicy/reconciler.go`) — manages DNS filtering policy via AdGuard Home sidecar on router pods. Configures upstream DNS, blocklists/allowlists, local DNS resolution. See `api/v1alpha1/vpcdnspolicy_types.go`.
 
 **Bidirectional watching pattern**: Gateway watches Router status (for route advertisement), Router watches Gateway spec (for config propagation). This creates a reactive loop where gateway config changes flow down to router pods, and router route advertisements flow up to VPC routes.
 
@@ -83,13 +84,15 @@ Wraps `github.com/IBM/vpc-go-sdk`. Each file handles one resource type:
 **VLAN attachment naming:** `roks-{clusterID}-{networkName}-vlan{vlanID}` (includes cluster ID for multi-cluster disambiguation).
 
 ### Finalizers (`pkg/finalizers/`)
-Six finalizer names:
+Eight finalizer names:
 - `vpc.roks.ibm.com/cudn-cleanup` — on CUDNs
 - `vpc.roks.ibm.com/vm-cleanup` — on VMs
 - `vpc.roks.ibm.com/udn-cleanup` — on UDNs
 - `vpc.roks.ibm.com/gateway-cleanup` — on VPCGateways (cleans up FIP, PAR, VPC routes, VLAN attachment)
 - `vpc.roks.ibm.com/router-cleanup` — on VPCRouters (deletes router pod)
 - `vpc.roks.ibm.com/l2bridge-cleanup` — on VPCL2Bridges (deletes L2 bridge pod)
+- `vpc.roks.ibm.com/vpngateway-cleanup` — on VPCVPNGateways (deletes VPN pod)
+- `vpc.roks.ibm.com/dnspolicy-cleanup` — on VPCDNSPolicies (removes AdGuard Home sidecar)
 
 ### Orphan GC (`pkg/gc/orphan_collector.go`)
 Periodic goroutine (every 10 min). Lists VPC resources by cluster tag, cross-references with K8s objects, deletes orphans older than 15 min. Covers VNIs, floating IPs, PARs, and VPC routes.

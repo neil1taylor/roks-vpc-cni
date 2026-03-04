@@ -51,7 +51,7 @@ npm run ts-check    # TypeScript type checking (tsc --noEmit)
 
 ### Operator (Go, controller-runtime)
 
-Twelve reconciliation loops + one mutating webhook + orphan GC:
+Thirteen reconciliation loops + one mutating webhook + orphan GC:
 
 | Component | Path | Watches | Purpose |
 |-----------|------|---------|---------|
@@ -67,10 +67,11 @@ Twelve reconciliation loops + one mutating webhook + orphan GC:
 | VPCRouter Reconciler | `pkg/controller/router/` | `VPCRouter` CRD | Dual-mode router pod (standard bash/fast-path Go+XDP), NAT, DHCP, Suricata IDS/IPS sidecar |
 | VPCL2Bridge Reconciler | `pkg/controller/l2bridge/` | `VPCL2Bridge` CRD | L2 bridge pod lifecycle for NSX-T/OVN tunneling |
 | VPCVPNGateway Reconciler | `pkg/controller/vpngateway/` | `VPCVPNGateway` CRD | VPN pod lifecycle (WireGuard/IPsec), tunnel management |
+| VPCDNSPolicy Reconciler | `pkg/controller/dnspolicy/` | `VPCDNSPolicy` CRD | DNS filtering/blocking via AdGuard Home sidecar on router pods |
 | VM Webhook | `pkg/webhook/` | `VirtualMachine` CREATE | Creates VNI, injects MAC+IP into VM spec |
 | Orphan GC | `pkg/gc/` | Periodic (10 min) | Deletes orphaned VPC resources: VNIs, FIPs, PARs, VPC routes (15 min grace) |
 
-**CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip), `VPCGateway` (vgw), `VPCRouter` (vrt), `VPCL2Bridge` (vlb), `VPCVPNGateway` (vvg)
+**CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip), `VPCGateway` (vgw), `VPCRouter` (vrt), `VPCL2Bridge` (vlb), `VPCVPNGateway` (vvg), `VPCDNSPolicy` (vdp)
 
 **Dual cluster mode** (`CLUSTER_MODE` env var): `"roks"` uses ROKS platform API for VNI/VLAN (stub until API exists); `"unmanaged"` (default) uses VPC API directly.
 
@@ -84,7 +85,7 @@ Twelve reconciliation loops + one mutating webhook + orphan GC:
 
 ### BFF Service
 
-Go HTTP server (`cmd/bff/`) that aggregates VPC API + K8s API data for the console plugin. Auth via request headers, authz via Kubernetes SubjectAccessReview. Exposes REST endpoints for subnets, VNIs, VLAN attachments, floating IPs, security groups, network ACLs, and topology.
+Go HTTP server (`cmd/bff/`) that aggregates VPC API + K8s API data for the console plugin. Auth via `X-Remote-User`/`X-Remote-Group` headers (set by OpenShift console proxy) or Bearer token via TokenReview. Authz via Kubernetes SubjectAccessReview. Exposes REST endpoints for subnets, VNIs, VLAN attachments, floating IPs, PARs, security groups, network ACLs, DNS policies, and topology. Credentials loaded from K8s Secret (key: `apikey` or `IBMCLOUD_API_KEY`); `VPC_RESOURCE_GROUP_ID` env var required for PAR creation.
 
 ### Console Plugin (TypeScript/React)
 
