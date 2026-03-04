@@ -81,19 +81,26 @@ For most KubeVirt VM workloads (tens of VMs, moderate traffic), Tier 1 is suffic
 
 ## DHCP Enhancements
 
-**Status**: Core features implemented, advanced features under consideration
+**Status**: Core features and advanced features implemented; IPv6 under consideration
 
-Per-network DHCP configuration, custom ranges, static reservations, DNS settings, DHCP options (router, MTU, NTP, custom), and configurable lease times are all implemented. The remaining enhancements are:
+Per-network DHCP configuration, custom ranges, static reservations, DNS settings, DHCP options (router, MTU, NTP, custom), and configurable lease times are all implemented. Lease persistence and auto-reservations are also implemented.
+
+### Implemented Enhancements
+
+**Lease persistence** (2026-03-04)
+- PVC per router pod for DHCP lease file persistence across restarts
+- `spec.dhcp.leasePersistence` with configurable size and StorageClass
+- `status.leasePersistenceReady` condition tracks PVC binding
+- Implementation: `pkg/controller/router/pvc.go`
+
+**Auto-populated reservations** (2026-03-04)
+- Opt-in `spec.dhcp.autoReservations: true` on VPCRouter
+- Router reconciler discovers VMs via `vpc.roks.ibm.com/network-interfaces` annotation
+- Auto-merges MAC→IP reservations into dnsmasq config (manual wins on collision)
+- `status.networks[].dhcp.autoReservationCount` reports discovered count
+- Implementation: `pkg/controller/router/auto_reservations.go`
 
 ### Remaining Enhancements
-
-**Lease persistence**
-- Lease file persistence across pod restarts (currently lost on pod recreation)
-- Needs a volume mount or ConfigMap-based storage
-
-**Auto-populated reservations**
-- Auto-sync static reservations from VNI CRD status (MAC + reserved IP)
-- Would eliminate manual MAC→IP mapping for operator-managed VMs
 
 **IPv6 support**
 - Router Advertisement (RA) for SLAAC
@@ -102,82 +109,24 @@ Per-network DHCP configuration, custom ranges, static reservations, DNS settings
 
 ## DNS Filtering and Secure DNS
 
-**Status**: Under consideration
+**Status**: Implemented (2026-03-04) — VPCDNSPolicy CRD + AdGuard Home sidecar
 
-Provide network-wide ad blocking, malware domain filtering, and encrypted DNS (DoH/DoT) for all VMs on operator-managed networks.
+> **Implementation complete**: `VPCDNSPolicy` CRD (`vdp`), reconciler, AdGuard Home sidecar injection into router pods, BFF endpoints, and console plugin UI (list/detail/create pages + dashboard card). Option A (sidecar) was chosen. dnsmasq forwards all DNS to `127.0.0.1#5353` (AdGuard Home). Supports DoH/DoT upstream, blocklists, allow/deny lists, and local DNS resolution. Configuration is declarative via the CRD spec, with AdGuard Home YAML auto-generated and delivered via ConfigMap.
 
-### Candidates
+Implementation files:
+- CRD types: `api/v1alpha1/vpcdnspolicy_types.go`
+- Reconciler: `pkg/controller/dnspolicy/reconciler.go`
+- Config generator: `pkg/controller/dnspolicy/adguard_config.go`
+- Sidecar builder: `pkg/controller/router/adguard_sidecar.go`
+- Helm CRD: `deploy/helm/.../templates/crds/vpcdnspolicy-crd.yaml`
+- BFF handler: `cmd/bff/internal/handler/dnspolicy_handler.go`
+- Console pages: `DNSPoliciesListPage`, `DNSPolicyDetailPage`, `DNSPolicyCreatePage`
 
-- **Pi-hole** — Mature, widely deployed DNS sinkhole. Web UI for management, extensive blocklists, per-client statistics. Heavier footprint (FTL engine + lighttpd + SQLite).
-- **AdGuard Home** — Single Go binary, built-in DoH/DoT/DoQ server, native DHCP server, parental controls, per-client settings. Lighter than Pi-hole, more modern feature set.
+### Remaining Enhancements
 
-### Integration with VPCRouter
-
-The router pod already runs dnsmasq for DHCP. DNS filtering would extend this:
-
-**Option A — Sidecar container**
-- Run Pi-hole or AdGuard Home as a sidecar in the router pod
-- dnsmasq forwards DNS to the sidecar (`--server=127.0.0.1#5353`)
-- Sidecar handles filtering and upstream DoH/DoT
-- Pros: single pod, shared network namespace, simple DHCP integration
-- Cons: increased router pod resource requirements
-
-**Option B — Dedicated DNS pod per gateway**
-- Separate deployment managed by VPCGateway or a new `VPCDNSPolicy` CRD
-- Router's dnsmasq points VMs to the DNS pod IP
-- Pros: independent scaling, can serve multiple routers, isolated failure domain
-- Cons: additional pod, needs service discovery
-
-**Option C — AdGuard Home replaces dnsmasq**
-- AdGuard Home has a built-in DHCP server — could replace dnsmasq entirely
-- Single process handles DHCP + DNS + filtering + DoH/DoT
-- Pros: simplest architecture, fewer moving parts
-- Cons: tighter coupling, less flexibility if DHCP and DNS need independent lifecycle
-
-### Features
-
-- **Blocklists**: Configurable via CRD — ad domains, malware, tracking, custom lists
-- **Encrypted upstream DNS**: DoH (DNS-over-HTTPS) and DoT (DNS-over-TLS) to upstream resolvers (Cloudflare, Quad9, Google, custom)
-- **Per-network policies**: Different filtering rules per workload network (e.g., stricter for production, relaxed for dev)
-- **Local DNS**: Resolve VM hostnames within the network (synced from VNI CRD metadata)
-- **Allowlists/Denylists**: Per-tenant overrides via annotations or CRD spec
-- **Query logging and analytics**: Expose metrics to Prometheus, surface in console plugin dashboard
-
-### CRD Sketch
-
-```yaml
-apiVersion: vpc.roks.ibm.com/v1alpha1
-kind: VPCDNSPolicy
-metadata:
-  name: production-dns
-spec:
-  gatewayRef:
-    name: my-gateway
-  upstream:
-    servers:
-      - url: https://cloudflare-dns.com/dns-query  # DoH
-      - url: tls://dns.quad9.net                    # DoT
-  filtering:
-    enabled: true
-    blocklists:
-      - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
-      - https://adaway.org/hosts.txt
-    allowlist:
-      - "*.internal.example.com"
-    denylist:
-      - "tracking.example.com"
-  localDNS:
-    enabled: true
-    domain: vm.local
-```
-
-### Implementation Notes
-
-- AdGuard Home is the better fit — single binary, Go-native (matches operator stack), built-in DoH/DoT, lighter than Pi-hole
-- Option C (AdGuard Home replacing dnsmasq) is the cleanest long-term but requires migrating DHCP config
-- Option A (sidecar) is the lowest-risk incremental step
-- DNS pod image could be configurable in VPCGateway spec (similar to `routerImage`)
-- Filtering config should be declarative via CRD, not through the AdGuard/Pi-hole web UI (though the UI could be optionally exposed)
+- **Option C migration**: Replace dnsmasq with AdGuard Home's built-in DHCP server for unified DNS+DHCP
+- **Per-network policies**: Different VPCDNSPolicy per router network (currently one policy per router)
+- **Query logging and analytics**: Expose AdGuard Home query metrics to Prometheus
 
 ## VPN Gateway
 
@@ -452,7 +401,7 @@ spec:
 
 ## Network Observability Platform
 
-**Status**: Phase 1 implemented, Phases 2-4 under consideration
+**Status**: Phases 1-2 implemented, Phases 3-4 under consideration
 
 Build a comprehensive network monitoring, analytics, and alerting stack comparable to VMware NSX's built-in observability — traceflow, flow monitoring, micro-segmentation analytics, health dashboards, and latency analysis.
 
@@ -464,13 +413,13 @@ Build a comprehensive network monitoring, analytics, and alerting stack comparab
 | **Flow Monitoring** (top talkers, app stats) | None (see Traffic Analysis section) | VPC Flow Logs + ntopng + Prometheus |
 | **Live Traffic Analysis** (per-interface stats) | **Implemented** (metrics exporter sidecar) | `/proc/net/dev` polling in router pod sidecar → Prometheus |
 | **Micro-segmentation Analytics** (rule hits, unused rules) | **Implemented** (nftables `counter` keyword) | nftables counters → metrics exporter → Prometheus |
-| **Network Topology** (interactive, status overlays) | Basic (TopologyViewer, resource relationships only) | Enhanced topology with health status, traffic flow overlays |
+| **Network Topology** (interactive, status overlays) | **Implemented** (health overlays, auto-refresh, edge throughput) | TopologyViewer with NodeStatus mapping, Thanos health queries, 30s polling |
 | **Latency Monitoring** (per-hop latency) | None | Synthetic probes between router pods (Goldpinger-style) |
 | **Health Dashboard** (component health, alarms) | **Implemented** (Observability page + RouterHealthCard) | Unified health view with SLA tracking |
 | **Port Mirroring** | None (see Traffic Analysis section) | tc mirror in router pod |
 | **Correlation Engine** (cross-component event correlation) | None | Event aggregation service in BFF |
 | **IPFIX/sFlow Export** | None | Router pod sFlow agent → collector |
-| **Alerting** (threshold + anomaly) | None | Prometheus AlertManager + custom PrometheusRules |
+| **Alerting** (threshold + anomaly) | **Implemented** (alert timeline on dashboard) | K8s Warning events + Prometheus alerts aggregated via BFF, AlertTimelineCard |
 
 ### Component 1: Enhanced Prometheus Metrics
 
@@ -490,10 +439,11 @@ Extend the existing 5 metrics in `pkg/metrics/metrics.go` with network-level tel
 - CRD status condition transitions
 - Webhook admission latency (p50/p95/p99)
 
-**VPC Flow Logs integration**
+**VPC Flow Logs integration** (Phase 2 — CRD scaffolding implemented 2026-03-04)
 - IBM Cloud VPC Flow Logs capture all traffic on VPC subnets natively
-- Enable via VPC API (`CreateFlowLogCollector`) per subnet — operator can automate this
-- Logs go to a COS bucket, then process with a flow log aggregator
+- `VPCSubnet` CRD now has `spec.flowLogs` (enabled, cosBucketCRN, interval) and `status.flowLogCollectorID`
+- VPCSubnet reconciler calls `reconcileFlowLogs()` for lifecycle management
+- VPC client methods are stubbed (`flow_logs.go`) — awaiting VPC SDK wiring
 - Provides: source/dest IP, port, protocol, action (accept/reject), bytes, packets
 
 ### Component 2: Traceflow

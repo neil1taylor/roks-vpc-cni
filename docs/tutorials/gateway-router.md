@@ -2027,9 +2027,143 @@ spec:
 
 ---
 
-## Part 11: Cleanup
+## Part 11: DHCP Lease Persistence and Auto-Reservations
 
-Delete resources in reverse order: VMs first, then routers, gateways, and finally networks.
+### 11.1 Enable DHCP lease persistence
+
+By default, DHCP leases are lost when the router pod restarts. Enable PVC-backed persistence:
+
+```yaml
+# demo-router-dhcp-persist.yaml
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCRouter
+metadata:
+  name: demo-router
+  namespace: roks-vpc-network-operator
+spec:
+  gateway: demo-gw
+  networks:
+  - name: demo-l2
+    namespace: default
+    address: "10.100.0.1/24"
+  dhcp:
+    enabled: true
+    leasePersistence:
+      enabled: true              # Create a PVC for lease files
+      storageSize: 100Mi         # Default; increase for large deployments
+      # storageClassName: ""     # Empty = cluster default StorageClass
+```
+
+```bash
+oc apply -f demo-router-dhcp-persist.yaml
+
+# Verify PVC is created and bound
+oc get pvc demo-router-dhcp-leases -n roks-vpc-network-operator
+
+# Check status condition
+oc get vpcrouter demo-router -n roks-vpc-network-operator -o jsonpath='{.status.leasePersistenceReady}'
+```
+
+### 11.2 Enable auto-reservations from VMs
+
+Instead of manually adding MAC->IP reservations, let the router auto-discover them from VM annotations:
+
+```yaml
+# demo-router-auto-reserve.yaml
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCRouter
+metadata:
+  name: demo-router
+  namespace: roks-vpc-network-operator
+spec:
+  gateway: demo-gw
+  networks:
+  - name: demo-l2
+    namespace: default
+    address: "10.100.0.1/24"
+  dhcp:
+    enabled: true
+    autoReservations: true       # Auto-discover VMs' MAC/IP from annotations
+    leasePersistence:
+      enabled: true
+```
+
+```bash
+oc apply -f demo-router-auto-reserve.yaml
+
+# Check auto-discovered reservation count
+oc get vpcrouter demo-router -n roks-vpc-network-operator -o jsonpath='{.status.networks[0].dhcp.autoReservationCount}'
+```
+
+The reconciler reads `vpc.roks.ibm.com/network-interfaces` annotations on VirtualMachines and creates DHCP reservations. Manual reservations take precedence on MAC collisions.
+
+---
+
+## Part 12: DNS Filtering with VPCDNSPolicy
+
+### 12.1 Create a DNS filtering policy
+
+```yaml
+# demo-dns-policy.yaml
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCDNSPolicy
+metadata:
+  name: demo-dns
+  namespace: roks-vpc-network-operator
+spec:
+  routerRef: demo-router
+  upstream:
+    servers:
+    - url: https://cloudflare-dns.com/dns-query   # DNS-over-HTTPS
+    - url: tls://dns.quad9.net                      # DNS-over-TLS
+  filtering:
+    enabled: true
+    blocklists:
+    - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+    allowlist:
+    - "*.internal.example.com"
+  localDNS:
+    enabled: true
+    domain: vm.local
+```
+
+```bash
+oc apply -f demo-dns-policy.yaml
+
+# Verify policy is active
+oc get vpcdnspolicy demo-dns -n roks-vpc-network-operator
+
+# Check the AdGuard Home ConfigMap was created
+oc get configmap demo-dns-adguard-config -n roks-vpc-network-operator
+
+# The router pod will be recreated with an adguard-home sidecar
+oc get pods -l app=vpc-router -n roks-vpc-network-operator
+oc logs demo-router-pod -c adguard-home -n roks-vpc-network-operator
+```
+
+### 12.2 Verify DNS filtering
+
+From a VM connected to the router:
+
+```bash
+# DNS queries now go through AdGuard Home
+nslookup example.com           # Should resolve (allowed)
+nslookup ads.example.com       # Should be blocked (if in blocklist)
+
+# The router's dnsmasq forwards to AdGuard Home at 127.0.0.1#5353
+```
+
+---
+
+## Part 13: Cleanup
+
+Delete resources in reverse order: DNS policies, VMs, routers, gateways, and finally networks.
+
+### Delete DNS policies
+
+```bash
+oc delete vpcdnspolicy --all -n roks-vpc-network-operator
+```
 
 ### Delete VMs
 
@@ -2105,6 +2239,7 @@ oc delete namespace vm-demo
 | `FloatingIP` | `fip` | Namespaced | `vpc.roks.ibm.com/v1alpha1` | Public floating IP |
 | `VPCGateway` | `vgw` | Namespaced | `vpc.roks.ibm.com/v1alpha1` | Shared VPC uplink |
 | `VPCRouter` | `vrt` | Namespaced | `vpc.roks.ibm.com/v1alpha1` | L2 network router |
+| `VPCDNSPolicy` | `vdp` | Namespaced | `vpc.roks.ibm.com/v1alpha1` | DNS filtering via AdGuard Home |
 
 ### VPCGateway spec fields
 
@@ -2141,6 +2276,10 @@ oc delete namespace vm-demo
 | `networks[].namespace` | string | No | - | NAD namespace |
 | `networks[].address` | string | Yes | - | Router's IP on network |
 | `dhcp.enabled` | bool | No | `false` | Run DHCP server |
+| `dhcp.autoReservations` | bool | No | `false` | Auto-discover MAC/IP from VMs |
+| `dhcp.leasePersistence.enabled` | bool | No | `false` | PVC for DHCP leases |
+| `dhcp.leasePersistence.storageSize` | string | No | `100Mi` | PVC size |
+| `dhcp.leasePersistence.storageClassName` | string | No | cluster default | StorageClass |
 | `firewall.enabled` | bool | No | `false` | Enable firewall |
 | `firewall.rules[]` | | No | - | Firewall rules |
 | `routeAdvertisement.connectedSegments` | bool | No | `true` | Advertise connected CIDRs |
@@ -2163,6 +2302,7 @@ oc delete namespace vm-demo
 | `vpc.roks.ibm.com/vm-cleanup` | VirtualMachine | VNI + reserved IP + floating IP |
 | `vpc.roks.ibm.com/gateway-cleanup` | VPCGateway | FIP + PAR + VPC routes + VLAN attachment + VNI |
 | `vpc.roks.ibm.com/router-cleanup` | VPCRouter | Router pod |
+| `vpc.roks.ibm.com/dnspolicy-cleanup` | VPCDNSPolicy | AdGuard Home ConfigMap |
 
 ### Annotation quick reference
 
