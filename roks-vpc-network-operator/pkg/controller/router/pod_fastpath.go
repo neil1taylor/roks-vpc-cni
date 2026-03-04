@@ -152,12 +152,20 @@ func buildFastpathRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway)
 	// Append metrics exporter sidecar when metrics are enabled
 	if router.Spec.Metrics != nil && router.Spec.Metrics.Enabled {
 		pod.Spec.Containers = append(pod.Spec.Containers, buildMetricsExporterContainer(router))
-		pod.Spec.Volumes = append(pod.Spec.Volumes,
-			corev1.Volume{
-				Name:         "dnsmasq-leases",
-				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-			},
-		)
+		// Shared volume for dnsmasq lease files — PVC if persistence enabled, emptyDir otherwise
+		leaseVolume := corev1.Volume{Name: "dnsmasq-leases"}
+		if router.Spec.DHCP != nil && router.Spec.DHCP.LeasePersistence != nil && router.Spec.DHCP.LeasePersistence.Enabled {
+			leaseVolume.VolumeSource = corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: leasePVCName(router.Name),
+				},
+			}
+		} else {
+			leaseVolume.VolumeSource = corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			}
+		}
+		pod.Spec.Volumes = append(pod.Spec.Volumes, leaseVolume)
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
 			corev1.VolumeMount{Name: "dnsmasq-leases", MountPath: "/var/lib/misc"},
 		)

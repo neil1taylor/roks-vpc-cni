@@ -473,3 +473,108 @@ func TestBuildNetworkConfigJSON(t *testing.T) {
 		t.Errorf("NETWORK_CONFIG should contain addresses, got %s", json)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// DHCP Lease Persistence Volume Tests
+// ---------------------------------------------------------------------------
+
+func TestBuildRouterPod_WithLeasePersistence(t *testing.T) {
+	router := newTestRouter()
+	router.Spec.DHCP = &v1alpha1.RouterDHCP{
+		Enabled:          true,
+		LeasePersistence: &v1alpha1.DHCPLeasePersistence{Enabled: true},
+	}
+	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
+	gw := newTestGateway()
+	pod := buildRouterPod(router, gw)
+
+	var found bool
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == "dnsmasq-leases" {
+			if v.PersistentVolumeClaim == nil {
+				t.Error("expected PVC volume source, got non-PVC")
+			} else if v.PersistentVolumeClaim.ClaimName != "test-router-dhcp-leases" {
+				t.Errorf("expected PVC claim name 'test-router-dhcp-leases', got %q", v.PersistentVolumeClaim.ClaimName)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("dnsmasq-leases volume not found in pod spec")
+	}
+}
+
+func TestBuildRouterPod_WithoutLeasePersistence(t *testing.T) {
+	router := newTestRouter()
+	router.Spec.DHCP = &v1alpha1.RouterDHCP{Enabled: true}
+	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
+	gw := newTestGateway()
+	pod := buildRouterPod(router, gw)
+
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == "dnsmasq-leases" {
+			if v.PersistentVolumeClaim != nil {
+				t.Error("expected emptyDir volume, got PVC")
+			}
+			if v.EmptyDir == nil {
+				t.Error("expected emptyDir volume source")
+			}
+			return
+		}
+	}
+	// Volume should exist because metrics is enabled
+	t.Error("dnsmasq-leases volume not found in pod spec")
+}
+
+func TestBuildRouterPod_FastpathWithLeasePersistence(t *testing.T) {
+	router := newTestRouter()
+	router.Spec.Mode = "fast-path"
+	router.Spec.DHCP = &v1alpha1.RouterDHCP{
+		Enabled:          true,
+		LeasePersistence: &v1alpha1.DHCPLeasePersistence{Enabled: true},
+	}
+	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
+	gw := newTestGateway()
+	pod := buildRouterPod(router, gw)
+
+	var found bool
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == "dnsmasq-leases" {
+			if v.PersistentVolumeClaim == nil {
+				t.Error("expected PVC volume source in fast-path mode, got non-PVC")
+			} else if v.PersistentVolumeClaim.ClaimName != "test-router-dhcp-leases" {
+				t.Errorf("expected PVC claim name 'test-router-dhcp-leases', got %q", v.PersistentVolumeClaim.ClaimName)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("dnsmasq-leases volume not found in fast-path pod spec")
+	}
+}
+
+func TestBuildRouterPod_LeasePersistenceDisabled(t *testing.T) {
+	router := newTestRouter()
+	router.Spec.DHCP = &v1alpha1.RouterDHCP{
+		Enabled:          true,
+		LeasePersistence: &v1alpha1.DHCPLeasePersistence{Enabled: false},
+	}
+	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
+	gw := newTestGateway()
+	pod := buildRouterPod(router, gw)
+
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == "dnsmasq-leases" {
+			if v.PersistentVolumeClaim != nil {
+				t.Error("expected emptyDir volume when persistence disabled, got PVC")
+			}
+			if v.EmptyDir == nil {
+				t.Error("expected emptyDir volume source when persistence disabled")
+			}
+			return
+		}
+	}
+	t.Error("dnsmasq-leases volume not found in pod spec")
+}

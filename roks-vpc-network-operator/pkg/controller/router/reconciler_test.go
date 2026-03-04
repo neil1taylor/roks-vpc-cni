@@ -1612,6 +1612,144 @@ func TestReconcileNormal_StandardModeNoXDP(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// DHCP Lease Persistence Reconciler Tests
+// ---------------------------------------------------------------------------
+
+func TestReconcile_LeasePersistenceStatus(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-lp", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase: "Ready", MACAddress: "fa:16:3e:aa:bb:cc", ReservedIP: "10.240.1.5",
+		},
+	}
+
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-lp", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-lp",
+			Networks: []v1alpha1.RouterNetwork{{Name: "net-a", Address: "10.100.0.1/24"}},
+			DHCP: &v1alpha1.RouterDHCP{
+				Enabled:          true,
+				LeasePersistence: &v1alpha1.DHCPLeasePersistence{Enabled: true},
+			},
+		},
+	}
+
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, router).
+		WithStatusSubresource(gw, router).
+		Build()
+
+	r := &Reconciler{Client: fc, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "rt-lp", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	// Verify PVC was created
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "rt-lp-dhcp-leases", Namespace: "default"}, pvc); err != nil {
+		t.Fatalf("PVC not created: %v", err)
+	}
+
+	// Verify owner reference is set
+	if len(pvc.OwnerReferences) == 0 {
+		t.Error("expected owner reference on PVC")
+	} else if pvc.OwnerReferences[0].Name != "rt-lp" {
+		t.Errorf("expected owner reference to rt-lp, got %q", pvc.OwnerReferences[0].Name)
+	}
+
+	// Verify status has LeasePersistenceReady condition
+	updated := &v1alpha1.VPCRouter{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "rt-lp", Namespace: "default"}, updated); err != nil {
+		t.Fatalf("Failed to get updated router: %v", err)
+	}
+
+	foundCondition := false
+	for _, c := range updated.Status.Conditions {
+		if c.Type == "LeasePersistenceReady" {
+			foundCondition = true
+			// PVC is newly created, not yet bound — condition should be False
+			if c.Status != metav1.ConditionFalse {
+				t.Errorf("expected LeasePersistenceReady = False (PVC pending), got %s", c.Status)
+			}
+			if c.Reason != "PVCPending" {
+				t.Errorf("expected reason PVCPending, got %q", c.Reason)
+			}
+		}
+	}
+	if !foundCondition {
+		t.Error("expected LeasePersistenceReady condition to be set")
+	}
+}
+
+func TestReconcile_NoLeasePersistence_NoCondition(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-nolp", Namespace: "default"},
+		Spec: v1alpha1.VPCGatewaySpec{
+			Zone:   "eu-de-1",
+			Uplink: v1alpha1.GatewayUplink{Network: "uplink-net"},
+		},
+		Status: v1alpha1.VPCGatewayStatus{
+			Phase: "Ready", MACAddress: "fa:16:3e:aa:bb:cc", ReservedIP: "10.240.1.5",
+		},
+	}
+
+	router := &v1alpha1.VPCRouter{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-nolp", Namespace: "default"},
+		Spec: v1alpha1.VPCRouterSpec{
+			Gateway:  "gw-nolp",
+			Networks: []v1alpha1.RouterNetwork{{Name: "net-a", Address: "10.100.0.1/24"}},
+			DHCP:     &v1alpha1.RouterDHCP{Enabled: true},
+		},
+	}
+
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, router).
+		WithStatusSubresource(gw, router).
+		Build()
+
+	r := &Reconciler{Client: fc, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "rt-nolp", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	// Verify no PVC was created
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "rt-nolp-dhcp-leases", Namespace: "default"}, pvc); err == nil {
+		t.Error("expected no PVC when lease persistence is not enabled")
+	} else if !errors.IsNotFound(err) {
+		t.Fatalf("unexpected error checking PVC: %v", err)
+	}
+
+	// Verify no LeasePersistenceReady condition
+	updated := &v1alpha1.VPCRouter{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "rt-nolp", Namespace: "default"}, updated); err != nil {
+		t.Fatalf("Failed to get updated router: %v", err)
+	}
+	for _, c := range updated.Status.Conditions {
+		if c.Type == "LeasePersistenceReady" {
+			t.Error("expected no LeasePersistenceReady condition when persistence is not enabled")
+		}
+	}
+}
+
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
 }

@@ -108,6 +108,16 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		return r.setFailedStatus(ctx, router, fmt.Sprintf("Failed to ensure router pod: %v", err))
 	}
 
+	// Step 4a: Ensure DHCP lease PVC if persistence is enabled
+	if router.Spec.DHCP != nil && router.Spec.DHCP.LeasePersistence != nil && router.Spec.DHCP.LeasePersistence.Enabled {
+		bound, pvcErr := r.ensureLeasePVC(ctx, router)
+		if pvcErr != nil {
+			logger.Error(pvcErr, "Failed to ensure DHCP lease PVC")
+			r.emitEvent(router, "Warning", "PVCFailed", "Failed to ensure DHCP lease PVC: %v", pvcErr)
+		}
+		router.Status.LeasePersistenceReady = bound
+	}
+
 	// Step 4b: Auto-resolve transit network from gateway status
 	transitNetwork := ""
 	if router.Spec.Transit != nil && router.Spec.Transit.Network != "" {
@@ -233,6 +243,28 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		})
 	} else {
 		meta.RemoveStatusCondition(&router.Status.Conditions, "DHCPReady")
+	}
+
+	// Lease persistence status condition
+	if router.Spec.DHCP != nil && router.Spec.DHCP.LeasePersistence != nil && router.Spec.DHCP.LeasePersistence.Enabled {
+		pvcStatus := metav1.ConditionFalse
+		pvcReason := "PVCPending"
+		pvcMsg := "DHCP lease PVC is pending"
+		if router.Status.LeasePersistenceReady {
+			pvcStatus = metav1.ConditionTrue
+			pvcReason = "PVCBound"
+			pvcMsg = "DHCP lease PVC is bound"
+		}
+		meta.SetStatusCondition(&router.Status.Conditions, metav1.Condition{
+			Type:               "LeasePersistenceReady",
+			Status:             pvcStatus,
+			Reason:             pvcReason,
+			Message:            pvcMsg,
+			LastTransitionTime: now,
+		})
+	} else {
+		router.Status.LeasePersistenceReady = false
+		meta.RemoveStatusCondition(&router.Status.Conditions, "LeasePersistenceReady")
 	}
 
 	// IDS/IPS status
