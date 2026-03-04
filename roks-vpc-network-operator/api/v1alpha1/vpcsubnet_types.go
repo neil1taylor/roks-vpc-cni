@@ -4,6 +4,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// FlowLogConfig configures VPC Flow Log collection for a subnet.
+type FlowLogConfig struct {
+	// Enabled controls whether flow log collection is active.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// COSBucketCRN is the Cloud Object Storage bucket CRN for flow log storage.
+	// +optional
+	COSBucketCRN string `json:"cosBucketCRN,omitempty"`
+
+	// Interval is the aggregation interval in seconds (default 300).
+	// +optional
+	Interval *int32 `json:"interval,omitempty"`
+}
+
 // VPCSubnetSpec defines the desired state of a VPC subnet.
 type VPCSubnetSpec struct {
 	// VPCID is the IBM Cloud VPC ID in which to create the subnet.
@@ -44,6 +59,10 @@ type VPCSubnetSpec struct {
 	// CUDNName is the name of the associated ClusterUserDefinedNetwork, if any.
 	// +optional
 	CUDNName string `json:"cudnName,omitempty"`
+
+	// FlowLogs configures VPC Flow Log collection.
+	// +optional
+	FlowLogs *FlowLogConfig `json:"flowLogs,omitempty"`
 }
 
 // VPCSubnetStatus defines the observed state of a VPC subnet.
@@ -69,6 +88,14 @@ type VPCSubnetStatus struct {
 
 	// Conditions represent the latest available observations of the subnet's state.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// FlowLogCollectorID is the VPC ID of the flow log collector.
+	// +optional
+	FlowLogCollectorID string `json:"flowLogCollectorID,omitempty"`
+
+	// FlowLogActive indicates whether flow log collection is active.
+	// +optional
+	FlowLogActive bool `json:"flowLogActive,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -127,7 +127,10 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, subnet *v1alpha1.VPCSu
 		logger.Info("Created VPC subnet", "subnetID", vpcSubnet.ID)
 	}
 
-	// Step 3: Update status
+	// Step 3: Reconcile flow log collector
+	r.reconcileFlowLogs(ctx, subnet)
+
+	// Step 4: Update status
 	subnet.Status.SubnetID = vpcSubnet.ID
 	subnet.Status.VPCSubnetStatus = vpcSubnet.Status
 	subnet.Status.SyncStatus = "Synced"
@@ -150,9 +153,79 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, subnet *v1alpha1.VPCSu
 	return ctrl.Result{}, nil
 }
 
+// reconcileFlowLogs ensures the flow log collector matches the desired spec.
+// Errors are logged but do not block subnet reconciliation.
+func (r *Reconciler) reconcileFlowLogs(ctx context.Context, subnet *v1alpha1.VPCSubnet) {
+	logger := log.FromContext(ctx)
+
+	// If flow logs are not configured or not enabled, clean up any existing collector
+	if subnet.Spec.FlowLogs == nil || !subnet.Spec.FlowLogs.Enabled {
+		if subnet.Status.FlowLogCollectorID != "" {
+			logger.Info("Flow logs disabled, deleting collector", "collectorID", subnet.Status.FlowLogCollectorID)
+			if err := r.VPC.DeleteFlowLogCollector(ctx, subnet.Status.FlowLogCollectorID); err != nil {
+				logger.Error(err, "Failed to delete flow log collector", "collectorID", subnet.Status.FlowLogCollectorID)
+			} else {
+				subnet.Status.FlowLogCollectorID = ""
+				subnet.Status.FlowLogActive = false
+			}
+		}
+		return
+	}
+
+	// Flow logs enabled — need a COS bucket CRN
+	if subnet.Spec.FlowLogs.COSBucketCRN == "" {
+		logger.Info("Flow logs enabled but no COSBucketCRN specified, skipping")
+		return
+	}
+
+	// Check if collector already exists
+	if subnet.Status.FlowLogCollectorID != "" {
+		existing, err := r.VPC.GetFlowLogCollector(ctx, subnet.Status.FlowLogCollectorID)
+		if err == nil {
+			// Collector exists — update status
+			subnet.Status.FlowLogActive = existing.IsActive
+			return
+		}
+		// Collector not found or error — try to create a new one
+		logger.Info("Existing flow log collector not found, will recreate", "collectorID", subnet.Status.FlowLogCollectorID, "error", err)
+		subnet.Status.FlowLogCollectorID = ""
+	}
+
+	// Create the flow log collector
+	collectorName := fmt.Sprintf("roks-%s-%s-flowlog", r.ClusterID, subnet.Name)
+	collector, err := r.VPC.CreateFlowLogCollector(ctx, vpc.CreateFlowLogCollectorOptions{
+		Name:           collectorName,
+		TargetSubnetID: subnet.Status.SubnetID,
+		COSBucketCRN:   subnet.Spec.FlowLogs.COSBucketCRN,
+		IsActive:       true,
+		ClusterID:      subnet.Spec.ClusterID,
+		OwnerKind:      "vpcsubnet",
+		OwnerName:      subnet.Name,
+	})
+	if err != nil {
+		// Log and continue — flow log creation failure should not block subnet reconciliation
+		logger.Error(err, "Failed to create flow log collector (stub — will be implemented with VPC SDK)")
+		return
+	}
+
+	subnet.Status.FlowLogCollectorID = collector.ID
+	subnet.Status.FlowLogActive = collector.IsActive
+	logger.Info("Created flow log collector", "collectorID", collector.ID)
+}
+
 // reconcileDelete handles VPCSubnet deletion.
 func (r *Reconciler) reconcileDelete(ctx context.Context, subnet *v1alpha1.VPCSubnet) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+
+	// Step 0: Delete flow log collector if it exists
+	if subnet.Status.FlowLogCollectorID != "" {
+		if err := r.VPC.DeleteFlowLogCollector(ctx, subnet.Status.FlowLogCollectorID); err != nil {
+			logger.Error(err, "Failed to delete flow log collector during subnet deletion", "collectorID", subnet.Status.FlowLogCollectorID)
+			// Continue with subnet deletion — flow log collector cleanup is best-effort
+		} else {
+			logger.Info("Deleted flow log collector", "collectorID", subnet.Status.FlowLogCollectorID)
+		}
+	}
 
 	// Step 1: Delete VPC subnet if it exists
 	if subnet.Status.SubnetID != "" {

@@ -264,4 +264,32 @@ func (c *InstrumentedClient) DeletePublicAddressRange(ctx context.Context, parID
 	return err
 }
 
+func (c *InstrumentedClient) CreateFlowLogCollector(ctx context.Context, opts CreateFlowLogCollectorOptions) (*FlowLogCollector, error) {
+	start := time.Now()
+	result, err := c.inner.CreateFlowLogCollector(ctx, opts)
+	recordCall("CreateFlowLogCollector", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) DeleteFlowLogCollector(ctx context.Context, id string) error {
+	start := time.Now()
+	err := c.inner.DeleteFlowLogCollector(ctx, id)
+	recordCall("DeleteFlowLogCollector", start, err)
+	return err
+}
+
+func (c *InstrumentedClient) ListFlowLogCollectors(ctx context.Context) ([]FlowLogCollector, error) {
+	start := time.Now()
+	result, err := c.inner.ListFlowLogCollectors(ctx)
+	recordCall("ListFlowLogCollectors", start, err)
+	return result, err
+}
+
+func (c *InstrumentedClient) GetFlowLogCollector(ctx context.Context, id string) (*FlowLogCollector, error) {
+	start := time.Now()
+	result, err := c.inner.GetFlowLogCollector(ctx, id)
+	recordCall("GetFlowLogCollector", start, err)
+	return result, err
+}
+
 var _ Client = (*InstrumentedClient)(nil)

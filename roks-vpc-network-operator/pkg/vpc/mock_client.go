@@ -106,6 +106,12 @@ type MockClient struct {
 
 	// Public Gateway operations
 	ListPublicGatewaysFn func(ctx context.Context, vpcID string) ([]PublicGateway, error)
+
+	// Flow Log Collector operations
+	CreateFlowLogCollectorFn func(ctx context.Context, opts CreateFlowLogCollectorOptions) (*FlowLogCollector, error)
+	DeleteFlowLogCollectorFn func(ctx context.Context, id string) error
+	ListFlowLogCollectorsFn  func(ctx context.Context) ([]FlowLogCollector, error)
+	GetFlowLogCollectorFn    func(ctx context.Context, id string) (*FlowLogCollector, error)
 }
 
 // NewMockClient creates a new MockClient with default error implementations.
@@ -585,6 +591,39 @@ func (m *MockClient) ListPublicGateways(ctx context.Context, vpcID string) ([]Pu
 		return m.ListPublicGatewaysFn(ctx, vpcID)
 	}
 	return nil, fmt.Errorf("ListPublicGateways not configured in mock")
+}
+
+// Flow Log Collector operations
+func (m *MockClient) CreateFlowLogCollector(ctx context.Context, opts CreateFlowLogCollectorOptions) (*FlowLogCollector, error) {
+	m.trackCall("CreateFlowLogCollector")
+	if m.CreateFlowLogCollectorFn != nil {
+		return m.CreateFlowLogCollectorFn(ctx, opts)
+	}
+	return nil, fmt.Errorf("CreateFlowLogCollector not configured in mock")
+}
+
+func (m *MockClient) DeleteFlowLogCollector(ctx context.Context, id string) error {
+	m.trackCall("DeleteFlowLogCollector")
+	if m.DeleteFlowLogCollectorFn != nil {
+		return m.DeleteFlowLogCollectorFn(ctx, id)
+	}
+	return fmt.Errorf("DeleteFlowLogCollector not configured in mock")
+}
+
+func (m *MockClient) ListFlowLogCollectors(ctx context.Context) ([]FlowLogCollector, error) {
+	m.trackCall("ListFlowLogCollectors")
+	if m.ListFlowLogCollectorsFn != nil {
+		return m.ListFlowLogCollectorsFn(ctx)
+	}
+	return nil, fmt.Errorf("ListFlowLogCollectors not configured in mock")
+}
+
+func (m *MockClient) GetFlowLogCollector(ctx context.Context, id string) (*FlowLogCollector, error) {
+	m.trackCall("GetFlowLogCollector")
+	if m.GetFlowLogCollectorFn != nil {
+		return m.GetFlowLogCollectorFn(ctx, id)
+	}
+	return nil, fmt.Errorf("GetFlowLogCollector not configured in mock")
 }
 
 // Compile-time interface checks

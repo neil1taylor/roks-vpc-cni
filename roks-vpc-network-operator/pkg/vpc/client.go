@@ -22,6 +22,15 @@ type Client interface {
 	RoutingTableService
 	RouteService
 	PublicAddressRangeService
+	FlowLogClient
+}
+
+// FlowLogClient provides operations on VPC flow log collectors.
+type FlowLogClient interface {
+	CreateFlowLogCollector(ctx context.Context, opts CreateFlowLogCollectorOptions) (*FlowLogCollector, error)
+	DeleteFlowLogCollector(ctx context.Context, id string) error
+	ListFlowLogCollectors(ctx context.Context) ([]FlowLogCollector, error)
+	GetFlowLogCollector(ctx context.Context, id string) (*FlowLogCollector, error)
 }
 
 // BareMetalServerService handles listing VPC bare metal servers.
