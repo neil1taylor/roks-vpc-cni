@@ -3,8 +3,13 @@ import {
   EdgeModel,
   Model,
 } from '@patternfly/react-topology';
-import { createNodeModel, createGroupNode, NODE_TYPES, mapBFFStatus } from './nodes';
+import { createNodeModel, createGroupNode, NODE_TYPES, mapBFFStatus, HealthStatus } from './nodes';
 import { BFF_EDGE_TYPES, STRUCTURAL_EDGE_TYPES, createVisibleEdge } from './edges';
+
+export interface NodeHealthData {
+  status: HealthStatus;
+  metrics?: Record<string, number>;
+}
 
 /**
  * Topology data structure from BFF API
@@ -16,6 +21,7 @@ export interface TopologyNode {
   status?: string;
   resourceId?: string;
   details?: Record<string, string>;
+  health?: NodeHealthData;
 }
 
 export interface TopologyEdge {
@@ -120,6 +126,7 @@ export const transformTopologyData = (
   for (const node of data.nodes) {
     const type = resolvedType.get(node.id)!;
     const status = mapBFFStatus(node.status);
+    const healthStatus = node.health?.status as HealthStatus | undefined;
     const childSet = children.get(node.id);
     const childIds = childSet ? Array.from(childSet) : undefined;
     const isGroupable = type === NODE_TYPES.VPC || type === NODE_TYPES.SUBNET;
@@ -134,6 +141,7 @@ export const transformTopologyData = (
           status,
           details: node.details,
           children: childIds,
+          healthStatus,
         })
       );
     } else {
@@ -147,6 +155,7 @@ export const transformTopologyData = (
           details: node.details,
           width: 75,
           height: 75,
+          healthStatus,
         })
       );
     }

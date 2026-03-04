@@ -328,6 +328,11 @@ export interface NetworkTypesInfo {
 }
 
 // Topology Types
+export interface NodeHealth {
+  status: 'healthy' | 'warning' | 'critical';
+  metrics?: Record<string, number>;
+}
+
 export interface TopologyData {
   nodes: TopologyNode[];
   edges: TopologyEdge[];
@@ -339,6 +344,7 @@ export interface TopologyNode {
   type: 'vpc' | 'subnet' | 'instance' | 'vni' | 'security-group' | 'network-acl' | 'floating-ip';
   status?: 'available' | 'pending' | 'error';
   metadata?: Record<string, unknown>;
+  health?: NodeHealth;
 }
 
 export interface TopologyEdge {
@@ -698,6 +704,16 @@ export interface NFTRuleMetrics {
   bytes: number;
 }
 
+// ── Subnet Metrics ──
+
+export interface SubnetMetrics {
+  throughputRx: DataPoint[];
+  throughputTx: DataPoint[];
+  dhcpPoolSize: number;
+  dhcpActiveLeases: number;
+  dhcpUtilizationPct: number;
+}
+
 // ── VPCL2Bridge ──
 
 export interface L2Bridge {
@@ -846,6 +862,20 @@ export interface CreateDNSPolicyRequest {
     domain?: string;
   };
   image?: string;
+}
+
+// ── Alert Timeline ──
+
+export interface AlertTimelineEntry {
+  timestamp: string;
+  severity: 'info' | 'warning' | 'critical';
+  source: 'k8s-event' | 'prometheus-alert';
+  message: string;
+  resourceRef?: {
+    kind: string;
+    name: string;
+    namespace: string;
+  };
 }
 
 export interface CreateVPNGatewayRequest {

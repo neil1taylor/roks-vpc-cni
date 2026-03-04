@@ -47,6 +47,8 @@ import {
   DNSPolicy,
   CreateDNSPolicyRequest,
   IssuedClient,
+  AlertTimelineEntry,
+  SubnetMetrics,
   ApiResponse,
   ApiError,
 } from './types';
@@ -218,6 +220,18 @@ class VPCNetworkClient {
     return this.request<ReservedIP[]>('GET', `/subnets/${subnetId}/reserved-ips`);
   }
 
+  async getSubnetMetrics(
+    name: string,
+    namespace?: string,
+    range?: string,
+  ): Promise<ApiResponse<SubnetMetrics>> {
+    const params = new URLSearchParams();
+    if (namespace) params.set('namespace', namespace);
+    if (range) params.set('range', range);
+    const qs = params.toString();
+    return this.request<SubnetMetrics>('GET', `/subnets/${name}/metrics${qs ? `?${qs}` : ''}`);
+  }
+
   // Virtual Network Interface Operations
   async listVNIs(subnetId?: string): Promise<ApiResponse<VirtualNetworkInterface[]>> {
     const endpoint = subnetId ? `/vnis?subnetId=${subnetId}` : '/vnis';
@@ -354,9 +368,12 @@ class VPCNetworkClient {
   }
 
   // Topology Operations
-  async getTopology(vpcId?: string): Promise<ApiResponse<TopologyData>> {
-    const endpoint = vpcId ? `/topology?vpcId=${vpcId}` : '/topology';
-    return this.request<TopologyData>('GET', endpoint);
+  async getTopology(vpcId?: string, includeHealth?: boolean): Promise<ApiResponse<TopologyData>> {
+    const params = new URLSearchParams();
+    if (vpcId) params.set('vpcId', vpcId);
+    if (includeHealth) params.set('includeHealth', 'true');
+    const qs = params.toString();
+    return this.request<TopologyData>('GET', `/topology${qs ? `?${qs}` : ''}`);
   }
 
   // Network (CUDN/UDN) Operations
@@ -642,6 +659,12 @@ class VPCNetworkClient {
       'DELETE',
       `/vpn-gateways/${encodeURIComponent(name)}/clients/${encodeURIComponent(clientName)}${params}`,
     );
+  }
+
+  // Alert Timeline Operations
+  async getAlertTimeline(range?: string): Promise<ApiResponse<AlertTimelineEntry[]>> {
+    const params = range ? `?range=${range}` : '';
+    return this.request<AlertTimelineEntry[]>('GET', `/alerts/timeline${params}`);
   }
 
   // DNS Policy Operations

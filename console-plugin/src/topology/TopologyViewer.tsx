@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './topology.css';
 import {
   Toolbar,
   ToolbarContent,
   ToolbarItem,
+  ToolbarGroup,
   Button,
   ButtonVariant,
   Spinner,
@@ -24,6 +25,10 @@ import {
   Checkbox,
   Split,
   SplitItem,
+  Switch,
+  Flex,
+  FlexItem,
+  Label,
 } from '@patternfly/react-core';
 import {
   CompressIcon,
@@ -58,7 +63,7 @@ import {
   TopologyStats,
   calculateTopologyStats,
 } from './layout';
-import { NODE_TYPES, getNodeTypeLabel } from './nodes';
+import { NODE_TYPES, getNodeTypeLabel, HealthStatus } from './nodes';
 
 interface SelectedNodeInfo {
   id: string;
@@ -67,7 +72,25 @@ interface SelectedNodeInfo {
   resourceId?: string;
   details?: Record<string, string>;
   connectedNodeCount: number;
+  healthStatus?: HealthStatus;
 }
+
+/** Auto-refresh interval in milliseconds (30 seconds) */
+const HEALTH_REFRESH_INTERVAL = 30000;
+
+/** Health status color mapping */
+const HEALTH_COLORS: Record<HealthStatus, string> = {
+  healthy: '#3E8635',   // PatternFly green-500
+  warning: '#F0AB00',   // PatternFly gold-400
+  critical: '#C9190B',  // PatternFly red-500
+};
+
+/** Health status label mapping */
+const HEALTH_LABELS: Record<HealthStatus, string> = {
+  healthy: 'Healthy',
+  warning: 'Warning',
+  critical: 'Critical',
+};
 
 /** Leaf node types shown in the filter toolbar */
 const FILTER_NODE_TYPES = [
@@ -125,6 +148,8 @@ const TopologyViewerInner: React.FC = () => {
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(
     new Set(FILTER_NODE_TYPES)
   );
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Register layout and component factories
   useEffect(() => {
@@ -134,42 +159,63 @@ const TopologyViewerInner: React.FC = () => {
     }
   }, [controller]);
 
-  // Fetch topology data
-  useEffect(() => {
-    const fetchTopology = async () => {
-      setIsLoading(true);
-      setError(null);
+  // Shared fetch function for topology data
+  const fetchTopology = useCallback(async (includeHealth?: boolean) => {
+    try {
+      const response = await apiClient.getTopology(undefined, includeHealth);
+      if (response.data) {
+        const topoData: TopologyData = {
+          nodes: response.data.nodes.map((n) => ({
+            id: n.id,
+            name: n.label,
+            type: n.type as any,
+            status: n.status,
+            details: n.metadata as Record<string, string> | undefined,
+            health: n.health ? { status: n.health.status, metrics: n.health.metrics } : undefined,
+          })),
+          edges: response.data.edges.map((e) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            type: e.type,
+          })),
+        };
+        setTopologyData(topoData);
+        setStats(calculateTopologyStats(topoData));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load topology');
+    }
+  }, []);
 
-      try {
-        const response = await apiClient.getTopology();
-        if (response.data) {
-          const topoData: TopologyData = {
-            nodes: response.data.nodes.map((n) => ({
-              id: n.id,
-              name: n.label,
-              type: n.type as any,
-              status: n.status,
-              details: n.metadata as Record<string, string> | undefined,
-            })),
-            edges: response.data.edges.map((e) => ({
-              id: e.id,
-              source: e.source,
-              target: e.target,
-              type: e.type,
-            })),
-          };
-          setTopologyData(topoData);
-          setStats(calculateTopologyStats(topoData));
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load topology');
-      } finally {
-        setIsLoading(false);
+  // Initial fetch
+  useEffect(() => {
+    setIsLoading(true);
+    setError(null);
+    fetchTopology(false).finally(() => setIsLoading(false));
+  }, [fetchTopology]);
+
+  // Auto-refresh with health data
+  useEffect(() => {
+    if (autoRefresh) {
+      // Fetch immediately with health when toggling on
+      fetchTopology(true);
+      refreshTimerRef.current = setInterval(() => {
+        fetchTopology(true);
+      }, HEALTH_REFRESH_INTERVAL);
+    } else {
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
       }
     };
-
-    fetchTopology();
-  }, []);
+  }, [autoRefresh, fetchTopology]);
 
   // Transform and render topology when data changes
   useEffect(() => {
@@ -252,6 +298,7 @@ const TopologyViewerInner: React.FC = () => {
         resourceId: node.resourceId,
         details: node.details,
         connectedNodeCount: connectedIds.length,
+        healthStatus: node.health?.status as HealthStatus | undefined,
       });
       setIsDrawerOpen(true);
     };
@@ -392,6 +439,47 @@ const TopologyViewerInner: React.FC = () => {
           </div>
         </ToolbarItem>
 
+        <ToolbarItem variant="separator" />
+
+        <ToolbarGroup>
+          <ToolbarItem>
+            <Switch
+              id="auto-refresh-toggle"
+              label="Health monitoring"
+              isChecked={autoRefresh}
+              onChange={(_event, checked) => setAutoRefresh(checked)}
+              isReversed
+            />
+          </ToolbarItem>
+
+          {autoRefresh && (
+            <ToolbarItem>
+              <Flex spaceItems={{ default: 'spaceItemsSm' }} alignItems={{ default: 'alignItemsCenter' }}>
+                {(Object.keys(HEALTH_COLORS) as HealthStatus[]).map((status) => (
+                  <FlexItem key={status}>
+                    <Flex spaceItems={{ default: 'spaceItemsXs' }} alignItems={{ default: 'alignItemsCenter' }}>
+                      <FlexItem>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            width: '10px',
+                            height: '10px',
+                            borderRadius: '50%',
+                            backgroundColor: HEALTH_COLORS[status],
+                          }}
+                        />
+                      </FlexItem>
+                      <FlexItem>
+                        <span style={{ fontSize: '0.8rem' }}>{HEALTH_LABELS[status]}</span>
+                      </FlexItem>
+                    </Flex>
+                  </FlexItem>
+                ))}
+              </Flex>
+            </ToolbarItem>
+          )}
+        </ToolbarGroup>
+
         {stats && (
           <ToolbarItem>
             <div style={{ fontSize: '0.875rem', color: '#666' }}>
@@ -442,6 +530,23 @@ const TopologyViewerInner: React.FC = () => {
               <DescriptionListTerm>Resource ID</DescriptionListTerm>
               <DescriptionListDescription>
                 <code>{selectedNode.resourceId}</code>
+              </DescriptionListDescription>
+            </DescriptionListGroup>
+          )}
+
+          {selectedNode.healthStatus && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>Health</DescriptionListTerm>
+              <DescriptionListDescription>
+                <Label
+                  color={
+                    selectedNode.healthStatus === 'healthy' ? 'green' :
+                    selectedNode.healthStatus === 'warning' ? 'gold' :
+                    'red'
+                  }
+                >
+                  {HEALTH_LABELS[selectedNode.healthStatus]}
+                </Label>
               </DescriptionListDescription>
             </DescriptionListGroup>
           )}

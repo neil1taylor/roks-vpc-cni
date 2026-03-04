@@ -39,6 +39,8 @@ export const NODE_BADGES: Record<NodeType, string> = {
   [NODE_TYPES.UDN]: 'UDN',
 };
 
+export type HealthStatus = 'healthy' | 'warning' | 'critical';
+
 export interface CustomNodeData {
   id: string;
   label: string;
@@ -50,6 +52,7 @@ export interface CustomNodeData {
   badgeColor?: string;
   status?: NodeStatus;
   details?: Record<string, string>;
+  healthStatus?: HealthStatus;
 }
 
 export const NODE_COLORS: Record<NodeType, string> = {
@@ -102,6 +105,20 @@ export const mapBFFStatus = (status?: string): NodeStatus | undefined => {
   }
 };
 
+/** Map health status to PatternFly NodeStatus enum values */
+export const mapHealthToNodeStatus = (health?: HealthStatus): NodeStatus | undefined => {
+  switch (health) {
+    case 'healthy':
+      return NodeStatus.success;
+    case 'warning':
+      return NodeStatus.warning;
+    case 'critical':
+      return NodeStatus.danger;
+    default:
+      return undefined;
+  }
+};
+
 export interface NodeConfig {
   id: string;
   label: string;
@@ -116,6 +133,7 @@ export interface NodeConfig {
   children?: string[];
   parent?: string;
   group?: boolean;
+  healthStatus?: HealthStatus;
 }
 
 /**
@@ -126,6 +144,11 @@ export const createNodeModel = (config: NodeConfig): NodeModel => {
   const shape = NODE_SHAPES[nodeType];
   const icon = NODE_ICONS[nodeType];
 
+  // When health data is present, it overrides the BFF resource status for visual display
+  const effectiveStatus = config.healthStatus
+    ? mapHealthToNodeStatus(config.healthStatus)
+    : config.status;
+
   const nodeData: CustomNodeData = {
     id: config.id,
     label: config.label,
@@ -135,8 +158,9 @@ export const createNodeModel = (config: NodeConfig): NodeModel => {
     color: NODE_COLORS[nodeType],
     badge: NODE_BADGES[nodeType],
     badgeColor: NODE_COLORS[nodeType],
-    status: config.status,
+    status: effectiveStatus,
     details: config.details,
+    healthStatus: config.healthStatus,
   };
 
   const model: NodeModel = {
@@ -161,6 +185,9 @@ export const createNodeModel = (config: NodeConfig): NodeModel => {
  */
 export const createGroupNode = (config: Omit<NodeConfig, 'group'>): NodeModel => {
   const nodeType = config.nodeType;
+  const effectiveStatus = config.healthStatus
+    ? mapHealthToNodeStatus(config.healthStatus)
+    : config.status;
   const model: NodeModel = {
     id: config.id,
     type: `${nodeType}-group`,
@@ -179,8 +206,9 @@ export const createGroupNode = (config: Omit<NodeConfig, 'group'>): NodeModel =>
       color: NODE_COLORS[nodeType],
       badge: NODE_BADGES[nodeType],
       badgeColor: NODE_COLORS[nodeType],
-      status: config.status,
+      status: effectiveStatus,
       details: config.details,
+      healthStatus: config.healthStatus,
     },
     children: config.children,
     group: true,
