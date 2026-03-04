@@ -23,6 +23,7 @@ import (
 	"github.com/IBM/roks-vpc-network-operator/pkg/controller/network"
 	nodectrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/node"
 	routerctr "github.com/IBM/roks-vpc-network-operator/pkg/controller/router"
+	traceflowctr "github.com/IBM/roks-vpc-network-operator/pkg/controller/traceflow"
 	udnctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/udn"
 	vlactrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/vlanattachment"
 	vmctrl "github.com/IBM/roks-vpc-network-operator/pkg/controller/vm"
@@ -280,6 +281,14 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Unable to create VPCVPNGateway controller")
+		os.Exit(1)
+	}
+
+	if err := (&traceflowctr.Reconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "Unable to create VPCTraceflow controller")
 		os.Exit(1)
 	}
 
