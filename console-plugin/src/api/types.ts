@@ -782,6 +782,7 @@ export interface VPNGateway {
   activeTunnels: number;
   totalTunnels: number;
   connectedClients: number;
+  issuedClients?: number;
   tunnels?: VPNTunnelStatus[];
   advertisedRoutes?: string[];
   tunnelMTU?: number;
@@ -790,6 +791,15 @@ export interface VPNGateway {
   syncStatus: string;
   message?: string;
   createdAt?: string;
+}
+
+export interface IssuedClient {
+  clientName: string;
+  secretName: string;
+  serialHex: string;
+  issuedAt: string;
+  expiresAt: string;
+  revoked: boolean;
 }
 
 export interface CreateVPNGatewayRequest {

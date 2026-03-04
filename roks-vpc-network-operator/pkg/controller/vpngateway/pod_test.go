@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
@@ -645,14 +646,15 @@ func TestBuildOpenVPNPod(t *testing.T) {
 		t.Errorf("expected NET_ADMIN and NET_RAW capabilities, got %v", caps)
 	}
 
-	// Volumes: 3 required (ca, cert, key)
-	if len(pod.Spec.Volumes) != 3 {
-		t.Fatalf("expected 3 volumes (ca, cert, key), got %d", len(pod.Spec.Volumes))
+	// Volumes: 3 required (ca, cert, key) + 1 CRL
+	if len(pod.Spec.Volumes) != 4 {
+		t.Fatalf("expected 4 volumes (ca, cert, key, crl), got %d", len(pod.Spec.Volumes))
 	}
 	expectedVolumes := map[string]string{
 		"openvpn-ca":   "ovpn-ca-secret",
 		"openvpn-cert": "ovpn-cert-secret",
 		"openvpn-key":  "ovpn-key-secret",
+		"openvpn-crl":  "test-ovpn-crl",
 	}
 	for _, vol := range pod.Spec.Volumes {
 		expectedSecret, ok := expectedVolumes[vol.Name]
@@ -716,9 +718,9 @@ func TestBuildOpenVPNPod_OptionalVolumes(t *testing.T) {
 
 	pod := buildOpenVPNPod(vpn, gw)
 
-	// Should have 5 volumes total: ca, cert, key, dh, tls-auth
-	if len(pod.Spec.Volumes) != 5 {
-		t.Fatalf("expected 5 volumes (ca, cert, key, dh, tls-auth), got %d", len(pod.Spec.Volumes))
+	// Should have 6 volumes total: ca, cert, key, crl, dh, tls-auth
+	if len(pod.Spec.Volumes) != 6 {
+		t.Fatalf("expected 6 volumes (ca, cert, key, crl, dh, tls-auth), got %d", len(pod.Spec.Volumes))
 	}
 
 	// Verify the optional volume names exist
@@ -735,8 +737,8 @@ func TestBuildOpenVPNPod_OptionalVolumes(t *testing.T) {
 
 	// Verify volume mount count matches
 	container := pod.Spec.Containers[0]
-	if len(container.VolumeMounts) != 5 {
-		t.Fatalf("expected 5 volume mounts, got %d", len(container.VolumeMounts))
+	if len(container.VolumeMounts) != 6 {
+		t.Fatalf("expected 6 volume mounts, got %d", len(container.VolumeMounts))
 	}
 }
 
@@ -811,5 +813,107 @@ func TestBuildOpenVPNPod_ReadinessProbe(t *testing.T) {
 	cmd := container.ReadinessProbe.Exec.Command
 	if len(cmd) != 3 || cmd[0] != "test" || cmd[1] != "-f" || cmd[2] != "/run/openvpn/status.log" {
 		t.Errorf("readiness command = %v, expected [test -f /run/openvpn/status.log]", cmd)
+	}
+}
+
+func TestBuildOpenVPNPod_CRLVolume(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildOpenVPNPod(vpn, gw)
+
+	// CRL volume should be present
+	foundCRLVol := false
+	for _, vol := range pod.Spec.Volumes {
+		if vol.Name == "openvpn-crl" {
+			foundCRLVol = true
+			if vol.Secret == nil {
+				t.Error("openvpn-crl volume should reference a secret")
+			} else {
+				expectedSecret := vpn.Name + "-crl"
+				if vol.Secret.SecretName != expectedSecret {
+					t.Errorf("CRL secret name = %q, want %q", vol.Secret.SecretName, expectedSecret)
+				}
+				if vol.Secret.Optional == nil || !*vol.Secret.Optional {
+					t.Error("CRL secret should be optional")
+				}
+			}
+			break
+		}
+	}
+	if !foundCRLVol {
+		t.Error("missing openvpn-crl volume")
+	}
+
+	// CRL volume mount should be present
+	container := pod.Spec.Containers[0]
+	foundCRLMount := false
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == "openvpn-crl" {
+			foundCRLMount = true
+			if mount.MountPath != "/run/secrets/openvpn/crl" {
+				t.Errorf("CRL mount path = %q, want %q", mount.MountPath, "/run/secrets/openvpn/crl")
+			}
+			if !mount.ReadOnly {
+				t.Error("CRL mount should be read-only")
+			}
+			break
+		}
+	}
+	if !foundCRLMount {
+		t.Error("missing openvpn-crl volume mount")
+	}
+}
+
+func TestBuildOpenVPNInitScript_CRLVerify(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	script := buildOpenVPNInitScript(vpn)
+
+	// Should contain conditional CRL verification
+	if !strings.Contains(script, "crl-verify /run/secrets/openvpn/crl/crl.pem") {
+		t.Error("init script missing crl-verify directive")
+	}
+	// Should be conditional on file existence
+	if !strings.Contains(script, "if [ -s /run/secrets/openvpn/crl/crl.pem ]") {
+		t.Error("init script missing CRL file existence check")
+	}
+}
+
+func TestVPNPodNeedsRecreation_MissingVolume(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	desiredPod := buildOpenVPNPod(vpn, gw)
+
+	// Simulate a pre-feature pod without CRL volume
+	oldPod := buildOpenVPNPod(vpn, gw)
+	filteredVolumes := []corev1.Volume{}
+	for _, v := range oldPod.Spec.Volumes {
+		if v.Name != "openvpn-crl" {
+			filteredVolumes = append(filteredVolumes, v)
+		}
+	}
+	oldPod.Spec.Volumes = filteredVolumes
+
+	if !vpnPodNeedsRecreation(oldPod, desiredPod) {
+		t.Error("pod with missing CRL volume should need recreation")
+	}
+}
+
+func TestVolumeNameSet(t *testing.T) {
+	volumes := []corev1.Volume{
+		{Name: "vol-a"},
+		{Name: "vol-b"},
+		{Name: "vol-c"},
+	}
+	set := volumeNameSet(volumes)
+	if len(set) != 3 {
+		t.Errorf("expected 3 entries, got %d", len(set))
+	}
+	if !set["vol-a"] || !set["vol-b"] || !set["vol-c"] {
+		t.Error("missing expected volume names in set")
+	}
+	if set["vol-d"] {
+		t.Error("unexpected volume name in set")
 	}
 }

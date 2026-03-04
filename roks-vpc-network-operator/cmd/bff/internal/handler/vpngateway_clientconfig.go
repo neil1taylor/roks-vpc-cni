@@ -239,6 +239,9 @@ func (h *VPNGatewayHandler) GenerateClientConfig(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Ensure CRL secret exists (fallback for older operator versions)
+	h.ensureCRLSecretOnGenerate(r.Context(), vpnName, ns)
+
 	// Read tunnel endpoint and OpenVPN config from the VPN gateway
 	tunnelEndpoint, _, _ := unstructured.NestedString(vpnObj.Object, "status", "tunnelEndpoint")
 	listenPort, _, _ := unstructured.NestedInt64(vpnObj.Object, "spec", "openVPN", "listenPort")

@@ -99,7 +99,15 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, vpn *v1alpha1.VPCVPNGa
 		return r.setErrorStatus(ctx, vpn, err.Error())
 	}
 
-	// Step 5: Build the VPN pod based on protocol
+	// Step 5: Ensure CRL secret exists for OpenVPN gateways
+	if vpn.Spec.Protocol == "openvpn" {
+		if err := r.ensureCRLSecret(ctx, vpn); err != nil {
+			logger.Error(err, "Failed to ensure CRL secret")
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+	}
+
+	// Step 6: Build the VPN pod based on protocol
 	var desiredPod *corev1.Pod
 	switch vpn.Spec.Protocol {
 	case "wireguard":
@@ -112,7 +120,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, vpn *v1alpha1.VPCVPNGa
 		return r.setErrorStatus(ctx, vpn, fmt.Sprintf("unsupported protocol %q", vpn.Spec.Protocol))
 	}
 
-	// Step 6: Ensure pod exists
+	// Step 7: Ensure pod exists
 	podName := vpnPodName(vpn.Name)
 	existing := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: vpn.Namespace}, existing)
@@ -150,10 +158,20 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, vpn *v1alpha1.VPCVPNGa
 		podReady = existing.Status.Phase == corev1.PodRunning
 	}
 
-	// Step 7: Collect advertised routes from all tunnels
+	// Step 8: Collect advertised routes from all tunnels
 	advertisedRoutes := collectAdvertisedRoutes(vpn)
 
-	// Step 8: Update status
+	// Step 9: Count issued clients for OpenVPN
+	if vpn.Spec.Protocol == "openvpn" {
+		count, countErr := r.countIssuedClients(ctx, vpn)
+		if countErr != nil {
+			logger.Error(countErr, "Failed to count issued clients")
+		} else {
+			vpn.Status.IssuedClients = count
+		}
+	}
+
+	// Step 10: Update status
 	now := metav1.Now()
 	if podReady {
 		vpn.Status.Phase = "Ready"
@@ -322,6 +340,70 @@ func (r *Reconciler) emitEvent(obj runtime.Object, eventType, reason, messageFmt
 	}
 }
 
+// ensureCRLSecret creates the convention-based CRL secret (<vpnName>-crl) if it doesn't exist.
+// The secret starts empty and is populated by the BFF when a client is revoked.
+func (r *Reconciler) ensureCRLSecret(ctx context.Context, vpn *v1alpha1.VPCVPNGateway) error {
+	crlName := vpn.Name + "-crl"
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: crlName, Namespace: vpn.Namespace}, existing)
+	if err == nil {
+		return nil // already exists
+	}
+	if !errors.IsNotFound(err) {
+		return err
+	}
+
+	isTrue := true
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      crlName,
+			Namespace: vpn.Namespace,
+			Labels: map[string]string{
+				"vpc.roks.ibm.com/vpngateway": vpn.Name,
+				"vpc.roks.ibm.com/crl":        "true",
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         "vpc.roks.ibm.com/v1alpha1",
+					Kind:               "VPCVPNGateway",
+					Name:               vpn.Name,
+					UID:                vpn.UID,
+					Controller:         &isTrue,
+					BlockOwnerDeletion: &isTrue,
+				},
+			},
+		},
+		Data: map[string][]byte{},
+	}
+
+	if createErr := r.Create(ctx, secret); createErr != nil {
+		if errors.IsAlreadyExists(createErr) {
+			return nil
+		}
+		return createErr
+	}
+
+	log.FromContext(ctx).Info("Created CRL secret", "secret", crlName)
+	r.emitEvent(vpn, "Normal", "CRLSecretCreated", "Created CRL secret %s", crlName)
+	return nil
+}
+
+// countIssuedClients counts Secrets with the client-config label for this VPN gateway.
+func (r *Reconciler) countIssuedClients(ctx context.Context, vpn *v1alpha1.VPCVPNGateway) (int32, error) {
+	secretList := &corev1.SecretList{}
+	err := r.List(ctx, secretList,
+		client.InNamespace(vpn.Namespace),
+		client.MatchingLabels{
+			"vpc.roks.ibm.com/vpngateway": vpn.Name,
+		},
+		client.HasLabels{"vpc.roks.ibm.com/client-config"},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return int32(len(secretList.Items)), nil
+}
+
 // SetupWithManager registers the VPCVPNGateway reconciler with the controller manager.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("vpcvpngateway-controller")
@@ -351,6 +433,20 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 					}
 				}
 				return requests
+			},
+		)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
+			func(ctx context.Context, obj client.Object) []reconcile.Request {
+				vpnName := obj.GetLabels()["vpc.roks.ibm.com/vpngateway"]
+				if vpnName == "" {
+					return nil
+				}
+				return []reconcile.Request{{
+					NamespacedName: types.NamespacedName{
+						Name:      vpnName,
+						Namespace: obj.GetNamespace(),
+					},
+				}}
 			},
 		)).
 		Complete(r)

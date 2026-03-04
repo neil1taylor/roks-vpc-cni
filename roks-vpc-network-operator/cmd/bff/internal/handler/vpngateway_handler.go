@@ -246,6 +246,10 @@ func unstructuredToVPNGateway(obj *unstructured.Unstructured) model.VPNGatewayRe
 	if found {
 		resp.ConnectedClients = int32(connectedClients)
 	}
+	issuedClients, found, _ := unstructured.NestedInt64(obj.Object, "status", "issuedClients")
+	if found {
+		resp.IssuedClients = int32(issuedClients)
+	}
 
 	// Advertised routes
 	routeSlice, found, _ := unstructured.NestedStringSlice(obj.Object, "status", "advertisedRoutes")

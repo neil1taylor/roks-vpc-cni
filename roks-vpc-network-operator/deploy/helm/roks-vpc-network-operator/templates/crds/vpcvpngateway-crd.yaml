@@ -438,6 +438,10 @@ spec:
                 description: ConnectedClients is the number of currently connected remote access clients.
                 type: integer
                 format: int32
+              issuedClients:
+                description: IssuedClients is the number of client certificates that have been issued.
+                type: integer
+                format: int32
               syncStatus:
                 description: SyncStatus indicates whether the CR is in sync.
                 type: string

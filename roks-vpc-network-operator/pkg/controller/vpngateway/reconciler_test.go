@@ -590,6 +590,174 @@ func TestReconcileNormal_MissingOpenVPNConfig(t *testing.T) {
 	}
 }
 
+func TestEnsureCRLSecret_CreatesForOpenVPN(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Status:     v1alpha1.VPCGatewayStatus{Phase: "Ready", FloatingIP: "1.2.3.4", MACAddress: "fa:16:3e:aa:bb:cc", ReservedIP: "10.240.1.5"},
+	}
+	vpn := &v1alpha1.VPCVPNGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ovpn-crl", Namespace: "default", UID: "uid-123"},
+		Spec: v1alpha1.VPCVPNGatewaySpec{
+			Protocol:   "openvpn",
+			GatewayRef: "gw-test",
+			OpenVPN: &v1alpha1.VPNOpenVPNConfig{
+				CA:   v1alpha1.SecretKeyRef{Name: "ovpn-ca", Key: "ca.crt"},
+				Cert: v1alpha1.SecretKeyRef{Name: "ovpn-cert", Key: "server.crt"},
+				Key:  v1alpha1.SecretKeyRef{Name: "ovpn-key", Key: "server.key"},
+			},
+			Tunnels: []v1alpha1.VPNTunnel{
+				{Name: "t1", RemoteEndpoint: "1.2.3.4", RemoteNetworks: []string{"10.0.0.0/8"}},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, vpn).
+		WithStatusSubresource(gw, vpn).
+		Build()
+
+	r := &Reconciler{Client: fakeClient, Scheme: scheme}
+
+	// First reconcile should create CRL secret
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-ovpn-crl", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	// Verify CRL secret was created
+	crlSecret := &corev1.Secret{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-ovpn-crl-crl", Namespace: "default"}, crlSecret); err != nil {
+		t.Fatalf("Expected CRL secret to be created: %v", err)
+	}
+	if crlSecret.Labels["vpc.roks.ibm.com/vpngateway"] != "test-ovpn-crl" {
+		t.Errorf("CRL secret label vpngateway = %q, want %q", crlSecret.Labels["vpc.roks.ibm.com/vpngateway"], "test-ovpn-crl")
+	}
+	if crlSecret.Labels["vpc.roks.ibm.com/crl"] != "true" {
+		t.Errorf("CRL secret label crl = %q, want %q", crlSecret.Labels["vpc.roks.ibm.com/crl"], "true")
+	}
+
+	// Second reconcile should be idempotent (no error)
+	_, err = r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-ovpn-crl", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Second reconcile error = %v", err)
+	}
+}
+
+func TestEnsureCRLSecret_SkippedForWireGuard(t *testing.T) {
+	scheme := newTestScheme()
+
+	gw := &v1alpha1.VPCGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-test", Namespace: "default"},
+		Status:     v1alpha1.VPCGatewayStatus{Phase: "Ready", FloatingIP: "1.2.3.4", MACAddress: "fa:16:3e:aa:bb:cc", ReservedIP: "10.240.1.5"},
+	}
+	vpn := &v1alpha1.VPCVPNGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "wg-nocrl", Namespace: "default"},
+		Spec: v1alpha1.VPCVPNGatewaySpec{
+			Protocol:   "wireguard",
+			GatewayRef: "gw-test",
+			WireGuard:  &v1alpha1.VPNWireGuardConfig{PrivateKey: v1alpha1.SecretKeyRef{Name: "s", Key: "k"}},
+			Tunnels:    []v1alpha1.VPNTunnel{{Name: "t1", RemoteEndpoint: "1.2.3.4", RemoteNetworks: []string{"10.0.0.0/8"}, PeerPublicKey: "key"}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gw, vpn).
+		WithStatusSubresource(gw, vpn).
+		Build()
+
+	r := &Reconciler{Client: fakeClient, Scheme: scheme}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "wg-nocrl", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	// CRL secret should NOT exist for WireGuard
+	crlSecret := &corev1.Secret{}
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "wg-nocrl-crl", Namespace: "default"}, crlSecret)
+	if err == nil {
+		t.Error("CRL secret should not be created for WireGuard protocol")
+	}
+	if !errors.IsNotFound(err) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCountIssuedClients(t *testing.T) {
+	scheme := newTestScheme()
+
+	vpn := &v1alpha1.VPCVPNGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ovpn", Namespace: "default"},
+	}
+
+	// Create 3 client secrets
+	clientSecrets := []corev1.Secret{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-ovpn-client-alice", Namespace: "default",
+				Labels: map[string]string{
+					"vpc.roks.ibm.com/vpngateway":   "test-ovpn",
+					"vpc.roks.ibm.com/client-config": "alice",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-ovpn-client-bob", Namespace: "default",
+				Labels: map[string]string{
+					"vpc.roks.ibm.com/vpngateway":   "test-ovpn",
+					"vpc.roks.ibm.com/client-config": "bob",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-ovpn-client-carol", Namespace: "default",
+				Labels: map[string]string{
+					"vpc.roks.ibm.com/vpngateway":   "test-ovpn",
+					"vpc.roks.ibm.com/client-config": "carol",
+				},
+			},
+		},
+		// A non-client secret for the same VPN gateway (CRL secret)
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-ovpn-crl", Namespace: "default",
+				Labels: map[string]string{
+					"vpc.roks.ibm.com/vpngateway": "test-ovpn",
+					"vpc.roks.ibm.com/crl":        "true",
+				},
+			},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(vpn)
+	for i := range clientSecrets {
+		builder = builder.WithObjects(&clientSecrets[i])
+	}
+	fakeClient := builder.Build()
+
+	r := &Reconciler{Client: fakeClient, Scheme: scheme}
+
+	count, err := r.countIssuedClients(context.Background(), vpn)
+	if err != nil {
+		t.Fatalf("countIssuedClients() error = %v", err)
+	}
+	if count != 3 {
+		t.Errorf("count = %d, want 3", count)
+	}
+}
+
 func TestCollectAdvertisedRoutes(t *testing.T) {
 	vpn := &v1alpha1.VPCVPNGateway{
 		Spec: v1alpha1.VPCVPNGatewaySpec{

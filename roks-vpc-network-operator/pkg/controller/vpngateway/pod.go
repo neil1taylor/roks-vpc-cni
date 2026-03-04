@@ -667,6 +667,12 @@ func buildOpenVPNInitScript(vpn *v1alpha1.VPCVPNGateway) string {
 	sb.WriteString("  echo 'tls-auth /run/secrets/openvpn/tls-auth/ta.key 0' >> /etc/openvpn/server.conf\n")
 	sb.WriteString("fi\n\n")
 
+	// Conditionally add CRL verification
+	sb.WriteString("# CRL verification (auto-enabled when CRL is populated)\n")
+	sb.WriteString("if [ -s /run/secrets/openvpn/crl/crl.pem ]; then\n")
+	sb.WriteString("  echo 'crl-verify /run/secrets/openvpn/crl/crl.pem' >> /etc/openvpn/server.conf\n")
+	sb.WriteString("fi\n\n")
+
 	// Server mode: always use 'server' directive (compatible with OpenVPN3 clients).
 	// Uses clientSubnet if provided, otherwise derives a /24 from the first tunnel address.
 	sb.WriteString("# Server mode setup\n")
@@ -800,6 +806,23 @@ func buildOpenVPNPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *core
 			ReadOnly:  true,
 		},
 	}
+
+	// CRL volume (convention: <vpnName>-crl secret)
+	crlSecretName := vpn.Name + "-crl"
+	volumes = append(volumes, corev1.Volume{
+		Name: "openvpn-crl",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: crlSecretName,
+				Optional:   &isTrue,
+			},
+		},
+	})
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      "openvpn-crl",
+		MountPath: "/run/secrets/openvpn/crl",
+		ReadOnly:  true,
+	})
 
 	// Optional: DH parameters
 	if vpn.Spec.OpenVPN.DH != nil {
@@ -944,7 +967,24 @@ func vpnPodNeedsRecreation(existing *corev1.Pod, desired *corev1.Pod) bool {
 		}
 	}
 
+	// Check volume names — detects pre-feature pods missing new volumes (e.g., CRL)
+	existingVolNames := volumeNameSet(existing.Spec.Volumes)
+	for _, vol := range desired.Spec.Volumes {
+		if !existingVolNames[vol.Name] {
+			return true
+		}
+	}
+
 	return false
+}
+
+// volumeNameSet returns a set of volume names from a pod spec.
+func volumeNameSet(volumes []corev1.Volume) map[string]bool {
+	m := make(map[string]bool, len(volumes))
+	for _, v := range volumes {
+		m[v.Name] = true
+	}
+	return m
 }
 
 // envMapFromContainer extracts env vars into a map for comparison.

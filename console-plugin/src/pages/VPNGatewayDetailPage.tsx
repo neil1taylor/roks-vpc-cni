@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom-v5-compat';
 import {
   PageSection,
@@ -36,6 +36,7 @@ import { CubesIcon, DownloadIcon } from '@patternfly/react-icons';
 import { Link, useNavigate } from 'react-router-dom-v5-compat';
 import { useVPNGateway } from '../api/hooks';
 import { apiClient } from '../api/client';
+import { IssuedClient } from '../api/types';
 import { StatusBadge } from '../components/StatusBadge';
 import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import { formatTimestamp, formatBytes } from '../utils/formatters';
@@ -71,7 +72,30 @@ const VPNGatewayDetailPage: React.FC = () => {
   const [clientName, setClientName] = useState('');
   const [clientConfigLoading, setClientConfigLoading] = useState(false);
   const [clientConfigError, setClientConfigError] = useState<string | null>(null);
-  const [clientConfigSuccess, setClientConfigSuccess] = useState<string | null>(null);
+
+  // Issued clients state
+  const [issuedClients, setIssuedClients] = useState<IssuedClient[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Revoke confirmation state
+  const [isRevokeModalOpen, setIsRevokeModalOpen] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
+  const [revokeLoading, setRevokeLoading] = useState(false);
+
+  const fetchClients = useCallback(async () => {
+    if (!name || !vpnGateway || vpnGateway.protocol !== 'openvpn') return;
+    setClientsLoading(true);
+    const resp = await apiClient.listVPNClients(name, ns);
+    if (resp.data) {
+      setIssuedClients(resp.data);
+    }
+    setClientsLoading(false);
+  }, [name, ns, vpnGateway]);
+
+  useEffect(() => {
+    fetchClients();
+  }, [fetchClients, refreshKey]);
 
   const handleDelete = async () => {
     if (!name) return;
@@ -91,7 +115,6 @@ const VPNGatewayDetailPage: React.FC = () => {
     if (!name || !clientName.trim()) return;
     setClientConfigLoading(true);
     setClientConfigError(null);
-    setClientConfigSuccess(null);
 
     const resp = await apiClient.generateClientConfig(name, clientName.trim(), ns);
     if (resp.error) {
@@ -109,10 +132,24 @@ const VPNGatewayDetailPage: React.FC = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      setClientConfigSuccess(`Client config generated. Certificate stored in secret "${resp.data.secretName}".`);
       setClientConfigLoading(false);
       setClientName('');
+      setIsClientConfigModalOpen(false);
+      setRefreshKey((k) => k + 1);
     }
+  };
+
+  const handleRevoke = async () => {
+    if (!name || !revokeTarget) return;
+    setRevokeLoading(true);
+    const resp = await apiClient.revokeVPNClient(name, revokeTarget, ns);
+    setRevokeLoading(false);
+    if (resp.error) {
+      setActionError(resp.error.message);
+    }
+    setIsRevokeModalOpen(false);
+    setRevokeTarget(null);
+    setRefreshKey((k) => k + 1);
   };
 
   const isClientNameValid = clientName.trim() !== '' && clientNamePattern.test(clientName.trim());
@@ -149,7 +186,6 @@ const VPNGatewayDetailPage: React.FC = () => {
                             icon={<DownloadIcon />}
                             onClick={() => {
                               setClientConfigError(null);
-                              setClientConfigSuccess(null);
                               setClientName('');
                               setIsClientConfigModalOpen(true);
                             }}
@@ -318,31 +354,79 @@ const VPNGatewayDetailPage: React.FC = () => {
                 </Card>
               </GridItem>
 
-              {/* Card 5: Client Configuration (OpenVPN only) */}
+              {/* Card 5: Issued Clients (OpenVPN only) */}
               {vpnGateway.protocol === 'openvpn' && (
                 <GridItem span={12}>
                   <Card>
-                    <CardTitle>Client Configuration</CardTitle>
+                    <CardTitle>
+                      <Split hasGutter>
+                        <SplitItem isFilled>Issued Clients ({issuedClients.length})</SplitItem>
+                        <SplitItem>
+                          <Button
+                            variant="primary"
+                            icon={<DownloadIcon />}
+                            onClick={() => {
+                              setClientConfigError(null);
+                              setClientName('');
+                              setIsClientConfigModalOpen(true);
+                            }}
+                            isDisabled={actionLoading}
+                          >
+                            Generate .ovpn
+                          </Button>
+                        </SplitItem>
+                      </Split>
+                    </CardTitle>
                     <CardBody>
-                      {clientConfigSuccess && (
-                        <Alert variant="success" title={clientConfigSuccess} isInline style={{ marginBottom: '1rem' }} />
+                      {clientsLoading ? (
+                        <Spinner size="md" />
+                      ) : issuedClients.length > 0 ? (
+                        <Table aria-label="Issued clients" variant="compact">
+                          <Thead>
+                            <Tr>
+                              <Th>Client Name</Th>
+                              <Th>Serial</Th>
+                              <Th>Issued</Th>
+                              <Th>Expires</Th>
+                              <Th>Status</Th>
+                              <Th>Actions</Th>
+                            </Tr>
+                          </Thead>
+                          <Tbody>
+                            {issuedClients.map((client) => (
+                              <Tr key={client.secretName}>
+                                <Td>{client.clientName}</Td>
+                                <Td><code>{client.serialHex.substring(0, 16)}...</code></Td>
+                                <Td>{formatTimestamp(client.issuedAt)}</Td>
+                                <Td>{formatTimestamp(client.expiresAt)}</Td>
+                                <Td>
+                                  <Label color={client.revoked ? 'red' : 'green'}>
+                                    {client.revoked ? 'Revoked' : 'Active'}
+                                  </Label>
+                                </Td>
+                                <Td>
+                                  {!client.revoked && (
+                                    <Button
+                                      variant="danger"
+                                      size="sm"
+                                      onClick={() => {
+                                        setRevokeTarget(client.clientName);
+                                        setIsRevokeModalOpen(true);
+                                      }}
+                                    >
+                                      Revoke
+                                    </Button>
+                                  )}
+                                </Td>
+                              </Tr>
+                            ))}
+                          </Tbody>
+                        </Table>
+                      ) : (
+                        <span style={{ color: 'var(--pf-v5-global--Color--200)' }}>
+                          No client certificates issued yet. Click &quot;Generate .ovpn&quot; to create one.
+                        </span>
                       )}
-                      <p style={{ marginBottom: '1rem', color: 'var(--pf-v5-global--Color--200)' }}>
-                        Generate a .ovpn client configuration file with an automatically signed client certificate.
-                        The generated file can be imported directly into any OpenVPN client (Tunnelblick, OpenVPN Connect, etc.).
-                      </p>
-                      <Button
-                        variant="primary"
-                        icon={<DownloadIcon />}
-                        onClick={() => {
-                          setClientConfigError(null);
-                          setClientConfigSuccess(null);
-                          setClientName('');
-                          setIsClientConfigModalOpen(true);
-                        }}
-                      >
-                        Generate Client Config
-                      </Button>
                     </CardBody>
                   </Card>
                 </GridItem>
@@ -370,6 +454,17 @@ const VPNGatewayDetailPage: React.FC = () => {
         onConfirm={handleDelete}
         onCancel={() => { setIsDeleteModalOpen(false); setActionError(null); }}
         isLoading={actionLoading}
+      />
+
+      {/* Revoke Client Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={isRevokeModalOpen}
+        title="Revoke Client Certificate"
+        message={`Revoking the certificate for "${revokeTarget}" will add it to the CRL and prevent this client from connecting. The client secret will be deleted. This action cannot be undone.`}
+        resourceName={revokeTarget || undefined}
+        onConfirm={handleRevoke}
+        onCancel={() => { setIsRevokeModalOpen(false); setRevokeTarget(null); }}
+        isLoading={revokeLoading}
       />
 
       {/* Client Config Generation Modal */}

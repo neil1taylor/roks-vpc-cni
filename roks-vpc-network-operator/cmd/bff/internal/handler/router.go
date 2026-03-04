@@ -368,6 +368,28 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 			authMiddleware(vpnHandler.GenerateClientConfig).ServeHTTP(w, r)
 			return
 		}
+		// Check for /clients sub-path
+		if strings.Contains(path, "/clients") {
+			// Extract suffix after /clients
+			clientsIdx := strings.Index(path, "/clients")
+			suffix := path[clientsIdx+len("/clients"):]
+			if suffix == "" || suffix == "/" {
+				// /clients or /clients/ — list
+				if r.Method == http.MethodGet {
+					authMiddleware(vpnHandler.ListClients).ServeHTTP(w, r)
+				} else {
+					WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+				}
+			} else {
+				// /clients/<clientName> — revoke
+				if r.Method == http.MethodDelete {
+					authMiddleware(vpnHandler.RevokeClient).ServeHTTP(w, r)
+				} else {
+					WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+				}
+			}
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			authMiddleware(vpnHandler.GetVPNGateway).ServeHTTP(w, r)

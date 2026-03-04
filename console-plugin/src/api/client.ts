@@ -44,6 +44,7 @@ import {
   CreateL2BridgeRequest,
   VPNGateway,
   CreateVPNGatewayRequest,
+  IssuedClient,
   ApiResponse,
   ApiError,
 } from './types';
@@ -622,6 +623,23 @@ class VPCNetworkClient {
     return this.request('POST', `/vpn-gateways/${encodeURIComponent(name)}/client-config${params}`, {
       clientName,
     } as unknown as Record<string, unknown>);
+  }
+
+  async listVPNClients(name: string, namespace?: string): Promise<ApiResponse<IssuedClient[]>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<IssuedClient[]>('GET', `/vpn-gateways/${encodeURIComponent(name)}/clients${params}`);
+  }
+
+  async revokeVPNClient(
+    name: string,
+    clientName: string,
+    namespace?: string,
+  ): Promise<ApiResponse<void>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>(
+      'DELETE',
+      `/vpn-gateways/${encodeURIComponent(name)}/clients/${encodeURIComponent(clientName)}${params}`,
+    );
   }
 }
 

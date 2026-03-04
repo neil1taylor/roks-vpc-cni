@@ -718,6 +718,7 @@ type VPNGatewayResponse struct {
 	ActiveTunnels    int32                 `json:"activeTunnels"`
 	TotalTunnels     int32                 `json:"totalTunnels"`
 	ConnectedClients int32                 `json:"connectedClients"`
+	IssuedClients    int32                 `json:"issuedClients"`
 	Tunnels          []VPNTunnelStatusResp `json:"tunnels,omitempty"`
 	AdvertisedRoutes []string              `json:"advertisedRoutes,omitempty"`
 	TunnelMTU        int32                 `json:"tunnelMTU,omitempty"`
@@ -824,4 +825,14 @@ type ClientConfigResponse struct {
 	ClientName string `json:"clientName"`
 	SecretName string `json:"secretName"`
 	OVPNConfig string `json:"ovpnConfig"`
+}
+
+// IssuedClientResponse represents an issued client certificate.
+type IssuedClientResponse struct {
+	ClientName string `json:"clientName"`
+	SecretName string `json:"secretName"`
+	SerialHex  string `json:"serialHex"`
+	IssuedAt   string `json:"issuedAt"`
+	ExpiresAt  string `json:"expiresAt"`
+	Revoked    bool   `json:"revoked"`
 }

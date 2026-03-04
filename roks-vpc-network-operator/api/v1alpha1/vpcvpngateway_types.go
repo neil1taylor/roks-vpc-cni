@@ -303,6 +303,9 @@ type VPCVPNGatewayStatus struct {
 	// ConnectedClients is the number of currently connected remote access clients.
 	ConnectedClients int32 `json:"connectedClients,omitempty"`
 
+	// IssuedClients is the number of client certificates that have been issued.
+	IssuedClients int32 `json:"issuedClients,omitempty"`
+
 	// SyncStatus indicates whether the CR is in sync.
 	// +kubebuilder:validation:Enum=Synced;Pending;Failed
 	SyncStatus string `json:"syncStatus,omitempty"`
