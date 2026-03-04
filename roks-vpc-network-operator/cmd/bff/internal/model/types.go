@@ -183,22 +183,30 @@ type ReservedIPResponse struct {
 	CreatedAt  string       `json:"createdAt,omitempty"`
 }
 
+// NodeHealth represents health data for a topology node.
+type NodeHealth struct {
+	Status  string             `json:"status"`            // healthy, warning, critical
+	Metrics map[string]float64 `json:"metrics,omitempty"` // throughputBps, conntrackPct, errorRate, ipUtilization
+}
+
 // TopologyNode represents a node in the topology graph.
 // Fields match the console plugin's TopologyNode interface.
 type TopologyNode struct {
 	ID       string                 `json:"id"`
 	Label    string                 `json:"label"`
-	Type     string                 `json:"type"` // vpc, subnet, vni, security-group, network-acl, floating-ip, network
+	Type     string                 `json:"type"` // vpc, subnet, vni, security-group, network-acl, floating-ip, network, router, gateway
 	Status   string                 `json:"status,omitempty"` // available, pending, error
+	Health   *NodeHealth            `json:"health,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // TopologyEdge represents an edge in the topology graph
 type TopologyEdge struct {
-	ID     string `json:"id"`
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Type   string `json:"type,omitempty"` // contains, connected, protected-by, associates, targets
+	ID       string                 `json:"id"`
+	Source   string                 `json:"source"`
+	Target   string                 `json:"target"`
+	Type     string                 `json:"type,omitempty"` // contains, connected, protected-by, associates, targets
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // TopologyResponse represents the aggregated topology graph

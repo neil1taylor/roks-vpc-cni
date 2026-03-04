@@ -53,6 +53,7 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 	vpcHandler := NewVPCHandler(vpcClient, clusterInfo.VPCID)
 	zoneHandler := NewZoneHandler(vpcClient, clusterInfo.Region)
 	topologyHandler := NewTopologyHandler(vpcClient, k8sClient, dynClient, clusterInfo.VPCID)
+	topologyHandler.SetThanosClient(thanosClient)
 
 	// Wrap all handlers with authentication middleware
 	authMiddleware := func(handler http.HandlerFunc) http.Handler {
@@ -109,9 +110,14 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
 		}
 	})
+	subnetMetricsHandler := NewSubnetMetricsHandler(thanosClient, dynClient)
 	mux.HandleFunc("/api/v1/subnets/", func(w http.ResponseWriter, r *http.Request) {
 		if contains(r.URL.Path, "/reserved-ips") {
 			authMiddleware(reservedIPHandler.ListSubnetReservedIPs).ServeHTTP(w, r)
+			return
+		}
+		if contains(r.URL.Path, "/metrics") && subnetMetricsHandler != nil {
+			authMiddleware(subnetMetricsHandler.GetSubnetMetrics).ServeHTTP(w, r)
 			return
 		}
 		authMiddleware(subnetHandler.GetSubnet).ServeHTTP(w, r)
@@ -422,6 +428,10 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
 		}
 	})
+
+	// Alert timeline routes
+	alertsHandler := NewAlertsHandler(k8sClient)
+	mux.HandleFunc("/api/v1/alerts/timeline", wrapHandler(authMiddleware(alertsHandler.GetTimeline)))
 
 	// VPCDNSPolicy routes
 	dnsHandler := NewDNSPolicyHandler(dynClient, rbacChecker)

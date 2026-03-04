@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/IBM/roks-vpc-network-operator/cmd/bff/internal/model"
+	"github.com/IBM/roks-vpc-network-operator/cmd/bff/internal/thanos"
 	"github.com/IBM/roks-vpc-network-operator/pkg/vpc"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,6 +39,7 @@ type TopologyHandler struct {
 	k8sClient     kubernetes.Interface
 	dynamicClient dynamic.Interface
 	defaultVPCID  string
+	thanos        *thanos.Client
 }
 
 // NewTopologyHandler creates a new topology handler
@@ -50,6 +52,11 @@ func NewTopologyHandler(vpcClient vpc.ExtendedClient, k8sClient kubernetes.Inter
 	}
 }
 
+// SetThanosClient configures the Thanos/Prometheus client for health enrichment.
+func (h *TopologyHandler) SetThanosClient(c *thanos.Client) {
+	h.thanos = c
+}
+
 // GetTopology handles GET /api/v1/topology
 func (h *TopologyHandler) GetTopology(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -57,13 +64,18 @@ func (h *TopologyHandler) GetTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.DebugContext(r.Context(), "getting topology")
+	includeHealth := r.URL.Query().Get("includeHealth") == "true"
+	slog.DebugContext(r.Context(), "getting topology", "includeHealth", includeHealth)
 
 	resp, err := h.buildTopology(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "failed to build topology", "error", err)
 		WriteError(w, http.StatusInternalServerError, "failed to build topology", "TOPOLOGY_FAILED")
 		return
+	}
+
+	if includeHealth && h.thanos != nil {
+		h.enrichHealthData(r.Context(), resp)
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
@@ -374,6 +386,302 @@ func (h *TopologyHandler) addCRDNodes(ctx context.Context, nodes *[]model.Topolo
 					}
 				}
 			}
+		}
+	}
+
+	// VPCGateways
+	gateways, err := h.dynamicClient.Resource(vpcGatewayGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to list VPCGateways for topology", "error", err)
+	} else {
+		for _, item := range gateways.Items {
+			nodeID := fmt.Sprintf("gw-%s-%s", item.GetNamespace(), item.GetName())
+			phase := topoNestedStr(item, "status", "phase")
+			floatingIP := topoNestedStr(item, "status", "floatingIP")
+			uplinkNetwork := topoNestedStr(item, "spec", "uplinkNetworkRef", "name")
+			transitNetwork := topoNestedStr(item, "spec", "transitNetworkRef", "name")
+
+			*nodes = append(*nodes, model.TopologyNode{
+				ID:     nodeID,
+				Label:  item.GetName(),
+				Type:   "gateway",
+				Status: phaseToStatus(phase),
+				Metadata: map[string]interface{}{
+					"namespace":      item.GetNamespace(),
+					"phase":          phase,
+					"floatingIP":     floatingIP,
+					"uplinkNetwork":  uplinkNetwork,
+					"transitNetwork": transitNetwork,
+				},
+			})
+		}
+	}
+
+	// VPCRouters
+	routers, err := h.dynamicClient.Resource(vpcRouterGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to list VPCRouters for topology", "error", err)
+	} else {
+		for _, item := range routers.Items {
+			nodeID := fmt.Sprintf("rtr-%s-%s", item.GetNamespace(), item.GetName())
+			phase := topoNestedStr(item, "status", "phase")
+			gateway := topoNestedStr(item, "spec", "gatewayRef", "name")
+			mode := topoNestedStr(item, "spec", "mode")
+			podIP := topoNestedStr(item, "status", "podIP")
+
+			*nodes = append(*nodes, model.TopologyNode{
+				ID:     nodeID,
+				Label:  item.GetName(),
+				Type:   "router",
+				Status: phaseToStatus(phase),
+				Metadata: map[string]interface{}{
+					"namespace": item.GetNamespace(),
+					"phase":     phase,
+					"gateway":   gateway,
+					"mode":      mode,
+					"podIP":     podIP,
+				},
+			})
+
+			// Edge from router to its gateway
+			if gateway != "" {
+				gwNodeID := fmt.Sprintf("gw-%s-%s", item.GetNamespace(), gateway)
+				*edges = append(*edges, model.TopologyEdge{
+					ID:     topoEdgeID(nodeID, gwNodeID, "connected"),
+					Source: nodeID,
+					Target: gwNodeID,
+					Type:   "connected",
+				})
+			}
+
+			// Edges from router to its connected subnets/networks
+			networks, _, _ := unstructured.NestedSlice(item.Object, "spec", "networks")
+			for _, netRaw := range networks {
+				netMap, ok := netRaw.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				netName, _ := netMap["name"].(string)
+				if netName == "" {
+					continue
+				}
+				// Find matching subnet node by label
+				for _, n := range *nodes {
+					if n.Type == "subnet" && n.Label == netName {
+						*edges = append(*edges, model.TopologyEdge{
+							ID:     topoEdgeID(nodeID, n.ID, "connected"),
+							Source: nodeID,
+							Target: n.ID,
+							Type:   "connected",
+						})
+						break
+					}
+				}
+			}
+		}
+	}
+}
+
+// phaseToStatus converts a CRD phase to a topology status string.
+func phaseToStatus(phase string) string {
+	switch phase {
+	case "Ready", "Running":
+		return "available"
+	case "Failed", "Error":
+		return "error"
+	default:
+		return "pending"
+	}
+}
+
+// enrichHealthData queries Thanos for health metrics and attaches them to topology nodes and edges.
+func (h *TopologyHandler) enrichHealthData(ctx context.Context, resp *model.TopologyResponse) {
+	// Build a map of node index by ID for quick lookups
+	nodeIndex := make(map[string]int, len(resp.Nodes))
+	for i := range resp.Nodes {
+		nodeIndex[resp.Nodes[i].ID] = i
+	}
+
+	// Enrich router nodes with health metrics
+	for i := range resp.Nodes {
+		node := &resp.Nodes[i]
+		switch node.Type {
+		case "router":
+			h.enrichRouterHealth(ctx, node)
+		case "subnet":
+			h.enrichSubnetHealth(ctx, node)
+		}
+	}
+
+	// Enrich edges between routers and subnets with throughput data
+	for i := range resp.Edges {
+		edge := &resp.Edges[i]
+		if edge.Type != "connected" {
+			continue
+		}
+		// Check if source is a router node
+		srcIdx, srcOK := nodeIndex[edge.Source]
+		tgtIdx, tgtOK := nodeIndex[edge.Target]
+		if !srcOK || !tgtOK {
+			continue
+		}
+		srcNode := resp.Nodes[srcIdx]
+		tgtNode := resp.Nodes[tgtIdx]
+		if srcNode.Type == "router" && tgtNode.Type == "subnet" {
+			h.enrichEdgeThroughput(ctx, edge, srcNode, tgtNode)
+		}
+	}
+}
+
+// enrichRouterHealth queries Thanos for router-specific health metrics.
+func (h *TopologyHandler) enrichRouterHealth(ctx context.Context, node *model.TopologyNode) {
+	routerName := node.Label
+	podSelector := fmt.Sprintf(`{pod=~"%s-pod"}`, routerName)
+
+	metrics := make(map[string]float64)
+	status := "healthy"
+
+	// Conntrack utilization
+	ctCountResult, err := h.thanos.QueryInstant(ctx, fmt.Sprintf(`router_conntrack_entries%s`, podSelector))
+	if err != nil {
+		slog.DebugContext(ctx, "failed to query conntrack entries for topology health", "router", routerName, "error", err)
+	}
+	ctMaxResult, err := h.thanos.QueryInstant(ctx, fmt.Sprintf(`router_conntrack_max%s`, podSelector))
+	if err != nil {
+		slog.DebugContext(ctx, "failed to query conntrack max for topology health", "router", routerName, "error", err)
+	}
+	ctCount := extractFirstValue(ctCountResult)
+	ctMax := extractFirstValue(ctMaxResult)
+	if ctMax > 0 {
+		ctPct := (ctCount / ctMax) * 100
+		metrics["conntrackPct"] = ctPct
+		if ctPct > 95 {
+			status = "critical"
+		} else if ctPct > 80 {
+			status = "warning"
+		}
+	}
+
+	// Error rate (rx errors across all interfaces)
+	errResult, err := h.thanos.QueryInstant(ctx,
+		fmt.Sprintf(`sum(rate(router_interface_rx_errors_total%s[5m]))`, podSelector))
+	if err != nil {
+		slog.DebugContext(ctx, "failed to query error rate for topology health", "router", routerName, "error", err)
+	}
+	errorRate := extractFirstValue(errResult)
+	metrics["errorRate"] = errorRate
+	if errorRate > 0 && status == "healthy" {
+		status = "warning"
+	}
+
+	// Throughput (sum of all interface rx+tx bytes/sec)
+	throughputResult, err := h.thanos.QueryInstant(ctx,
+		fmt.Sprintf(`sum(rate(router_interface_rx_bytes_total%s[5m])) + sum(rate(router_interface_tx_bytes_total%s[5m]))`, podSelector, podSelector))
+	if err != nil {
+		slog.DebugContext(ctx, "failed to query throughput for topology health", "router", routerName, "error", err)
+	}
+	throughput := extractFirstValue(throughputResult)
+	metrics["throughputBps"] = throughput
+
+	// Process health — check if critical processes are down
+	processResult, err := h.thanos.QueryInstant(ctx, fmt.Sprintf(`router_process_running%s`, podSelector))
+	if err != nil {
+		slog.DebugContext(ctx, "failed to query process status for topology health", "router", routerName, "error", err)
+	}
+	if processResult != nil {
+		for _, ds := range processResult.Data.Result {
+			val := parseValueString(ds.Value[1])
+			if val == 0 {
+				// A process is down — critical
+				status = "critical"
+				break
+			}
+		}
+	}
+
+	node.Health = &model.NodeHealth{
+		Status:  status,
+		Metrics: metrics,
+	}
+}
+
+// enrichSubnetHealth computes IP utilization for subnet nodes from DHCP metrics if available.
+func (h *TopologyHandler) enrichSubnetHealth(ctx context.Context, node *model.TopologyNode) {
+	if node.Metadata == nil {
+		return
+	}
+
+	// Only enrich subnets that have a name (used as interface label in DHCP metrics)
+	subnetName := node.Label
+	if subnetName == "" {
+		return
+	}
+
+	// Query DHCP pool utilization for this subnet
+	leaseResult, err := h.thanos.QueryInstant(ctx,
+		fmt.Sprintf(`router_dhcp_active_leases{interface=%q}`, subnetName))
+	if err != nil {
+		slog.DebugContext(ctx, "failed to query DHCP leases for subnet health", "subnet", subnetName, "error", err)
+		return
+	}
+	poolResult, err := h.thanos.QueryInstant(ctx,
+		fmt.Sprintf(`router_dhcp_pool_size{interface=%q}`, subnetName))
+	if err != nil {
+		slog.DebugContext(ctx, "failed to query DHCP pool size for subnet health", "subnet", subnetName, "error", err)
+		return
+	}
+
+	activeLeases := extractFirstValue(leaseResult)
+	poolSize := extractFirstValue(poolResult)
+
+	// Only attach health if we got actual DHCP data
+	if poolSize <= 0 {
+		return
+	}
+
+	utilization := (activeLeases / poolSize) * 100
+	status := "healthy"
+	if utilization > 90 {
+		status = "critical"
+	} else if utilization > 75 {
+		status = "warning"
+	}
+
+	node.Health = &model.NodeHealth{
+		Status: status,
+		Metrics: map[string]float64{
+			"ipUtilization": utilization,
+			"activeLeases":  activeLeases,
+			"poolSize":      poolSize,
+		},
+	}
+}
+
+// enrichEdgeThroughput adds throughput metadata to edges between routers and subnets.
+func (h *TopologyHandler) enrichEdgeThroughput(ctx context.Context, edge *model.TopologyEdge, routerNode, subnetNode model.TopologyNode) {
+	routerName := routerNode.Label
+	subnetName := subnetNode.Label
+	podSelector := fmt.Sprintf(`{pod=~"%s-pod",interface=%q}`, routerName, subnetName)
+
+	rxResult, err := h.thanos.QueryInstant(ctx,
+		fmt.Sprintf(`rate(router_interface_rx_bytes_total%s[5m])`, podSelector))
+	if err != nil {
+		return
+	}
+	txResult, err := h.thanos.QueryInstant(ctx,
+		fmt.Sprintf(`rate(router_interface_tx_bytes_total%s[5m])`, podSelector))
+	if err != nil {
+		return
+	}
+
+	rxBps := extractFirstValue(rxResult)
+	txBps := extractFirstValue(txResult)
+
+	if rxBps > 0 || txBps > 0 {
+		edge.Metadata = map[string]interface{}{
+			"throughputBps": rxBps + txBps,
+			"rxBps":         rxBps,
+			"txBps":         txBps,
 		}
 	}
 }
