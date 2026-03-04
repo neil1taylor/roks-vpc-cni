@@ -513,15 +513,17 @@ func (r *Reconciler) emitEvent(obj runtime.Object, eventType, reason, messageFmt
 	}
 }
 
-// networkCIDR converts an address with prefix (e.g., "10.100.0.1/24") to
-// the network CIDR (e.g., "10.100.0.0/24") by zeroing the host bits.
+// networkCIDR converts an address with optional prefix (e.g., "10.100.0.1/24"
+// or "10.100.0.1") to the network CIDR (e.g., "10.100.0.0/24") by zeroing
+// the host bits. If no prefix is specified, /24 is assumed.
 func networkCIDR(address string) string {
-	ip, ipNet, err := net.ParseCIDR(address)
+	if !strings.Contains(address, "/") {
+		address = address + "/24"
+	}
+	_, ipNet, err := net.ParseCIDR(address)
 	if err != nil {
-		// Fallback: if parsing fails, return the address as-is
 		return address
 	}
-	_ = ip
 	return ipNet.String()
 }
 

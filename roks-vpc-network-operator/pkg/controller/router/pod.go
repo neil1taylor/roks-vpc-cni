@@ -296,7 +296,7 @@ func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) string
 	sb.WriteString("  if [ -n \"${GW_RESERVED_IP}\" ]; then\n")
 	sb.WriteString("    GW_SUBNET=$(echo ${GW_RESERVED_IP} | cut -d. -f1-3)\n")
 	sb.WriteString("    ip addr add ${GW_RESERVED_IP}/24 dev uplink 2>/dev/null || true\n")
-	sb.WriteString("    ip route add default via ${GW_SUBNET}.1 dev uplink metric 50 2>/dev/null || true\n")
+	sb.WriteString("    ip route replace default via ${GW_SUBNET}.1 dev uplink 2>/dev/null || true\n")
 	sb.WriteString("  else\n")
 	sb.WriteString("    echo 'ERROR: DHCP failed and no GW_RESERVED_IP set'\n")
 	sb.WriteString("    exit 1\n")
@@ -310,7 +310,11 @@ func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) string
 	sb.WriteString("# Configure workload interfaces\n")
 	for i, net := range router.Spec.Networks {
 		ifName := fmt.Sprintf("net%d", i)
-		sb.WriteString(fmt.Sprintf("ip addr add %s dev %s 2>/dev/null || true\n", net.Address, ifName))
+		addr := net.Address
+		if !strings.Contains(addr, "/") {
+			addr = addr + "/24"
+		}
+		sb.WriteString(fmt.Sprintf("ip addr add %s dev %s 2>/dev/null || true\n", addr, ifName))
 		sb.WriteString(fmt.Sprintf("ip link set %s up\n", ifName))
 	}
 	sb.WriteString("\n")
@@ -435,6 +439,8 @@ func generateFirewallConfig(fw *v1alpha1.GatewayFirewall) string {
 	sb.WriteString("  chain forward {\n")
 	sb.WriteString("    type filter hook forward priority 0; policy drop;\n")
 	sb.WriteString("    ct state established,related accept\n")
+	// Allow inter-VM traffic that doesn't traverse the uplink
+	sb.WriteString("    iifname != \"uplink\" oifname != \"uplink\" accept\n")
 
 	for _, rule := range fw.Rules {
 		sb.WriteString("    ")
@@ -540,6 +546,9 @@ func resolvedDHCPConfig(global *v1alpha1.RouterDHCP, net v1alpha1.RouterNetwork)
 
 // computeDHCPRangeWithLease derives a DHCP range from a network address with a parameterized lease time.
 func computeDHCPRangeWithLease(address, leaseTime string) string {
+	if !strings.Contains(address, "/") {
+		address = address + "/24"
+	}
 	_, ipNet, err := net.ParseCIDR(address)
 	if err != nil {
 		return ""
@@ -576,7 +585,11 @@ func generateDnsmasqCommand(ifName, address string, cfg *resolvedDHCP) string {
 	// DHCP range
 	if cfg.Range != nil {
 		// Custom range — need subnet mask from address
-		_, ipNet, err := net.ParseCIDR(address)
+		addrCIDR := address
+		if !strings.Contains(addrCIDR, "/") {
+			addrCIDR = addrCIDR + "/24"
+		}
+		_, ipNet, err := net.ParseCIDR(addrCIDR)
 		if err == nil {
 			mask := net.IP(ipNet.Mask)
 			args = append(args, fmt.Sprintf("--dhcp-range=%s,%s,%s,%s",

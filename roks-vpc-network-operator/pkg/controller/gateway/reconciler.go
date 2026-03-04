@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -427,8 +428,15 @@ func (r *Reconciler) collectDesiredRoutes(ctx context.Context, gw *v1alpha1.VPCG
 	}
 
 	result := make([]string, 0, len(seen))
-	for cidr := range seen {
-		result = append(result, cidr)
+	for dest := range seen {
+		// Normalize: bare IPs (e.g. "10.100.0.1") → CIDR (e.g. "10.100.0.0/24")
+		if !strings.Contains(dest, "/") {
+			dest = dest + "/24"
+		}
+		if _, ipNet, err := net.ParseCIDR(dest); err == nil {
+			dest = ipNet.String() // zero host bits
+		}
+		result = append(result, dest)
 	}
 	return result
 }

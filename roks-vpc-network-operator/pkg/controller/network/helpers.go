@@ -583,7 +583,34 @@ func PickBMServer(ctx context.Context, k8sClient client.Client, vpcClient vpc.Cl
 		}
 	}
 
+	// Last resort: check existing VPCGateway statuses for a known BM server ID.
+	// On ROKS clusters, the VPC ListBareMetalServers API may not return managed
+	// BM servers. If another gateway already discovered the BM server, reuse it.
+	bmServerID := pickBMServerFromGatewayStatus(ctx, k8sClient)
+	if bmServerID != "" {
+		logger := log.FromContext(ctx)
+		logger.Info("Resolved BM server ID from existing VPCGateway status", "bmServerID", bmServerID)
+		return bmServerID, nil
+	}
+
 	return "", fmt.Errorf("no bare metal server found in cluster")
+}
+
+// pickBMServerFromGatewayStatus scans existing VPCGateway objects for a non-empty
+// BMServerID in their status. This handles the case where ROKS-managed BM servers
+// aren't visible via the VPC ListBareMetalServers API but a previous gateway
+// already discovered the server ID.
+func pickBMServerFromGatewayStatus(ctx context.Context, k8sClient client.Client) string {
+	gwList := &apiv1alpha1.VPCGatewayList{}
+	if err := k8sClient.List(ctx, gwList); err != nil {
+		return ""
+	}
+	for i := range gwList.Items {
+		if gwList.Items[i].Status.BMServerID != "" {
+			return gwList.Items[i].Status.BMServerID
+		}
+	}
+	return ""
 }
 
 // resolveBMServerIDByHostname matches a K8s node name against the VPC BM server
