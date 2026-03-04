@@ -287,5 +287,38 @@
       "path": "/vpc-networking/observability",
       "component": { "$codeRef": "ObservabilityPage" }
     }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "traceflows",
+      "section": "vpc-networking",
+      "name": "Traceflows",
+      "href": "/vpc-networking/traceflows"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/traceflows",
+      "component": { "$codeRef": "TraceflowsListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/traceflows/create",
+      "component": { "$codeRef": "TraceflowCreatePage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/traceflows/:name",
+      "component": { "$codeRef": "TraceflowDetailPage" }
+    }
   }
 ]

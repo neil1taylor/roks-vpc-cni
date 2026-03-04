@@ -31,6 +31,7 @@ import {
   DHCPLease,
   AlertTimelineEntry,
   SubnetMetrics,
+  Traceflow,
   ApiResponse,
   ApiError,
 } from './types';
@@ -570,6 +571,23 @@ export function useDNSPolicy(name: string, namespace?: string) {
     [name, namespace],
   );
   return { dnsPolicy, loading, error };
+}
+
+// Traceflow Hooks
+export function useTraceflows() {
+  const { data: traceflows, loading, error } = useBFFData(
+    () => apiClient.listTraceflows(),
+    [],
+  );
+  return { traceflows, loading, error };
+}
+
+export function useTraceflow(name: string, namespace?: string) {
+  return useBFFDataPolling<Traceflow>(
+    () => name ? apiClient.getTraceflow(name, namespace) : Promise.resolve({ data: undefined as unknown as Traceflow }),
+    5000,
+    [name, namespace],
+  );
 }
 
 // Alert Timeline Hook (auto-refresh every 30s)

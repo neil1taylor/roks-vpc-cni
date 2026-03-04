@@ -42,7 +42,10 @@
       "DNSPoliciesListPage": "./src/pages/DNSPoliciesListPage",
       "DNSPolicyCreatePage": "./src/pages/DNSPolicyCreatePage",
       "DNSPolicyDetailPage": "./src/pages/DNSPolicyDetailPage",
-      "ObservabilityPage": "./src/pages/ObservabilityPage"
+      "ObservabilityPage": "./src/pages/ObservabilityPage",
+      "TraceflowsListPage": "./src/pages/TraceflowsListPage",
+      "TraceflowCreatePage": "./src/pages/TraceflowCreatePage",
+      "TraceflowDetailPage": "./src/pages/TraceflowDetailPage"
     },
     "dependencies": {
       "@console/pluginAPI": "*"

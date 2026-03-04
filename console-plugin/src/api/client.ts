@@ -46,6 +46,8 @@ import {
   CreateVPNGatewayRequest,
   DNSPolicy,
   CreateDNSPolicyRequest,
+  Traceflow,
+  CreateTraceflowRequest,
   IssuedClient,
   AlertTimelineEntry,
   SubnetMetrics,
@@ -684,6 +686,25 @@ class VPCNetworkClient {
   async deleteDNSPolicy(name: string, namespace?: string): Promise<ApiResponse<void>> {
     const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
     return this.request<void>('DELETE', `/dns-policies/${encodeURIComponent(name)}${params}`);
+  }
+
+  // Traceflow Operations
+  async listTraceflows(): Promise<ApiResponse<Traceflow[]>> {
+    return this.request<Traceflow[]>('GET', '/traceflows');
+  }
+
+  async getTraceflow(name: string, namespace?: string): Promise<ApiResponse<Traceflow>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<Traceflow>('GET', `/traceflows/${encodeURIComponent(name)}${params}`);
+  }
+
+  async createTraceflow(req: CreateTraceflowRequest): Promise<ApiResponse<Traceflow>> {
+    return this.request<Traceflow>('POST', '/traceflows', req as unknown as Record<string, unknown>);
+  }
+
+  async deleteTraceflow(name: string, namespace?: string): Promise<ApiResponse<void>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>('DELETE', `/traceflows/${encodeURIComponent(name)}${params}`);
   }
 }
 

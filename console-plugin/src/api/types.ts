@@ -880,6 +880,48 @@ export interface AlertTimelineEntry {
   };
 }
 
+// ── VPCTraceflow ──
+
+export interface TraceflowNFTHit {
+  rule: string;
+  chain: string;
+  packets: number;
+}
+
+export interface TraceflowHop {
+  hop: number;
+  node: string;
+  component: string;
+  action: string;
+  latencyMs: number;
+  nftHits?: TraceflowNFTHit[];
+}
+
+export interface Traceflow {
+  name: string;
+  namespace: string;
+  phase: string;
+  result: string;
+  sourceIP: string;
+  destinationIP: string;
+  destinationPort?: number;
+  protocol: string;
+  router: string;
+  totalLatencyMs?: number;
+  hops?: TraceflowHop[];
+  createdAt?: string;
+}
+
+export interface CreateTraceflowRequest {
+  name: string;
+  namespace?: string;
+  sourceIP?: string;
+  destinationIP: string;
+  destinationPort?: number;
+  protocol?: string;
+  router: string;
+}
+
 export interface CreateVPNGatewayRequest {
   name: string;
   namespace?: string;
