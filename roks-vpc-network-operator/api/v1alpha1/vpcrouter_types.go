@@ -75,6 +75,13 @@ type RouterDHCP struct {
 	// LeasePersistence configures persistent storage for DHCP lease files.
 	// +optional
 	LeasePersistence *DHCPLeasePersistence `json:"leasePersistence,omitempty"`
+
+	// AutoReservations enables automatic DHCP reservations from VM annotations.
+	// When true, the router reconciler watches VMs and auto-populates MAC→IP
+	// reservations from vpc.roks.ibm.com/network-interfaces annotations.
+	// +kubebuilder:default=false
+	// +optional
+	AutoReservations bool `json:"autoReservations,omitempty"`
 }
 
 // NetworkDHCP provides per-network DHCP overrides.
@@ -196,6 +203,10 @@ type DHCPNetworkStatus struct {
 	// ReservationCount is the number of static reservations configured.
 	// +optional
 	ReservationCount int32 `json:"reservationCount,omitempty"`
+
+	// AutoReservationCount is the number of auto-discovered reservations from VMs.
+	// +optional
+	AutoReservationCount int32 `json:"autoReservationCount,omitempty"`
 }
 
 // RouterNetworkStatus reports the status of a network attached to the router.
