@@ -1,7 +1,7 @@
 # Stage 1: Build Go binary
 FROM golang:1.24-alpine AS builder
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git clang llvm
 
 WORKDIR /workspace
 
@@ -11,6 +11,9 @@ RUN go mod download
 
 # Copy source
 COPY . .
+
+# Compile eBPF program for XDP fast-path
+RUN clang -target bpf -D__TARGET_ARCH_x86 -O2 -g -c cmd/vpc-router/bpf/fwd.c -o cmd/vpc-router/bpf/fwd_bpfel.o
 
 # Build the vpc-router binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /vpc-router ./cmd/vpc-router/
@@ -26,5 +29,6 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 COPY --from=builder /vpc-router /vpc-router
+COPY --from=builder /workspace/cmd/vpc-router/bpf/fwd_bpfel.o /bpf/fwd_bpfel.o
 
 ENTRYPOINT ["/vpc-router"]

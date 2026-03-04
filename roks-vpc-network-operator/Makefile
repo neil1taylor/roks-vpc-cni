@@ -72,3 +72,7 @@ lint:
 
 clean:
 	rm -rf bin/ cover.out cover-integration.out
+
+.PHONY: bpf-compile
+bpf-compile: ## Compile eBPF program for XDP fast-path router
+	clang -target bpf -D__TARGET_ARCH_x86 -O2 -g -c cmd/vpc-router/bpf/fwd.c -o cmd/vpc-router/bpf/fwd_bpfel.o
