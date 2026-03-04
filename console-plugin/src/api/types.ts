@@ -60,6 +60,8 @@ export interface Subnet extends ResourceMetadata {
     id: string;
     name?: string;
   };
+  flowLogCollectorId?: string;
+  flowLogActive?: boolean;
 }
 
 // Virtual Network Interface Types

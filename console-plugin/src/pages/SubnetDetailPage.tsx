@@ -18,7 +18,12 @@ import {
   Tabs,
   Tab,
   TabTitleText,
+  EmptyState,
+  EmptyStateBody,
+  EmptyStateHeader,
+  EmptyStateIcon,
 } from '@patternfly/react-core';
+import { CubesIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tbody, Tr, Th, Td } from '@patternfly/react-table';
 import { Link } from 'react-router-dom-v5-compat';
 import { useSubnet, useSubnetReservedIPs } from '../api/hooks';
@@ -170,6 +175,48 @@ const SubnetDetailPage: React.FC = () => {
             <Tab eventKey={1} title={<TabTitleText>Metrics</TabTitleText>}>
               <div style={{ paddingTop: '16px' }}>
                 <SubnetMetricsTab subnetName={subnet.name || id || ''} />
+              </div>
+            </Tab>
+
+            <Tab eventKey={2} title={<TabTitleText>Flow Logs</TabTitleText>}>
+              <div style={{ paddingTop: '16px' }}>
+                {subnet.flowLogCollectorId ? (
+                  <Card>
+                    <CardBody>
+                      <DescriptionList>
+                        <DescriptionListGroup>
+                          <DescriptionListTerm>Flow Log Status</DescriptionListTerm>
+                          <DescriptionListDescription>
+                            <Label color={subnet.flowLogActive ? 'green' : 'grey'} isCompact>
+                              {subnet.flowLogActive ? 'Active' : 'Inactive'}
+                            </Label>
+                          </DescriptionListDescription>
+                        </DescriptionListGroup>
+                        <DescriptionListGroup>
+                          <DescriptionListTerm>Collector ID</DescriptionListTerm>
+                          <DescriptionListDescription>
+                            <code>{subnet.flowLogCollectorId}</code>
+                          </DescriptionListDescription>
+                        </DescriptionListGroup>
+                      </DescriptionList>
+                    </CardBody>
+                  </Card>
+                ) : (
+                  <Card>
+                    <CardBody>
+                      <EmptyState>
+                        <EmptyStateHeader
+                          titleText="Flow logs not configured"
+                          icon={<EmptyStateIcon icon={CubesIcon} />}
+                        />
+                        <EmptyStateBody>
+                          No flow log collector is attached to this subnet. Create a flow log collector
+                          targeting this subnet to capture network traffic metadata.
+                        </EmptyStateBody>
+                      </EmptyState>
+                    </CardBody>
+                  </Card>
+                )}
               </div>
             </Tab>
           </Tabs>

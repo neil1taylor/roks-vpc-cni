@@ -83,6 +83,7 @@ const SubnetsListPage: React.FC = () => {
                     <Th>Zone</Th>
                     <Th>CIDR</Th>
                     <Th>Status</Th>
+                    <Th>Flow Logs</Th>
                     <Th>Age</Th>
                   </Tr>
                 </Thead>
@@ -94,6 +95,11 @@ const SubnetsListPage: React.FC = () => {
                       <Td>{subnet.zone?.name || '-'}</Td>
                       <Td>{subnet.ipv4CidrBlock || '-'}</Td>
                       <Td><StatusBadge status={subnet.status} /></Td>
+                      <Td>
+                        <Label color={subnet.flowLogActive ? 'green' : 'grey'} isCompact>
+                          {subnet.flowLogActive ? 'Active' : '\u2014'}
+                        </Label>
+                      </Td>
                       <Td>{formatRelativeTime(subnet.createdAt)}</Td>
                     </Tr>
                   ))}
