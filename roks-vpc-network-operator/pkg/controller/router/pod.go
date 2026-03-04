@@ -50,10 +50,12 @@ func routerPodName(router *v1alpha1.VPCRouter) string {
 //  4. Applies explicit NAT rules from the gateway's NAT spec (if any)
 //  5. Applies firewall rules (if any)
 //  6. Starts dnsmasq for DHCP (if enabled)
-func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) *corev1.Pod {
+//
+// autoReservations provides auto-discovered DHCP reservations per network (may be nil).
+func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) *corev1.Pod {
 	// Dispatch to fast-path mode if configured
 	if router.Spec.Mode == "fast-path" {
-		return buildFastpathRouterPod(router, gw)
+		return buildFastpathRouterPod(router, gw, autoReservations)
 	}
 
 	podName := routerPodName(router)
@@ -66,10 +68,10 @@ func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) *corev1
 	image := resolveRouterImage(router, gw)
 
 	// Build the init script
-	script := buildInitScript(router, gw)
+	script := buildInitScript(router, gw, autoReservations)
 
 	// Build environment variables
-	envVars := buildEnvVars(router, gw)
+	envVars := buildEnvVars(router, gw, autoReservations)
 
 	isTrue := true
 	pod := &corev1.Pod{
@@ -283,7 +285,8 @@ func resolveRouterImage(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) str
 }
 
 // buildInitScript generates the bash init script for the router pod.
-func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) string {
+// autoReservations provides auto-discovered DHCP reservations per network (may be nil).
+func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) string {
 	var sb strings.Builder
 	sb.WriteString("set -e\n\n")
 
@@ -357,6 +360,10 @@ func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) string
 		if cfg == nil {
 			continue
 		}
+		// Merge auto-reservations from VM annotations
+		if autoRes, ok := autoReservations[netSpec.Name]; ok && len(autoRes) > 0 {
+			cfg.Reservations = mergeReservations(cfg.Reservations, autoRes)
+		}
 		ifName := fmt.Sprintf("net%d", i)
 		sb.WriteString(generateDnsmasqCommand(ifName, netSpec.Address, cfg) + " &\n")
 	}
@@ -369,7 +376,8 @@ func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) string
 }
 
 // buildEnvVars constructs the environment variables for the router container.
-func buildEnvVars(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) []corev1.EnvVar {
+// autoReservations provides auto-discovered DHCP reservations per network (may be nil).
+func buildEnvVars(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{}
 
 	// NAT config — only present if the gateway has explicit NAT rules.
@@ -411,7 +419,7 @@ func buildEnvVars(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) []corev1.
 	// DHCP config hash — ensures podNeedsRecreation detects DHCP changes
 	envVars = append(envVars, corev1.EnvVar{
 		Name:  "DHCP_CONFIG_HASH",
-		Value: dhcpConfigHash(router),
+		Value: dhcpConfigHash(router, autoReservations),
 	})
 
 	// IPS NFQUEUE nftables rules — applied by the router init container
@@ -652,13 +660,16 @@ func generateDnsmasqCommand(ifName, address string, cfg *resolvedDHCP) string {
 }
 
 // dhcpConfigHash computes a SHA256 hash of the DHCP configuration for change detection.
-func dhcpConfigHash(router *v1alpha1.VPCRouter) string {
+// Includes auto-reservations so that VM annotation changes trigger pod recreation.
+func dhcpConfigHash(router *v1alpha1.VPCRouter, autoReservations map[string][]v1alpha1.DHCPStaticReservation) string {
 	data, _ := json.Marshal(struct {
-		Global   *v1alpha1.RouterDHCP   `json:"global,omitempty"`
-		Networks []v1alpha1.RouterNetwork `json:"networks"`
+		Global           *v1alpha1.RouterDHCP                            `json:"global,omitempty"`
+		Networks         []v1alpha1.RouterNetwork                        `json:"networks"`
+		AutoReservations map[string][]v1alpha1.DHCPStaticReservation     `json:"autoReservations,omitempty"`
 	}{
-		Global:   router.Spec.DHCP,
-		Networks: router.Spec.Networks,
+		Global:           router.Spec.DHCP,
+		Networks:         router.Spec.Networks,
+		AutoReservations: autoReservations,
 	})
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }

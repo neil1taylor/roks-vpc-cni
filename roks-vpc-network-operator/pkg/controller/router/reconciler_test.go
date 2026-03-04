@@ -459,7 +459,7 @@ func TestBuildRouterPod_NoNAT(t *testing.T) {
 		},
 	}
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Should NOT have NFTABLES_CONFIG env var
 	for _, env := range pod.Spec.Containers[0].Env {
@@ -505,7 +505,7 @@ func TestBuildRouterPod_WithExplicitNAT(t *testing.T) {
 		},
 	}
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Should have NFTABLES_CONFIG env var with SNAT rule
 	found := false
@@ -550,7 +550,7 @@ func TestBuildRouterPod_WithDHCP(t *testing.T) {
 		},
 	}
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	for _, env := range pod.Spec.Containers[0].Env {
 		if env.Name == "DHCP_ENABLED" {
@@ -587,7 +587,7 @@ func TestBuildRouterPod_Probes(t *testing.T) {
 		},
 	}
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 	container := pod.Spec.Containers[0]
 
 	// Verify liveness probe
@@ -688,7 +688,7 @@ func TestBuildRouterPod_WithIDS(t *testing.T) {
 		},
 	}
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Should have 2 containers: router + suricata
 	if len(pod.Spec.Containers) != 2 {
@@ -787,7 +787,7 @@ func TestBuildRouterPod_WithIPS(t *testing.T) {
 		},
 	}
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Router container should have IPS_NFQUEUE_CONFIG
 	nfqFound := false
@@ -836,7 +836,7 @@ func TestBuildRouterPod_WithoutIDS(t *testing.T) {
 		},
 	}
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	if len(pod.Spec.Containers) != 1 {
 		t.Errorf("expected 1 container without IDS, got %d", len(pod.Spec.Containers))
@@ -870,7 +870,7 @@ func TestPodNeedsRecreation_IDSAdded(t *testing.T) {
 			Networks: []v1alpha1.RouterNetwork{{Name: "l2-app", Address: "10.100.0.1/24"}},
 		},
 	}
-	existingPod := buildRouterPod(oldRouter, gw)
+	existingPod := buildRouterPod(oldRouter, gw, nil)
 
 	// New router with IDS enabled
 	newRouter := &v1alpha1.VPCRouter{
@@ -883,7 +883,7 @@ func TestPodNeedsRecreation_IDSAdded(t *testing.T) {
 	}
 
 	r := &Reconciler{}
-	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+	if !r.podNeedsRecreation(existingPod, newRouter, gw, nil) {
 		t.Error("expected pod recreation when IDS is added (container count change)")
 	}
 }
@@ -913,7 +913,7 @@ func TestPodNeedsRecreation_IDSModeChanged(t *testing.T) {
 			IDS:      &v1alpha1.RouterIDS{Enabled: true, Mode: "ids"},
 		},
 	}
-	existingPod := buildRouterPod(oldRouter, gw)
+	existingPod := buildRouterPod(oldRouter, gw, nil)
 
 	// New router with IPS mode
 	newRouter := &v1alpha1.VPCRouter{
@@ -926,7 +926,7 @@ func TestPodNeedsRecreation_IDSModeChanged(t *testing.T) {
 	}
 
 	r := &Reconciler{}
-	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+	if !r.podNeedsRecreation(existingPod, newRouter, gw, nil) {
 		t.Error("expected pod recreation when IDS mode changes from ids to ips")
 	}
 }
@@ -1204,7 +1204,7 @@ func TestBuildInitScript_PerNetworkDHCP(t *testing.T) {
 		},
 	}
 
-	script := buildInitScript(router, gw)
+	script := buildInitScript(router, gw, nil)
 
 	// net0 (net-a) should have dnsmasq
 	if !containsString(script, "--interface=net0") {
@@ -1256,8 +1256,8 @@ func TestBuildRouterPod_DHCPConfigHash(t *testing.T) {
 		},
 	}
 
-	pod1 := buildRouterPod(router1, gw)
-	pod2 := buildRouterPod(router2, gw)
+	pod1 := buildRouterPod(router1, gw, nil)
+	pod2 := buildRouterPod(router2, gw, nil)
 
 	hash1 := ""
 	hash2 := ""
@@ -1307,7 +1307,7 @@ func TestPodNeedsRecreation_DHCPConfigChanged(t *testing.T) {
 			Networks: []v1alpha1.RouterNetwork{{Name: "app", Address: "10.100.0.1/24"}},
 		},
 	}
-	existingPod := buildRouterPod(oldRouter, gw)
+	existingPod := buildRouterPod(oldRouter, gw, nil)
 
 	newRouter := &v1alpha1.VPCRouter{
 		ObjectMeta: metav1.ObjectMeta{Name: "rt-test", Namespace: "default"},
@@ -1319,7 +1319,7 @@ func TestPodNeedsRecreation_DHCPConfigChanged(t *testing.T) {
 	}
 
 	r := &Reconciler{}
-	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+	if !r.podNeedsRecreation(existingPod, newRouter, gw, nil) {
 		t.Error("expected pod recreation when DHCP lease time changes")
 	}
 }
@@ -1363,7 +1363,7 @@ func TestPodNeedsRecreation_ResourcesChanged(t *testing.T) {
 			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
 		},
 	}
-	existingPod := buildRouterPod(oldRouter, gw)
+	existingPod := buildRouterPod(oldRouter, gw, nil)
 
 	newRouter := newDriftTestRouter()
 	newRouter.Spec.Pod = &v1alpha1.RouterPodSpec{
@@ -1373,7 +1373,7 @@ func TestPodNeedsRecreation_ResourcesChanged(t *testing.T) {
 	}
 
 	r := &Reconciler{}
-	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+	if !r.podNeedsRecreation(existingPod, newRouter, gw, nil) {
 		t.Error("expected pod recreation when CPU request changes")
 	}
 }
@@ -1383,7 +1383,7 @@ func TestPodNeedsRecreation_NodeSelectorChanged(t *testing.T) {
 	gw := newDriftTestGW()
 
 	oldRouter := newDriftTestRouter()
-	existingPod := buildRouterPod(oldRouter, gw)
+	existingPod := buildRouterPod(oldRouter, gw, nil)
 
 	newRouter := newDriftTestRouter()
 	newRouter.Spec.Pod = &v1alpha1.RouterPodSpec{
@@ -1391,7 +1391,7 @@ func TestPodNeedsRecreation_NodeSelectorChanged(t *testing.T) {
 	}
 
 	r := &Reconciler{}
-	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+	if !r.podNeedsRecreation(existingPod, newRouter, gw, nil) {
 		t.Error("expected pod recreation when nodeSelector is added")
 	}
 }
@@ -1401,7 +1401,7 @@ func TestPodNeedsRecreation_RuntimeClassNameChanged(t *testing.T) {
 	gw := newDriftTestGW()
 
 	oldRouter := newDriftTestRouter()
-	existingPod := buildRouterPod(oldRouter, gw)
+	existingPod := buildRouterPod(oldRouter, gw, nil)
 
 	rc := "performance"
 	newRouter := newDriftTestRouter()
@@ -1410,7 +1410,7 @@ func TestPodNeedsRecreation_RuntimeClassNameChanged(t *testing.T) {
 	}
 
 	r := &Reconciler{}
-	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+	if !r.podNeedsRecreation(existingPod, newRouter, gw, nil) {
 		t.Error("expected pod recreation when runtimeClassName is set")
 	}
 }
@@ -1420,7 +1420,7 @@ func TestPodNeedsRecreation_PriorityClassNameChanged(t *testing.T) {
 	gw := newDriftTestGW()
 
 	oldRouter := newDriftTestRouter()
-	existingPod := buildRouterPod(oldRouter, gw)
+	existingPod := buildRouterPod(oldRouter, gw, nil)
 
 	newRouter := newDriftTestRouter()
 	newRouter.Spec.Pod = &v1alpha1.RouterPodSpec{
@@ -1428,7 +1428,7 @@ func TestPodNeedsRecreation_PriorityClassNameChanged(t *testing.T) {
 	}
 
 	r := &Reconciler{}
-	if !r.podNeedsRecreation(existingPod, newRouter, gw) {
+	if !r.podNeedsRecreation(existingPod, newRouter, gw, nil) {
 		t.Error("expected pod recreation when priorityClassName is set")
 	}
 }
@@ -1451,10 +1451,10 @@ func TestPodNeedsRecreation_NoPodSpecChanges(t *testing.T) {
 		},
 	}
 
-	existingPod := buildRouterPod(router, gw)
+	existingPod := buildRouterPod(router, gw, nil)
 
 	r := &Reconciler{}
-	if r.podNeedsRecreation(existingPod, router, gw) {
+	if r.podNeedsRecreation(existingPod, router, gw, nil) {
 		t.Error("expected no pod recreation when pod spec is identical")
 	}
 }

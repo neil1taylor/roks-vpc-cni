@@ -54,7 +54,7 @@ func TestBuildRouterPod_WithResources(t *testing.T) {
 	}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	res := pod.Spec.Containers[0].Resources
 	if res.Requests.Cpu().Cmp(resource.MustParse("2")) != 0 {
@@ -81,7 +81,7 @@ func TestBuildRouterPod_WithNodeSelector(t *testing.T) {
 	}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	if len(pod.Spec.NodeSelector) != 2 {
 		t.Fatalf("expected 2 nodeSelector entries, got %d", len(pod.Spec.NodeSelector))
@@ -108,7 +108,7 @@ func TestBuildRouterPod_WithTolerations(t *testing.T) {
 	}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	if len(pod.Spec.Tolerations) != 1 {
 		t.Fatalf("expected 1 toleration, got %d", len(pod.Spec.Tolerations))
@@ -126,7 +126,7 @@ func TestBuildRouterPod_WithRuntimeClassName(t *testing.T) {
 	}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != "performance" {
 		t.Errorf("expected runtimeClassName = performance, got %v", pod.Spec.RuntimeClassName)
@@ -140,7 +140,7 @@ func TestBuildRouterPod_WithPriorityClassName(t *testing.T) {
 	}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	if pod.Spec.PriorityClassName != "system-node-critical" {
 		t.Errorf("expected priorityClassName = system-node-critical, got %q", pod.Spec.PriorityClassName)
@@ -152,7 +152,7 @@ func TestBuildRouterPod_NilPodSpec(t *testing.T) {
 	router.Spec.Pod = nil
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	if len(pod.Spec.NodeSelector) != 0 {
 		t.Errorf("expected no nodeSelector, got %v", pod.Spec.NodeSelector)
@@ -178,7 +178,7 @@ func TestBuildRouterPod_WithMetricsSidecar(t *testing.T) {
 	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Should have router + metrics-exporter = 2 containers
 	if len(pod.Spec.Containers) != 2 {
@@ -217,7 +217,7 @@ func TestBuildRouterPod_MetricsAndSuricata(t *testing.T) {
 	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Should have router + suricata + metrics-exporter = 3 containers
 	if len(pod.Spec.Containers) != 3 {
@@ -239,7 +239,7 @@ func TestBuildRouterPod_MetricsDisabled(t *testing.T) {
 	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: false}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Should have only router container
 	if len(pod.Spec.Containers) != 1 {
@@ -265,7 +265,7 @@ func TestBuildRouterPod_AllPodSpecFields(t *testing.T) {
 	}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// All fields should be set
 	if pod.Spec.Containers[0].Resources.Requests.Cpu().Cmp(resource.MustParse("2")) != 0 {
@@ -294,7 +294,7 @@ func TestBuildRouterPod_StandardMode(t *testing.T) {
 	router.Spec.Mode = "standard"
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	if pod.Spec.Containers[0].Command[0] != "/bin/bash" {
 		t.Errorf("standard mode should use /bin/bash command, got %v", pod.Spec.Containers[0].Command)
@@ -309,7 +309,7 @@ func TestBuildRouterPod_EmptyModeIsStandard(t *testing.T) {
 	router.Spec.Mode = "" // empty = standard
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	if pod.Spec.Containers[0].Command[0] != "/bin/bash" {
 		t.Errorf("empty mode should use /bin/bash command, got %v", pod.Spec.Containers[0].Command)
@@ -321,7 +321,7 @@ func TestBuildRouterPod_FastpathMode(t *testing.T) {
 	router.Spec.Mode = "fast-path"
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Should use /vpc-router command
 	if len(pod.Spec.Containers[0].Command) != 1 || pod.Spec.Containers[0].Command[0] != "/vpc-router" {
@@ -373,7 +373,7 @@ func TestBuildRouterPod_FastpathModeWithSidecars(t *testing.T) {
 	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Should have 3 containers: router + suricata + metrics-exporter
 	if len(pod.Spec.Containers) != 3 {
@@ -400,7 +400,7 @@ func TestBuildRouterPod_FastpathDefaultImage(t *testing.T) {
 	router.Spec.Mode = "fast-path"
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	expected := "de.icr.io/roks/vpc-router-fastpath:latest"
 	if pod.Spec.Containers[0].Image != expected {
@@ -419,7 +419,7 @@ func TestBuildRouterPod_FastpathWithPodSpec(t *testing.T) {
 	}
 	gw := newTestGateway()
 
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	// Pod spec overrides should apply to fast-path mode too
 	if pod.Spec.NodeSelector["zone"] != "eu-de-1" {
@@ -439,11 +439,11 @@ func TestBuildRouterPod_ModeChangeTriggersDrift(t *testing.T) {
 
 	// Build standard pod
 	router.Spec.Mode = "standard"
-	standardPod := buildRouterPod(router, gw)
+	standardPod := buildRouterPod(router, gw, nil)
 
 	// Build fast-path pod
 	router.Spec.Mode = "fast-path"
-	fastpathPod := buildRouterPod(router, gw)
+	fastpathPod := buildRouterPod(router, gw, nil)
 
 	// Image should be different
 	if standardPod.Spec.Containers[0].Image == fastpathPod.Spec.Containers[0].Image {
@@ -486,7 +486,7 @@ func TestBuildRouterPod_WithLeasePersistence(t *testing.T) {
 	}
 	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
 	gw := newTestGateway()
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	var found bool
 	for _, v := range pod.Spec.Volumes {
@@ -510,7 +510,7 @@ func TestBuildRouterPod_WithoutLeasePersistence(t *testing.T) {
 	router.Spec.DHCP = &v1alpha1.RouterDHCP{Enabled: true}
 	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
 	gw := newTestGateway()
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	for _, v := range pod.Spec.Volumes {
 		if v.Name == "dnsmasq-leases" {
@@ -536,7 +536,7 @@ func TestBuildRouterPod_FastpathWithLeasePersistence(t *testing.T) {
 	}
 	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
 	gw := newTestGateway()
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	var found bool
 	for _, v := range pod.Spec.Volumes {
@@ -563,7 +563,7 @@ func TestBuildRouterPod_LeasePersistenceDisabled(t *testing.T) {
 	}
 	router.Spec.Metrics = &v1alpha1.RouterMetrics{Enabled: true}
 	gw := newTestGateway()
-	pod := buildRouterPod(router, gw)
+	pod := buildRouterPod(router, gw, nil)
 
 	for _, v := range pod.Spec.Volumes {
 		if v.Name == "dnsmasq-leases" {

@@ -26,7 +26,8 @@ type networkConfig struct {
 // It uses the purpose-built Go binary (/vpc-router) instead of the bash init script,
 // with HTTP health probes and a NETWORK_CONFIG JSON env var.
 // Sidecars (Suricata, metrics-exporter) are appended identically to standard mode.
-func buildFastpathRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) *corev1.Pod {
+// autoReservations provides auto-discovered DHCP reservations per network (may be nil).
+func buildFastpathRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) *corev1.Pod {
 	podName := routerPodName(router)
 
 	// Build Multus network attachments (same as standard mode)
@@ -37,7 +38,7 @@ func buildFastpathRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway)
 	image := resolveFastpathImage()
 
 	// Build environment variables (same base set as standard mode)
-	envVars := buildEnvVars(router, gw)
+	envVars := buildEnvVars(router, gw, autoReservations)
 
 	// Add fast-path specific env vars
 	envVars = append(envVars,

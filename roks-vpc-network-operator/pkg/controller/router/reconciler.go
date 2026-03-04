@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,8 +31,9 @@ import (
 // Reconciler reconciles VPCRouter objects.
 type Reconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme        *runtime.Scheme
+	Recorder      record.EventRecorder
+	DynamicClient dynamic.Interface
 }
 
 // Reconcile handles VPCRouter create/update/delete events.
@@ -100,14 +102,6 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 	}
 
 	// Step 4: Ensure router pod exists
-	podReady, err := r.ensureRouterPod(ctx, router, gw)
-	if err != nil {
-		logger.Error(err, "Failed to ensure router pod")
-		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcrouter", "ensure_pod", "error").Inc()
-		r.emitEvent(router, "Warning", "PodFailed", "Failed to ensure router pod: %v", err)
-		return r.setFailedStatus(ctx, router, fmt.Sprintf("Failed to ensure router pod: %v", err))
-	}
-
 	// Step 4a: Ensure DHCP lease PVC if persistence is enabled
 	if router.Spec.DHCP != nil && router.Spec.DHCP.LeasePersistence != nil && router.Spec.DHCP.LeasePersistence.Enabled {
 		bound, pvcErr := r.ensureLeasePVC(ctx, router)
@@ -118,7 +112,26 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		router.Status.LeasePersistenceReady = bound
 	}
 
-	// Step 4b: Auto-resolve transit network from gateway status
+	// Step 4b: Discover auto-reservations from VM annotations
+	var autoReservationsByNetwork map[string][]v1alpha1.DHCPStaticReservation
+	if router.Spec.DHCP != nil && router.Spec.DHCP.AutoReservations && r.DynamicClient != nil {
+		var discoverErr error
+		autoReservationsByNetwork, discoverErr = discoverAutoReservations(ctx, r.DynamicClient, router.Spec.Networks)
+		if discoverErr != nil {
+			logger.Error(discoverErr, "Failed to discover auto-reservations (non-fatal)")
+		}
+	}
+
+	// Step 4c: Ensure router pod (pass auto-reservations for DHCP config)
+	podReady, err := r.ensureRouterPod(ctx, router, gw, autoReservationsByNetwork)
+	if err != nil {
+		logger.Error(err, "Failed to ensure router pod")
+		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcrouter", "ensure_pod", "error").Inc()
+		r.emitEvent(router, "Warning", "PodFailed", "Failed to ensure router pod: %v", err)
+		return r.setFailedStatus(ctx, router, fmt.Sprintf("Failed to ensure router pod: %v", err))
+	}
+
+	// Step 4d: Auto-resolve transit network from gateway status
 	transitNetwork := ""
 	if router.Spec.Transit != nil && router.Spec.Transit.Network != "" {
 		transitNetwork = router.Spec.Transit.Network
@@ -141,9 +154,16 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		cfg := resolvedDHCPConfig(router.Spec.DHCP, netSpec)
 		if cfg != nil {
 			anyDHCPEnabled = true
+			autoCount := int32(0)
+			if autoReservationsByNetwork != nil {
+				if autoRes, ok := autoReservationsByNetwork[netSpec.Name]; ok {
+					autoCount = int32(len(autoRes))
+				}
+			}
 			dhcpStatus := &v1alpha1.DHCPNetworkStatus{
-				Enabled:          true,
-				ReservationCount: int32(len(cfg.Reservations)),
+				Enabled:              true,
+				ReservationCount:     int32(len(cfg.Reservations)) + autoCount,
+				AutoReservationCount: autoCount,
 			}
 			if cfg.Range != nil {
 				dhcpStatus.PoolStart = cfg.Range.Start
@@ -362,7 +382,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 
 // ensureRouterPod creates or validates the router pod.
 // Returns true if the pod is Running, false otherwise.
-func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) (bool, error) {
+func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) (bool, error) {
 	logger := log.FromContext(ctx)
 	podName := routerPodName(router)
 
@@ -376,7 +396,7 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 			return false, nil
 		}
 		// Pod exists — check if it needs recreation
-		if r.podNeedsRecreation(existing, router, gw) {
+		if r.podNeedsRecreation(existing, router, gw, autoReservations) {
 			logger.Info("Router pod spec changed, recreating", "pod", podName)
 			if delErr := r.Delete(ctx, existing); delErr != nil && !errors.IsNotFound(delErr) {
 				return false, fmt.Errorf("delete stale pod %s: %w", podName, delErr)
@@ -396,9 +416,9 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 	// Create the pod
 	var pod *corev1.Pod
 	if router.Spec.Mode == "fast-path" {
-		pod = buildFastpathRouterPod(router, gw)
+		pod = buildFastpathRouterPod(router, gw, autoReservations)
 	} else {
-		pod = buildRouterPod(router, gw)
+		pod = buildRouterPod(router, gw, autoReservations)
 	}
 	if err := r.Create(ctx, pod); err != nil {
 		if errors.IsAlreadyExists(err) {
@@ -416,12 +436,12 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 // podNeedsRecreation checks if the existing pod's spec differs from what
 // would be generated for the current router/gateway spec. Compares Multus
 // annotations, container count, images, and env vars for all containers.
-func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) bool {
+func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) bool {
 	var desired *corev1.Pod
 	if router.Spec.Mode == "fast-path" {
-		desired = buildFastpathRouterPod(router, gw)
+		desired = buildFastpathRouterPod(router, gw, autoReservations)
 	} else {
-		desired = buildRouterPod(router, gw)
+		desired = buildRouterPod(router, gw, autoReservations)
 	}
 
 	// Compare Multus annotations
