@@ -52,10 +52,11 @@ func routerPodName(router *v1alpha1.VPCRouter) string {
 //  6. Starts dnsmasq for DHCP (if enabled)
 //
 // autoReservations provides auto-discovered DHCP reservations per network (may be nil).
-func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) *corev1.Pod {
+// dnsPolicy, when non-nil, injects the AdGuard Home sidecar and forwards dnsmasq DNS queries to it.
+func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation, dnsPolicy *v1alpha1.VPCDNSPolicy) *corev1.Pod {
 	// Dispatch to fast-path mode if configured
 	if router.Spec.Mode == "fast-path" {
-		return buildFastpathRouterPod(router, gw, autoReservations)
+		return buildFastpathRouterPod(router, gw, autoReservations, dnsPolicy)
 	}
 
 	podName := routerPodName(router)
@@ -68,7 +69,7 @@ func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoRes
 	image := resolveRouterImage(router, gw)
 
 	// Build the init script
-	script := buildInitScript(router, gw, autoReservations)
+	script := buildInitScript(router, gw, autoReservations, dnsPolicy)
 
 	// Build environment variables
 	envVars := buildEnvVars(router, gw, autoReservations)
@@ -195,6 +196,15 @@ func buildRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoRes
 		)
 	}
 
+	// Append AdGuard Home sidecar when a DNS policy references this router
+	if dnsPolicy != nil {
+		adguardContainer, adguardVolumes := buildAdGuardSidecar(dnsPolicy)
+		pod.Spec.Containers = append(pod.Spec.Containers, adguardContainer)
+		pod.Spec.Volumes = append(pod.Spec.Volumes, adguardVolumes...)
+		// Add DNS policy config hash annotation for drift detection
+		pod.Annotations["vpc.roks.ibm.com/dns-policy-hash"] = dnsPolicyHash(dnsPolicy)
+	}
+
 	return pod
 }
 
@@ -286,7 +296,8 @@ func resolveRouterImage(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway) str
 
 // buildInitScript generates the bash init script for the router pod.
 // autoReservations provides auto-discovered DHCP reservations per network (may be nil).
-func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) string {
+// dnsPolicy, when non-nil, configures dnsmasq to forward DNS queries to the AdGuard Home sidecar.
+func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation, dnsPolicy *v1alpha1.VPCDNSPolicy) string {
 	var sb strings.Builder
 	sb.WriteString("set -e\n\n")
 
@@ -365,7 +376,12 @@ func buildInitScript(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoRe
 			cfg.Reservations = mergeReservations(cfg.Reservations, autoRes)
 		}
 		ifName := fmt.Sprintf("net%d", i)
-		sb.WriteString(generateDnsmasqCommand(ifName, netSpec.Address, cfg) + " &\n")
+		cmd := generateDnsmasqCommand(ifName, netSpec.Address, cfg)
+		// Forward DNS to AdGuard Home sidecar when a DNS policy is active
+		if dnsPolicy != nil {
+			cmd += " --server=127.0.0.1#5353"
+		}
+		sb.WriteString(cmd + " &\n")
 	}
 	sb.WriteString("\n")
 
@@ -670,6 +686,18 @@ func dhcpConfigHash(router *v1alpha1.VPCRouter, autoReservations map[string][]v1
 		Global:           router.Spec.DHCP,
 		Networks:         router.Spec.Networks,
 		AutoReservations: autoReservations,
+	})
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+// dnsPolicyHash computes a SHA256 hash of the DNS policy spec for change detection.
+func dnsPolicyHash(policy *v1alpha1.VPCDNSPolicy) string {
+	data, _ := json.Marshal(struct {
+		Spec          v1alpha1.VPCDNSPolicySpec `json:"spec"`
+		ConfigMapName string                    `json:"configMapName"`
+	}{
+		Spec:          policy.Spec,
+		ConfigMapName: policy.Status.ConfigMapName,
 	})
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }

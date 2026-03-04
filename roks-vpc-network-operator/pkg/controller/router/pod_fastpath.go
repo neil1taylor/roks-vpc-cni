@@ -25,9 +25,10 @@ type networkConfig struct {
 // buildFastpathRouterPod constructs the Pod spec for a VPCRouter in fast-path mode.
 // It uses the purpose-built Go binary (/vpc-router) instead of the bash init script,
 // with HTTP health probes and a NETWORK_CONFIG JSON env var.
-// Sidecars (Suricata, metrics-exporter) are appended identically to standard mode.
+// Sidecars (Suricata, metrics-exporter, AdGuard Home) are appended identically to standard mode.
 // autoReservations provides auto-discovered DHCP reservations per network (may be nil).
-func buildFastpathRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) *corev1.Pod {
+// dnsPolicy, when non-nil, injects the AdGuard Home sidecar.
+func buildFastpathRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation, dnsPolicy *v1alpha1.VPCDNSPolicy) *corev1.Pod {
 	podName := routerPodName(router)
 
 	// Build Multus network attachments (same as standard mode)
@@ -170,6 +171,15 @@ func buildFastpathRouterPod(router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway,
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
 			corev1.VolumeMount{Name: "dnsmasq-leases", MountPath: "/var/lib/misc"},
 		)
+	}
+
+	// Append AdGuard Home sidecar when a DNS policy references this router
+	if dnsPolicy != nil {
+		adguardContainer, adguardVolumes := buildAdGuardSidecar(dnsPolicy)
+		pod.Spec.Containers = append(pod.Spec.Containers, adguardContainer)
+		pod.Spec.Volumes = append(pod.Spec.Volumes, adguardVolumes...)
+		// Add DNS policy config hash annotation for drift detection
+		pod.Annotations["vpc.roks.ibm.com/dns-policy-hash"] = dnsPolicyHash(dnsPolicy)
 	}
 
 	return pod

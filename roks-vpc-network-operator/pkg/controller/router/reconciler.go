@@ -122,8 +122,20 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 		}
 	}
 
-	// Step 4c: Ensure router pod (pass auto-reservations for DHCP config)
-	podReady, err := r.ensureRouterPod(ctx, router, gw, autoReservationsByNetwork)
+	// Step 4c: Check for DNS policy referencing this router
+	var dnsPolicy *v1alpha1.VPCDNSPolicy
+	var dnsPolicies v1alpha1.VPCDNSPolicyList
+	if err := r.List(ctx, &dnsPolicies, client.InNamespace(router.Namespace)); err == nil {
+		for i := range dnsPolicies.Items {
+			if dnsPolicies.Items[i].Spec.RouterRef == router.Name {
+				dnsPolicy = &dnsPolicies.Items[i]
+				break
+			}
+		}
+	}
+
+	// Step 4d: Ensure router pod (pass auto-reservations and DNS policy)
+	podReady, err := r.ensureRouterPod(ctx, router, gw, autoReservationsByNetwork, dnsPolicy)
 	if err != nil {
 		logger.Error(err, "Failed to ensure router pod")
 		operatormetrics.ReconcileOpsTotal.WithLabelValues("vpcrouter", "ensure_pod", "error").Inc()
@@ -382,7 +394,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *v1alpha1.VPCRo
 
 // ensureRouterPod creates or validates the router pod.
 // Returns true if the pod is Running, false otherwise.
-func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) (bool, error) {
+func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation, dnsPolicy *v1alpha1.VPCDNSPolicy) (bool, error) {
 	logger := log.FromContext(ctx)
 	podName := routerPodName(router)
 
@@ -396,7 +408,7 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 			return false, nil
 		}
 		// Pod exists — check if it needs recreation
-		if r.podNeedsRecreation(existing, router, gw, autoReservations) {
+		if r.podNeedsRecreation(existing, router, gw, autoReservations, dnsPolicy) {
 			logger.Info("Router pod spec changed, recreating", "pod", podName)
 			if delErr := r.Delete(ctx, existing); delErr != nil && !errors.IsNotFound(delErr) {
 				return false, fmt.Errorf("delete stale pod %s: %w", podName, delErr)
@@ -416,9 +428,9 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 	// Create the pod
 	var pod *corev1.Pod
 	if router.Spec.Mode == "fast-path" {
-		pod = buildFastpathRouterPod(router, gw, autoReservations)
+		pod = buildFastpathRouterPod(router, gw, autoReservations, dnsPolicy)
 	} else {
-		pod = buildRouterPod(router, gw, autoReservations)
+		pod = buildRouterPod(router, gw, autoReservations, dnsPolicy)
 	}
 	if err := r.Create(ctx, pod); err != nil {
 		if errors.IsAlreadyExists(err) {
@@ -436,12 +448,12 @@ func (r *Reconciler) ensureRouterPod(ctx context.Context, router *v1alpha1.VPCRo
 // podNeedsRecreation checks if the existing pod's spec differs from what
 // would be generated for the current router/gateway spec. Compares Multus
 // annotations, container count, images, and env vars for all containers.
-func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation) bool {
+func (r *Reconciler) podNeedsRecreation(existing *corev1.Pod, router *v1alpha1.VPCRouter, gw *v1alpha1.VPCGateway, autoReservations map[string][]v1alpha1.DHCPStaticReservation, dnsPolicy *v1alpha1.VPCDNSPolicy) bool {
 	var desired *corev1.Pod
 	if router.Spec.Mode == "fast-path" {
-		desired = buildFastpathRouterPod(router, gw, autoReservations)
+		desired = buildFastpathRouterPod(router, gw, autoReservations, dnsPolicy)
 	} else {
-		desired = buildRouterPod(router, gw, autoReservations)
+		desired = buildRouterPod(router, gw, autoReservations, dnsPolicy)
 	}
 
 	// Compare Multus annotations
