@@ -78,6 +78,17 @@ rules:
   - get
   - list
   - watch
+# PVCs for DHCP lease persistence
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
 # Kubernetes core resources needed for operator
 - apiGroups:
   - ""

@@ -244,6 +244,20 @@ spec:
                         type: array
                         items:
                           type: string
+                  leasePersistence:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                      storageSize:
+                        type: string
+                        default: "100Mi"
+                      storageClassName:
+                        type: string
+                  autoReservations:
+                    type: boolean
+                    default: false
               firewall:
                 description: Firewall defines firewall rules for the router.
                 type: object
@@ -445,6 +459,8 @@ spec:
               xdpEnabled:
                 description: "XDPEnabled reports whether XDP fast-path forwarding is active."
                 type: boolean
+              leasePersistenceReady:
+                type: boolean
               transitIP:
                 description: TransitIP is the router's IP address on the transit network.
                 type: string
@@ -480,6 +496,8 @@ spec:
                           description: Number of static reservations configured.
                           type: integer
                           format: int32
+                        autoReservationCount:
+                          type: integer
               advertisedRoutes:
                 description: AdvertisedRoutes is the list of routes the router is currently advertising.
                 type: array
