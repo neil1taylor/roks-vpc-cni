@@ -28,7 +28,7 @@ Integrate WireGuard-based mesh networking for use cases beyond single-VPC connec
 
 ## Router Pod Performance Improvements
 
-**Status**: Tier 1 implemented, Tier 2-3 under consideration
+**Status**: Tier 1-2 implemented, Tier 3 under consideration
 
 The VPCRouter pod uses a Fedora container running a bash init script with kernel nftables forwarding over Multus veth interfaces. Tier 1 (resource limits, CPU pinning, node scheduling) is implemented via `spec.pod`. Higher tiers target throughput beyond ~15 Gbps.
 
@@ -44,16 +44,18 @@ Traffic path: **VM → OVN overlay → Multus veth → router pod (nftables) →
 | **CPU affinity** | Configurable via `spec.pod.runtimeClassName` | ✅ CPU Manager static policy |
 | **Node scheduling** | Configurable via `spec.pod.nodeSelector` + `tolerations` | ✅ Target specific nodes |
 | **NIC mode** | OVN LocalNet (software) | No SR-IOV passthrough |
-| **Container image** | `fedora:40` + bash init | Not a purpose-built forwarding binary |
-| **Acceleration** | None | No DPDK, XDP, or eBPF fast-path |
+| **Container image** | Dual-mode: `fedora:40` (standard) or `vpc-router-fastpath:latest` (fast-path, ~50MB) | ✅ Purpose-built Go binary |
+| **Acceleration** | XDP/eBPF via cilium/ebpf (fast-path mode) | ✅ L3 forwarding bypasses kernel stack |
+
+### Implemented Improvements (Tier 2, 2026-03-04)
+
+- **Purpose-built router image** — `spec.mode: fast-path` uses compiled Go binary (`cmd/vpc-router/`) with Alpine image (~50MB). Sub-100ms startup, HTTP health probes, structured JSON logging. Dockerfile: `cmd/vpc-router/Dockerfile`.
+- **XDP/eBPF fast-path** — `bpf/fwd.c` XDP program with LPM trie route table, NAT CIDR bypass, firewall bypass. Loaded via `cilium/ebpf` in `xdp.go`. Populates BPF maps from NETWORK_CONFIG and NFTABLES_CONFIG. Graceful fallback to kernel forwarding if XDP unavailable. Kernel >= 5.8 required.
 
 ### Remaining Improvements
 
-**Tier 2 — Medium effort, significant gains**
-
-- **Purpose-built router image** — Replace `fedora:40` + bash script with a compiled Go or C binary that configures interfaces and applies nftables at startup. Eliminates `dnf install` overhead (~30s startup), reduces image size from ~1GB to ~50MB, and enables structured health reporting.
-- **XDP/eBPF fast-path** — Attach XDP programs to Multus interfaces for forwarding decisions before packets enter the kernel network stack. 10-100x PPS improvement for simple forwarding rules. Complex NAT still falls back to nftables.
-- **Host networking mode** — Run the router pod with `hostNetwork: true` and use VRF or network namespaces for isolation. Eliminates veth overhead entirely. Tradeoff: loses Multus interface abstraction.
+**Host networking mode** (Tier 2, under consideration)
+- Run the router pod with `hostNetwork: true` and use VRF or network namespaces for isolation. Eliminates veth overhead entirely. Tradeoff: loses Multus interface abstraction.
 
 **Tier 3 — High effort, maximum performance**
 
@@ -401,7 +403,7 @@ spec:
 
 ## Network Observability Platform
 
-**Status**: Phases 1-2 implemented, Phases 3-4 under consideration
+**Status**: Phases 1-3 implemented, Phase 4 under consideration
 
 Build a comprehensive network monitoring, analytics, and alerting stack comparable to VMware NSX's built-in observability — traceflow, flow monitoring, micro-segmentation analytics, health dashboards, and latency analysis.
 
@@ -409,7 +411,7 @@ Build a comprehensive network monitoring, analytics, and alerting stack comparab
 
 | NSX Feature | Current State | Proposed Solution |
 |-------------|--------------|-------------------|
-| **Traceflow** (synthetic packet path tracing) | None | Custom CRD + eBPF or `traceroute`/`nping` in router pod |
+| **Traceflow** (synthetic packet path tracing) | **Implemented** (VPCTraceflow CRD + active probing) | `VPCTraceflow` CRD, reconciler execs into router pod, traceroute + nping + nft counter diff |
 | **Flow Monitoring** (top talkers, app stats) | None (see Traffic Analysis section) | VPC Flow Logs + ntopng + Prometheus |
 | **Live Traffic Analysis** (per-interface stats) | **Implemented** (metrics exporter sidecar) | `/proc/net/dev` polling in router pod sidecar → Prometheus |
 | **Micro-segmentation Analytics** (rule hits, unused rules) | **Implemented** (nftables `counter` keyword) | nftables counters → metrics exporter → Prometheus |
@@ -439,11 +441,13 @@ Extend the existing 5 metrics in `pkg/metrics/metrics.go` with network-level tel
 - CRD status condition transitions
 - Webhook admission latency (p50/p95/p99)
 
-**VPC Flow Logs integration** (Phase 2 — CRD scaffolding implemented 2026-03-04)
+**VPC Flow Logs integration** (Implemented 2026-03-04)
 - IBM Cloud VPC Flow Logs capture all traffic on VPC subnets natively
-- `VPCSubnet` CRD now has `spec.flowLogs` (enabled, cosBucketCRN, interval) and `status.flowLogCollectorID`
+- `VPCSubnet` CRD has `spec.flowLogs` (enabled, cosBucketCRN, interval) and `status.flowLogCollectorID`
 - VPCSubnet reconciler calls `reconcileFlowLogs()` for lifecycle management
-- VPC client methods are stubbed (`flow_logs.go`) — awaiting VPC SDK wiring
+- VPC client methods fully wired to VPC SDK (`flow_logs.go`) with Create/Get/List/Delete
+- BFF endpoints: `GET/DELETE /api/v1/flow-logs`, `GET /api/v1/flow-logs/{id}`
+- Console plugin: Flow Logs tab on SubnetDetailPage, status column on SubnetsListPage
 - Provides: source/dest IP, port, protocol, action (accept/reject), bytes, packets
 
 ### Component 2: Traceflow
@@ -616,16 +620,19 @@ spec:
 - RouterDetailPage enhanced with Monitoring tab and NFT Rules tab
 - Dashboard Router Health section for metrics-enabled routers
 
-**Phase 2 — Console plugin enhancements** (under consideration)
+**Phase 2 — Console plugin enhancements** (IMPLEMENTED)
 - Health status overlays on TopologyViewer
 - Alert timeline panel on VPC Dashboard
 - Per-subnet traffic breakdown views
-- VPC Flow Logs integration (IBM Cloud native feature, no pod changes)
+- VPC Flow Logs integration — VPC SDK fully wired, BFF endpoints, console UI
 
-**Phase 3 — Traceflow** (under consideration)
-- `VPCTraceflow` CRD + reconciler
-- Active probing from router pod with nftables log correlation
-- Results visualization in console plugin (path diagram)
+**Phase 3 — Traceflow** (IMPLEMENTED 2026-03-04)
+- `VPCTraceflow` CRD (`vtf`) + reconciler with pod exec active probing
+- Traceroute hop discovery + nping/ping latency probes + nftables counter diffing
+- Results: hop-by-hop path with latency, nftables rule hits, Reachable/Unreachable/Filtered/Timeout
+- BFF CRUD endpoints via dynamic client
+- Console plugin: list, create, detail pages with hop timeline visualization
+- TTL-based auto-cleanup of expired traces
 
 **Phase 4 — Full observability stack** (under consideration)
 - Latency mesh probing (Goldpinger sidecar)
