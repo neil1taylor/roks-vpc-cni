@@ -357,7 +357,7 @@ VPC routes tell the VPC fabric to deliver traffic for specific CIDRs to the gate
 apiVersion: vpc.roks.ibm.com/v1alpha1
 kind: VPCGateway
 metadata:
-  name: demo-gw-routes
+  name: gw-routes-example
   namespace: roks-vpc-network-operator
 spec:
   zone: "eu-de-1"
@@ -377,7 +377,7 @@ The operator creates VPC routes with `action: deliver` and `next_hop: <gateway V
 
 ```bash
 # Verify routes were created
-oc get vpcgateway demo-gw-routes -n roks-vpc-network-operator -o jsonpath='{.status.vpcRouteIDs}'
+oc get vpcgateway gw-routes-example -n roks-vpc-network-operator -o jsonpath='{.status.vpcRouteIDs}'
 
 # Check via IBM Cloud CLI
 ibmcloud is vpc-routing-table-routes <vpc-id> <default-rt-id>
@@ -394,7 +394,8 @@ spec:
     snat:
     - source: "10.100.0.0/24"        # Match traffic from this L2 network
       priority: 100                    # Lower = evaluated first
-      # translatedAddress omitted → uses the gateway's floating IP
+      # translatedAddress omitted → uses the gateway's reserved IP
+      # (VPC infra NAT then translates outbound to the FIP)
 
     - source: "10.200.0.0/24"
       translatedAddress: "10.240.64.50"  # Translate to a specific IP
@@ -432,7 +433,7 @@ table ip nat {
   chain postrouting {
     type nat hook postrouting priority 100; policy accept;
     ip saddr 10.100.0.0/24 ip daddr 10.200.0.0/24 accept
-    ip saddr 10.100.0.0/24 snat to 158.177.12.94
+    ip saddr 10.100.0.0/24 snat to 10.240.64.8    # reserved IP (VPC infra NAT → FIP)
     ip saddr 10.200.0.0/24 snat to 10.240.64.50
   }
 }
@@ -564,7 +565,7 @@ metadata:
   name: demo-router
   namespace: roks-vpc-network-operator
 spec:
-  gateway: demo-gw-routes         # Must reference a Ready VPCGateway
+  gateway: demo-gw                # Must reference a Ready VPCGateway
   networks:
   - name: demo-l2                 # Layer2 CUDN name
     namespace: default            # Must be a Multus global namespace
@@ -589,7 +590,7 @@ oc apply -f demo-router.yaml
 # Check router status
 oc get vpcrouter demo-router -n roks-vpc-network-operator
 # NAME           GATEWAY          PHASE   SYNC     AGE
-# demo-router   demo-gw-routes   Ready   Synced   30s
+# demo-router   demo-gw   Ready   Synced   30s
 
 # Check the router pod
 oc get pods -n roks-vpc-network-operator -l vpc.roks.ibm.com/router=demo-router
@@ -667,7 +668,7 @@ metadata:
   name: demo-router
   namespace: roks-vpc-network-operator
 spec:
-  gateway: demo-gw-routes
+  gateway: demo-gw
   networks:
   - name: demo-l2
     namespace: default
@@ -763,17 +764,22 @@ ip addr show enp1s0
 # Ping the router
 ping -c 3 10.100.0.1
 
-# Ping the internet (via router -> gateway -> VPC -> internet)
+# Ping the internet (SNAT on demo-gw translates L2 source to the reserved IP)
 ping -c 3 1.1.1.1
 ping -c 3 8.8.8.8
 
 # Trace the path
 traceroute 1.1.1.1
+
+# Verify SNAT is in use — external IP should be the gateway's FIP
+curl -s ifconfig.me
 ```
 
-The traffic path: VM (`10.100.0.x`) -> L2 network -> router pod (`10.100.0.1`) -> uplink interface -> VPC fabric -> gateway VNI -> internet.
+**Outbound traffic path:** VM (`10.100.0.x`) -> L2 network -> router pod (`10.100.0.1`) -> nftables SNAT rewrites source to gateway's reserved IP (`10.240.64.8`) -> uplink -> VPC fabric -> VPC infrastructure NAT translates to FIP (`158.177.12.94`) -> internet.
 
-Return traffic: internet -> VPC route (`10.100.0.0/24 deliver <gateway VNI IP>`) -> gateway VNI -> router pod -> L2 network -> VM.
+**Return traffic path:** internet -> FIP -> VPC infra NAT -> gateway VNI (reserved IP) -> router pod -> L2 network -> VM.
+
+> **Why SNAT is needed:** L2 VMs have IPs (like `10.100.0.x`) that are not part of any VPC subnet. The VPC fabric does not know how to route return traffic to these addresses. SNAT translates the source to the gateway's VPC-native reserved IP, so return traffic follows the normal VPC path. Without SNAT, you need a Public Gateway (PGW) on the VPC subnet — see [Part 6.1](#61-no-snat-pure-routing-with-vpc-routes).
 
 ### 5.4 Static IP alternative
 
@@ -806,7 +812,11 @@ For VMs that need a fixed IP, use cloud-init static configuration instead of DHC
 
 ### 6.1 No SNAT (pure routing with VPC routes)
 
-This is the simplest configuration and the default. The router forwards traffic without modifying source addresses. VPC routes handle return traffic.
+This is the simplest configuration and the default. The router forwards traffic without modifying source addresses. VPC routes handle return traffic **within the VPC**.
+
+**What works:** L2 VMs can reach LocalNet VMs and other VPC resources. VPC routes deliver return traffic to the gateway's VNI.
+
+**What doesn't work:** L2 VMs **cannot reach the internet** without SNAT, because the VPC fabric does not know how to route return traffic from the internet to L2 IP addresses. To enable internet from L2 VMs without SNAT, attach a **Public Gateway (PGW)** to the VPC subnet — the PGW SNATs all outbound subnet traffic, including packets with non-subnet source IPs.
 
 **Requirements:**
 - VPCGateway `vpcRoutes` must include each L2 network CIDR
@@ -857,7 +867,7 @@ oc exec router-nonat-pod -n roks-vpc-network-operator -- nft list ruleset
 
 ### 6.2 SNAT (source NAT to floating IP)
 
-SNAT translates the source address of outbound packets to the gateway's floating IP. This hides internal IPs and is useful when VPC routes are not available or when you want all traffic to appear from a single public IP.
+SNAT translates the source address of outbound packets to the gateway's reserved IP (the VNI's private VPC address). VPC infrastructure NAT on the VNI then translates outbound traffic to the floating IP. From the internet's perspective, all traffic appears from the FIP.
 
 ```yaml
 apiVersion: vpc.roks.ibm.com/v1alpha1
@@ -952,11 +962,16 @@ NoNAT rules are evaluated before SNAT rules (they have lower priority numbers). 
 
 ## Part 7: Public Address Range (PAR)
 
-A Public Address Range provides a contiguous block of IBM-assigned public IPs routed to the gateway via an ingress routing table. Unlike floating IPs (one per VNI), a PAR gives you multiple public IPs that can be assigned to different internal servers via DNAT.
+A Public Address Range provides a contiguous block of IBM-assigned public IPs routed to the gateway via an ingress routing table. Unlike a floating IP (one public IP bound to one VNI), a PAR gives you **multiple public IPs** that can be mapped to different internal servers via DNAT — ideal for hosting several services behind distinct addresses.
 
-### 7.1 Gateway with PAR
+**Key difference from FIP-based gateways:** When a PAR is configured and `translatedAddress` is omitted from SNAT rules, the default outbound SNAT address is the **first IP of the PAR CIDR** (not the gateway's reserved IP).
+
+### 7.1 Create a gateway with PAR
+
+This gateway has no floating IP — the PAR provides all public addresses. A `/30` prefix gives 4 usable public IPs.
 
 ```yaml
+# gw-par.yaml
 apiVersion: vpc.roks.ibm.com/v1alpha1
 kind: VPCGateway
 metadata:
@@ -973,65 +988,338 @@ spec:
     enabled: true
     prefixLength: 30              # /30 = 4 public IPs
   vpcRoutes:
-  - destination: "10.100.0.0/24"
+  - destination: "10.100.0.0/24"   # Route L2 traffic to this gateway
+  nat:
+    snat:
+    - source: "10.100.0.0/24"      # Outbound SNAT for L2 VMs
+      priority: 100
+      # translatedAddress omitted → defaults to first PAR IP
 ```
-
-Available prefix lengths:
-
-| Prefix | IPs |
-|--------|-----|
-| `/28`  | 16  |
-| `/29`  | 8   |
-| `/30`  | 4   |
-| `/31`  | 2   |
-| `/32`  | 1   |
-
-**What the reconciler does:**
-1. Creates a PAR in the VPC zone with the specified prefix length
-2. Creates an ingress routing table with `route_internet_ingress: true`
-3. Creates an ingress route: `destination=<PAR CIDR>`, `next_hop=<gateway VNI IP>`
 
 ```bash
-# Check the allocated PAR CIDR
-oc get vpcgateway gw-par -n roks-vpc-network-operator
-# NAME     ZONE      PHASE   VNI IP           FIP   PAR CIDR            SYNC     AGE
-# gw-par   eu-de-1   Ready   172.16.100.36          150.240.68.0/30     Synced   30s
+oc apply -f gw-par.yaml
 ```
 
-### 7.2 PAR with DNAT for multiple public IPs
+**What the reconciler does:**
+1. Creates a VNI via VLAN attachment on the uplink LocalNet
+2. Creates a PAR in the VPC zone with prefix length `/30`
+3. Creates an ingress routing table with `route_internet_ingress: true`
+4. Creates an ingress route: `destination=<PAR CIDR>`, `next_hop=<gateway VNI reserved IP>`
+5. Creates a VPC route for `10.100.0.0/24` in the default routing table
 
-Use the PAR addresses as external addresses in DNAT rules:
+Verify the gateway reaches `Ready` and check the allocated PAR CIDR:
+
+```bash
+# Wait for the gateway to become Ready
+oc get vpcgateway gw-par -n roks-vpc-network-operator -w
+
+# Example output:
+# NAME     ZONE      PHASE   VNI IP           FIP   PAR CIDR            SYNC     AGE
+# gw-par   eu-de-1   Ready   10.240.64.40           150.240.68.0/30     Synced   45s
+
+# Save the PAR CIDR for later use
+PAR_CIDR=$(oc get vpcgateway gw-par -n roks-vpc-network-operator -o jsonpath='{.status.publicAddressRangeCIDR}')
+echo "PAR CIDR: $PAR_CIDR"
+```
+
+> **Note:** The PAR CIDR is dynamically allocated by IBM Cloud — you cannot choose the addresses. The DNAT rules in step 7.3 will use the actual allocated IPs.
+
+### 7.2 Create a router and VMs
+
+Create a router attached to `demo-l2` with DHCP disabled (the VMs will use static IPs so we know their addresses for DNAT):
+
+```yaml
+# router-par.yaml
+apiVersion: vpc.roks.ibm.com/v1alpha1
+kind: VPCRouter
+metadata:
+  name: router-par
+  namespace: roks-vpc-network-operator
+spec:
+  gateway: gw-par
+  networks:
+  - name: demo-l2
+    namespace: default
+    address: "10.100.0.1/24"
+```
+
+Create two VMs with static IPs — each will host a simple HTTP server:
+
+```yaml
+# par-web.yaml
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: par-web
+  namespace: vm-demo
+spec:
+  running: true
+  template:
+    spec:
+      networks:
+      - name: l2net
+        multus:
+          networkName: demo-l2
+      domain:
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: "1"
+        devices:
+          interfaces:
+          - name: l2net
+            bridge: {}
+          disks:
+          - name: rootdisk
+            disk:
+              bus: virtio
+      volumes:
+      - name: rootdisk
+        containerDisk:
+          image: quay.io/containerdisks/fedora:40
+      - name: cloudinit
+        cloudInitNoCloud:
+          userData: |
+            #cloud-config
+            password: fedora
+            chpasswd: { expire: false }
+            ssh_pwauth: true
+            runcmd:
+            - mkdir -p /var/www && echo "par-web" > /var/www/index.html
+            - python3 -m http.server 8080 --directory /var/www &
+          networkData: |
+            network:
+              version: 2
+              ethernets:
+                enp1s0:
+                  addresses:
+                  - 10.100.0.50/24
+                  routes:
+                  - to: 0.0.0.0/0
+                    via: 10.100.0.1
+                    metric: 100
+```
+
+```yaml
+# par-app.yaml
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: par-app
+  namespace: vm-demo
+spec:
+  running: true
+  template:
+    spec:
+      networks:
+      - name: l2net
+        multus:
+          networkName: demo-l2
+      domain:
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: "1"
+        devices:
+          interfaces:
+          - name: l2net
+            bridge: {}
+          disks:
+          - name: rootdisk
+            disk:
+              bus: virtio
+      volumes:
+      - name: rootdisk
+        containerDisk:
+          image: quay.io/containerdisks/fedora:40
+      - name: cloudinit
+        cloudInitNoCloud:
+          userData: |
+            #cloud-config
+            password: fedora
+            chpasswd: { expire: false }
+            ssh_pwauth: true
+            runcmd:
+            - mkdir -p /var/www && echo "par-app" > /var/www/index.html
+            - python3 -m http.server 9090 --directory /var/www &
+          networkData: |
+            network:
+              version: 2
+              ethernets:
+                enp1s0:
+                  addresses:
+                  - 10.100.0.60/24
+                  routes:
+                  - to: 0.0.0.0/0
+                    via: 10.100.0.1
+                    metric: 100
+```
+
+Deploy everything:
+
+```bash
+oc apply -f router-par.yaml
+oc apply -f par-web.yaml
+oc apply -f par-app.yaml
+```
+
+Verify the router and VMs are running:
+
+```bash
+# Router should be Ready
+oc get vpcrouter router-par -n roks-vpc-network-operator
+# NAME         GATEWAY   PHASE   SYNC     AGE
+# router-par   gw-par    Ready   Synced   30s
+
+# VMs should be Running
+oc get vmi -n vm-demo
+# NAME      AGE   PHASE     IP
+# par-web   60s   Running   10.100.0.50
+# par-app   55s   Running   10.100.0.60
+
+# Verify VMs can ping the router
+oc exec router-par-pod -n roks-vpc-network-operator -c router -- ping -c 2 10.100.0.50
+oc exec router-par-pod -n roks-vpc-network-operator -c router -- ping -c 2 10.100.0.60
+```
+
+### 7.3 Add DNAT rules
+
+PAR IPs are dynamically allocated, so DNAT rules must be added **after** the gateway is Ready and the PAR CIDR is known. Read the PAR CIDR, then patch the gateway with DNAT rules.
+
+**Manual workflow:**
+
+```bash
+# 1. Read the PAR CIDR
+PAR_CIDR=$(oc get vpcgateway gw-par -n roks-vpc-network-operator \
+  -o jsonpath='{.status.publicAddressRangeCIDR}')
+echo "PAR CIDR: $PAR_CIDR"
+# Example: 150.240.68.0/30
+
+# 2. Extract individual IPs from the CIDR
+PAR_BASE=$(echo "$PAR_CIDR" | cut -d/ -f1)
+# For a /30 (4 IPs): .0, .1, .2, .3
+PAR_IP1="$PAR_BASE"                                          # 150.240.68.0
+PAR_IP2=$(echo "$PAR_BASE" | awk -F. '{$4=$4+1; print $1"."$2"."$3"."$4}')  # 150.240.68.1
+echo "PAR IP 1 (par-web): $PAR_IP1"
+echo "PAR IP 2 (par-app): $PAR_IP2"
+
+# 3. Patch the gateway with DNAT rules
+oc patch vpcgateway gw-par -n roks-vpc-network-operator --type merge -p "$(cat <<EOF
+spec:
+  nat:
+    dnat:
+    - externalAddress: "$PAR_IP1"
+      externalPort: 8080
+      internalAddress: "10.100.0.50"
+      internalPort: 8080
+      protocol: tcp
+      priority: 50
+    - externalAddress: "$PAR_IP2"
+      externalPort: 9090
+      internalAddress: "10.100.0.60"
+      internalPort: 9090
+      protocol: tcp
+      priority: 51
+    snat:
+    - source: "10.100.0.0/24"
+      priority: 100
+EOF
+)"
+```
+
+The gateway reconciler detects the NAT change, and the router reconciler recreates the pod to apply the new nftables rules.
+
+**Verify DNAT rules on the router pod:**
+
+```bash
+# Wait for the router pod to restart
+oc get pods -n roks-vpc-network-operator -l vpc.roks.ibm.com/router=router-par -w
+
+# Check the nftables ruleset
+oc exec router-par-pod -n roks-vpc-network-operator -c router -- nft list ruleset
+```
+
+Expected output (with example PAR IPs `150.240.68.0/30`):
+
+```
+table ip nat {
+  chain prerouting {
+    type nat hook prerouting priority -100; policy accept;
+    ip daddr 150.240.68.0 tcp dport 8080 counter dnat to 10.100.0.50:8080
+    ip daddr 150.240.68.1 tcp dport 9090 counter dnat to 10.100.0.60:9090
+  }
+  chain postrouting {
+    type nat hook postrouting priority 100; policy accept;
+    ip saddr 10.100.0.0/24 counter snat to 150.240.68.0
+  }
+}
+```
+
+Notice the SNAT address is `150.240.68.0` (first PAR IP), not the gateway's reserved IP. This is the PAR SNAT default.
+
+### 7.4 Test inbound connectivity
+
+From your local machine or any host with internet access, curl the PAR IPs:
+
+```bash
+# Read the PAR IPs (same variables from step 7.3)
+PAR_CIDR=$(oc get vpcgateway gw-par -n roks-vpc-network-operator \
+  -o jsonpath='{.status.publicAddressRangeCIDR}')
+PAR_BASE=$(echo "$PAR_CIDR" | cut -d/ -f1)
+PAR_IP1="$PAR_BASE"
+PAR_IP2=$(echo "$PAR_BASE" | awk -F. '{$4=$4+1; print $1"."$2"."$3"."$4}')
+
+# Reach par-web on port 8080
+curl http://$PAR_IP1:8080
+# par-web
+
+# Reach par-app on port 9090
+curl http://$PAR_IP2:9090
+# par-app
+```
+
+**Inbound traffic path:** internet -> PAR IP -> ingress routing table -> gateway VNI (reserved IP) -> router pod -> nftables DNAT rewrites destination to `10.100.0.x:<port>` -> L2 network -> VM.
+
+Each VM has its own dedicated public IP. Unlike a FIP gateway where all DNAT rules share a single public IP (differentiated only by port), a PAR lets each service have a distinct address.
+
+### 7.5 Test outbound SNAT via PAR
+
+SSH into a VM and check the outbound public IP:
+
+```bash
+# SSH into par-web via the router pod
+oc exec router-par-pod -n roks-vpc-network-operator -c router -- \
+  sshpass -p fedora ssh -o StrictHostKeyChecking=no fedora@10.100.0.50 \
+  'curl -s ifconfig.me'
+# 150.240.68.0   (first PAR IP)
+```
+
+The outbound IP is the first PAR IP (`150.240.68.0`), not a floating IP. When `translatedAddress` is omitted from SNAT rules and a PAR is configured, the operator automatically uses the first IP of the PAR CIDR as the default SNAT address.
+
+To use a different PAR IP for outbound, specify `translatedAddress` explicitly:
 
 ```yaml
 spec:
-  publicAddressRange:
-    enabled: true
-    prefixLength: 30              # Allocates e.g., 150.240.68.0/30
   nat:
-    dnat:
-    - externalAddress: "150.240.68.0"    # First PAR IP
-      externalPort: 443
-      internalAddress: "10.100.0.50"
-      internalPort: 443
-      protocol: tcp
-      priority: 50
-
-    - externalAddress: "150.240.68.1"    # Second PAR IP
-      externalPort: 443
-      internalAddress: "10.100.0.60"
-      internalPort: 443
-      protocol: tcp
-      priority: 51
-
     snat:
     - source: "10.100.0.0/24"
-      translatedAddress: "150.240.68.0"  # SNAT to first PAR IP
+      translatedAddress: "150.240.68.2"   # Use the third PAR IP for outbound
       priority: 100
 ```
 
-### 7.3 Adopt an existing PAR
+### 7.6 Reference: prefix lengths
 
-If you have a pre-provisioned PAR, the operator will only manage the ingress routing table and routes:
+| Prefix | Usable IPs | Use case |
+|--------|------------|----------|
+| `/28`  | 16         | Multi-service hosting |
+| `/29`  | 8          | Small web farm |
+| `/30`  | 4          | A few services |
+| `/31`  | 2          | Primary + failover |
+| `/32`  | 1          | Single public IP without FIP |
+
+### 7.7 Reference: adopting an existing PAR
+
+If you have a pre-provisioned PAR, provide its ID. The operator manages the ingress routing table and routes but does not create or delete the PAR itself:
 
 ```yaml
 spec:
@@ -1040,9 +1328,9 @@ spec:
     id: "r006-existing-par-id"     # Operator adopts, doesn't create or delete
 ```
 
-### 7.4 Combined: FIP + PAR
+### 7.8 Reference: combined FIP + PAR
 
-You can use both a floating IP and a PAR on the same gateway. The FIP is bound to the VNI for direct connectivity, while the PAR provides additional public IPs.
+You can use both a floating IP and a PAR on the same gateway. The FIP provides a stable outbound SNAT address, while the PAR provides additional public IPs for inbound DNAT:
 
 ```yaml
 spec:
@@ -1062,7 +1350,23 @@ spec:
     snat:
     - source: "10.100.0.0/24"
       priority: 100
-      # translatedAddress omitted → uses gateway's FIP
+      # translatedAddress omitted → defaults to first PAR IP (PAR takes precedence over FIP)
+      # To SNAT via the FIP instead, set translatedAddress to the gateway's reserved IP
+```
+
+When both FIP and PAR are configured, the default SNAT address is the **first PAR IP** (PAR takes precedence over the reserved IP). To route outbound traffic through the FIP instead, set `translatedAddress` to the gateway's reserved IP — VPC infrastructure NAT then translates it to the FIP.
+
+### 7.9 Cleanup
+
+```bash
+# Delete VMs
+oc delete vm par-web par-app -n vm-demo
+
+# Delete router
+oc delete vpcrouter router-par -n roks-vpc-network-operator
+
+# Delete gateway (finalizer cleans up PAR, ingress routing table, VPC routes, and VNI)
+oc delete vpcgateway gw-par -n roks-vpc-network-operator
 ```
 
 ---
@@ -1321,6 +1625,16 @@ The router pod gets three interfaces:
 - `net0` — connected to `l2-web` (10.100.0.1/24)
 - `net1` — connected to `l2-db` (10.200.0.1/24)
 
+**Why this configuration needs three features:**
+
+| Feature | Purpose | Without it |
+|---------|---------|------------|
+| **VPC routes** (`vpcRoutes`) | Tell the VPC to deliver inbound traffic for `10.100.0.0/24` and `10.200.0.0/24` to the gateway VNI | Return traffic from VPC/LocalNet VMs to L2 VMs is black-holed |
+| **SNAT** | Rewrite L2 source IPs to the gateway's reserved IP for outbound internet | L2 VMs cannot reach the internet (return traffic has no path back) |
+| **noNAT** | Exempt inter-L2 traffic from SNAT so web↔db packets keep their original IPs | Web-to-DB traffic would be SNATed — the DB server would see the gateway's IP instead of the web server's IP |
+
+noNAT rules have lower priority numbers than SNAT rules, so they are evaluated first. A packet from `10.100.0.0/24` to `10.200.0.0/24` matches the noNAT rule and is accepted (bypassing SNAT). A packet from `10.100.0.0/24` to `8.8.8.8` does not match any noNAT rule and falls through to the SNAT rule.
+
 ### 9.3 VMs on each network
 
 ```yaml
@@ -1505,7 +1819,7 @@ metadata:
   name: demo-router-ids
   namespace: roks-vpc-network-operator
 spec:
-  gateway: demo-gw-routes
+  gateway: demo-gw
   networks:
   - name: demo-l2
     namespace: default
@@ -1534,7 +1848,7 @@ Expected output:
 
 ```
 NAME              GATEWAY          PHASE   SYNC     AGE   IDS
-demo-router-ids   demo-gw-routes   Ready   Synced   30s   ids
+demo-router-ids   demo-gw   Ready   Synced   30s   ids
 ```
 
 Verify the pod has 2 containers (router + suricata):
@@ -1692,7 +2006,7 @@ metadata:
   name: demo-router-ips
   namespace: roks-vpc-network-operator
 spec:
-  gateway: demo-gw-routes
+  gateway: demo-gw
   networks:
   - name: demo-l2
     namespace: default

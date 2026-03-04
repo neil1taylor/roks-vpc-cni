@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -14,10 +13,15 @@ import (
 // so we use raw REST calls via the SDK's underlying HTTP client.
 
 type parCreateRequest struct {
-	Name         string     `json:"name,omitempty"`
-	VPC          idRef      `json:"vpc"`
-	Zone         nameRef    `json:"zone"`
-	PrefixLength int        `json:"prefix_length"`
+	Name              string           `json:"name,omitempty"`
+	IPv4AddressCount  int              `json:"ipv4_address_count"`
+	Target            *parTarget       `json:"target,omitempty"`
+	ResourceGroup     *idRef           `json:"resource_group,omitempty"`
+}
+
+type parTarget struct {
+	VPC  *idRef   `json:"vpc"`
+	Zone *nameRef `json:"zone"`
 }
 
 type idRef struct {
@@ -35,12 +39,14 @@ type parResponse struct {
 	CIDR           string  `json:"cidr"`
 	LifecycleState string  `json:"lifecycle_state"`
 	CreatedAt      string  `json:"created_at"`
-	Zone           *struct {
-		Name string `json:"name"`
-	} `json:"zone"`
-	VPC *struct {
-		ID string `json:"id"`
-	} `json:"vpc"`
+	Target         *struct {
+		Zone *struct {
+			Name string `json:"name"`
+		} `json:"zone"`
+		VPC *struct {
+			ID string `json:"id"`
+		} `json:"vpc"`
+	} `json:"target"`
 }
 
 type parListResponse struct {
@@ -59,13 +65,21 @@ func parFromResponse(r *parResponse) PublicAddressRange {
 		LifecycleState: r.LifecycleState,
 		CreatedAt:      r.CreatedAt,
 	}
-	if r.Zone != nil {
-		par.Zone = r.Zone.Name
-	}
-	if r.VPC != nil {
-		par.VPCID = r.VPC.ID
+	if r.Target != nil {
+		if r.Target.Zone != nil {
+			par.Zone = r.Target.Zone.Name
+		}
+		if r.Target.VPC != nil {
+			par.VPCID = r.Target.VPC.ID
+		}
 	}
 	return par
+}
+
+// prefixLengthToAddressCount converts a CIDR prefix length to an IPv4 address count.
+// E.g., /28=16, /29=8, /30=4, /31=2, /32=1.
+func prefixLengthToAddressCount(prefixLen int) int {
+	return 1 << (32 - prefixLen)
 }
 
 // CreatePublicAddressRange creates a public address range bound to a VPC + zone.
@@ -76,13 +90,16 @@ func (c *vpcClient) CreatePublicAddressRange(ctx context.Context, opts CreatePub
 	defer c.limiter.Release()
 
 	body := parCreateRequest{
-		Name:         opts.Name,
-		VPC:          idRef{ID: opts.VPCID},
-		Zone:         nameRef{Name: opts.Zone},
-		PrefixLength: opts.PrefixLength,
+		Name:             opts.Name,
+		IPv4AddressCount: prefixLengthToAddressCount(opts.PrefixLength),
+		Target: &parTarget{
+			VPC:  &idRef{ID: opts.VPCID},
+			Zone: &nameRef{Name: opts.Zone},
+		},
+		ResourceGroup: &idRef{ID: c.resourceGroupID},
 	}
 
-	resp, err := c.doREST(ctx, http.MethodPost, "/v1/public_address_ranges", body)
+	resp, err := c.doREST(ctx, http.MethodPost, "/public_address_ranges", body)
 	if err != nil {
 		return nil, fmt.Errorf("VPC API CreatePublicAddressRange: %w", err)
 	}
@@ -109,7 +126,7 @@ func (c *vpcClient) GetPublicAddressRange(ctx context.Context, parID string) (*P
 	}
 	defer c.limiter.Release()
 
-	resp, err := c.doREST(ctx, http.MethodGet, fmt.Sprintf("/v1/public_address_ranges/%s", parID), nil)
+	resp, err := c.doREST(ctx, http.MethodGet, fmt.Sprintf("/public_address_ranges/%s", parID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("VPC API GetPublicAddressRange(%s): %w", parID, err)
 	}
@@ -130,7 +147,7 @@ func (c *vpcClient) ListPublicAddressRanges(ctx context.Context, vpcID string) (
 	}
 	defer c.limiter.Release()
 
-	path := fmt.Sprintf("/v1/public_address_ranges?vpc.id=%s", vpcID)
+	path := fmt.Sprintf("/public_address_ranges?vpc.id=%s", vpcID)
 	resp, err := c.doREST(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("VPC API ListPublicAddressRanges(%s): %w", vpcID, err)
@@ -155,7 +172,7 @@ func (c *vpcClient) DeletePublicAddressRange(ctx context.Context, parID string) 
 	}
 	defer c.limiter.Release()
 
-	_, err := c.doREST(ctx, http.MethodDelete, fmt.Sprintf("/v1/public_address_ranges/%s", parID), nil)
+	_, err := c.doREST(ctx, http.MethodDelete, fmt.Sprintf("/public_address_ranges/%s", parID), nil)
 	if err != nil {
 		return fmt.Errorf("VPC API DeletePublicAddressRange(%s): %w", parID, err)
 	}
@@ -175,7 +192,7 @@ func (c *vpcClient) doREST(ctx context.Context, method, path string, body interf
 	if contains(path, '?') {
 		separator = "&"
 	}
-	url += separator + "version=2024-11-19&generation=2"
+	url += separator + "version=2026-02-11&generation=2"
 
 	_, err := builder.ResolveRequestURL(url, "", nil)
 	if err != nil {
@@ -197,23 +214,24 @@ func (c *vpcClient) doREST(ctx context.Context, method, path string, body interf
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
-	var rawResponse *http.Response
-	_, err = c.service.Service.Request(request, &rawResponse)
+	// Use map[string]json.RawMessage as result target so the SDK
+	// reads and unmarshals the response body for us.
+	var rawResult map[string]json.RawMessage
+	detailedResponse, err := c.service.Service.Request(request, &rawResult)
 	if err != nil {
 		return nil, err
 	}
-	if rawResponse == nil {
-		// DELETE with 204 No Content
+
+	// For DELETE with 204 No Content: no body
+	if detailedResponse == nil || detailedResponse.StatusCode == http.StatusNoContent {
 		return nil, nil
 	}
-	defer rawResponse.Body.Close()
 
-	respBody, err := io.ReadAll(rawResponse.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+	// Re-marshal the result back to JSON bytes for our callers
+	if rawResult == nil {
+		return nil, nil
 	}
-
-	return respBody, nil
+	return json.Marshal(rawResult)
 }
 
 func contains(s string, c byte) bool {

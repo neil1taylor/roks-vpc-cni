@@ -171,6 +171,29 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, vpn *v1alpha1.VPCVPNGa
 		}
 	}
 
+	// Step 9b: Fetch OpenVPN runtime status from sidecar (connected clients, tunnel stats)
+	if podReady && vpn.Spec.Protocol == "openvpn" && existing.Status.PodIP != "" {
+		ovpnClients, fetchErr := fetchOpenVPNStatus(existing.Status.PodIP, statusExporterPort)
+		if fetchErr != nil {
+			logger.Info("Could not fetch OpenVPN status (non-fatal)", "error", fetchErr.Error())
+		} else {
+			vpn.Status.ConnectedClients = int32(len(ovpnClients))
+			vpn.Status.ActiveTunnels = int32(len(ovpnClients))
+
+			// Build per-client tunnel status
+			tunnelStatuses := make([]v1alpha1.VPNTunnelStatus, 0, len(ovpnClients))
+			for _, c := range ovpnClients {
+				tunnelStatuses = append(tunnelStatuses, v1alpha1.VPNTunnelStatus{
+					Name:     c.CommonName,
+					Status:   "Up",
+					BytesIn:  c.BytesReceived,
+					BytesOut: c.BytesSent,
+				})
+			}
+			vpn.Status.Tunnels = tunnelStatuses
+		}
+	}
+
 	// Step 10: Update status
 	now := metav1.Now()
 	if podReady {
@@ -229,6 +252,10 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, vpn *v1alpha1.VPCVPNGa
 
 	if !podReady {
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+	// OpenVPN gets a shorter requeue for fresher connected-client stats
+	if vpn.Spec.Protocol == "openvpn" {
+		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 	}
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }

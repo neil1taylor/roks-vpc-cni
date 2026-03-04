@@ -386,6 +386,24 @@ spec:
 5. The VPCGateway reconciler watches VPN gateway status and creates VPC routes for the advertised routes
 6. Traffic from VMs destined for remote networks flows: VM -> OVN -> VPC route -> VPN gateway pod -> encrypted tunnel -> remote site
 
+### OpenVPN Status Monitoring
+
+OpenVPN pods include a lightweight status-exporter sidecar that serves the OpenVPN `status.log` file over HTTP (port 9190). The reconciler fetches this every 60 seconds to populate runtime stats:
+
+- **`connectedClients`** — number of currently connected OpenVPN clients
+- **`activeTunnels`** — same as connected clients for OpenVPN
+- **`tunnels[]`** — per-client status with name, connection state, bytes in/out
+
+The sidecar uses the same container image as the OpenVPN container and runs a minimal Python3 HTTP server (~32Mi memory). Status fetch failures are non-fatal and logged at Info level.
+
+```bash
+# View raw OpenVPN status log
+kubectl exec -it vpngw-ovpn-to-onprem -n roks-vpc-network-operator -c openvpn -- cat /run/openvpn/status.log
+
+# View parsed status from the CRD
+kubectl get vpcvpngateway ovpn-to-onprem -n roks-vpc-network-operator -o jsonpath='{.status.tunnels}'
+```
+
 ## Troubleshooting
 
 ```bash

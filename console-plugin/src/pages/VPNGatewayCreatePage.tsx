@@ -75,6 +75,10 @@ const VPNGatewayCreatePage: React.FC = () => {
   const [ovpnProto, setOvpnProto] = useState('udp');
   const [ovpnCipher, setOvpnCipher] = useState('AES-256-GCM');
   const [ovpnClientSubnet, setOvpnClientSubnet] = useState('');
+  const [ovpnDhSecret, setOvpnDhSecret] = useState('');
+  const [ovpnDhKey, setOvpnDhKey] = useState('dh.pem');
+  const [ovpnTlsAuthSecret, setOvpnTlsAuthSecret] = useState('');
+  const [ovpnTlsAuthKey, setOvpnTlsAuthKey] = useState('ta.key');
 
   // Tunnels
   const [tunnels, setTunnels] = useState<TunnelEntry[]>([emptyTunnel()]);
@@ -165,6 +169,10 @@ const VPNGatewayCreatePage: React.FC = () => {
         certSecretKey: ovpnCertKey.trim(),
         keySecret: ovpnKeySecret.trim(),
         keySecretKey: ovpnKeyKey.trim(),
+        dhSecret: ovpnDhSecret.trim() || undefined,
+        dhSecretKey: ovpnDhSecret.trim() ? ovpnDhKey.trim() : undefined,
+        tlsAuthSecret: ovpnTlsAuthSecret.trim() || undefined,
+        tlsAuthSecretKey: ovpnTlsAuthSecret.trim() ? ovpnTlsAuthKey.trim() : undefined,
         listenPort: parseInt(ovpnPort, 10) || 1194,
         proto: ovpnProto,
         cipher: ovpnCipher.trim(),
@@ -352,6 +360,28 @@ const VPNGatewayCreatePage: React.FC = () => {
                     <TextInput id="vpn-ovpn-client-subnet" value={ovpnClientSubnet} onChange={(_e, v) => setOvpnClientSubnet(v)} placeholder="e.g. 10.8.0.0/24" />
                     <FormHelperText><HelperText><HelperTextItem>IP pool for remote-access clients. Leave empty for site-to-site only.</HelperTextItem></HelperText></FormHelperText>
                   </FormGroup>
+
+                  <FormGroup label="DH Secret (optional)" fieldId="vpn-ovpn-dh">
+                    <TextInput id="vpn-ovpn-dh" value={ovpnDhSecret} onChange={(_e, v) => setOvpnDhSecret(v)} placeholder="e.g. ovpn-dh" />
+                    <FormHelperText><HelperText><HelperTextItem>Kubernetes Secret containing Diffie-Hellman parameters. Omit to use ECDH.</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+                  {ovpnDhSecret && (
+                    <FormGroup label="DH Secret Key" fieldId="vpn-ovpn-dh-key">
+                      <TextInput id="vpn-ovpn-dh-key" value={ovpnDhKey} onChange={(_e, v) => setOvpnDhKey(v)} />
+                      <FormHelperText><HelperText><HelperTextItem>Key within the Secret (default: dh.pem)</HelperTextItem></HelperText></FormHelperText>
+                    </FormGroup>
+                  )}
+
+                  <FormGroup label="TLS-Auth Secret (optional)" fieldId="vpn-ovpn-tls-auth">
+                    <TextInput id="vpn-ovpn-tls-auth" value={ovpnTlsAuthSecret} onChange={(_e, v) => setOvpnTlsAuthSecret(v)} placeholder="e.g. ovpn-ta" />
+                    <FormHelperText><HelperText><HelperTextItem>Kubernetes Secret containing the TLS-Auth HMAC key for additional security.</HelperTextItem></HelperText></FormHelperText>
+                  </FormGroup>
+                  {ovpnTlsAuthSecret && (
+                    <FormGroup label="TLS-Auth Secret Key" fieldId="vpn-ovpn-tls-auth-key">
+                      <TextInput id="vpn-ovpn-tls-auth-key" value={ovpnTlsAuthKey} onChange={(_e, v) => setOvpnTlsAuthKey(v)} />
+                      <FormHelperText><HelperText><HelperTextItem>Key within the Secret (default: ta.key)</HelperTextItem></HelperText></FormHelperText>
+                    </FormGroup>
+                  )}
                 </>
               )}
 

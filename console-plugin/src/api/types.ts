@@ -772,6 +772,13 @@ export interface VPNTunnelStatus {
   bytesOut: number;
 }
 
+export interface VPNRemoteAccess {
+  enabled: boolean;
+  addressPool?: string;
+  dnsServers?: string[];
+  maxClients?: number;
+}
+
 export interface VPNGateway {
   name: string;
   namespace: string;
@@ -787,6 +794,7 @@ export interface VPNGateway {
   advertisedRoutes?: string[];
   tunnelMTU?: number;
   mssClamp?: boolean;
+  remoteAccess?: VPNRemoteAccess;
   podName?: string;
   syncStatus: string;
   message?: string;

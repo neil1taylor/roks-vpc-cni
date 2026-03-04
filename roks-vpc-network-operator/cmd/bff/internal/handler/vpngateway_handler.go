@@ -285,6 +285,23 @@ func unstructuredToVPNGateway(obj *unstructured.Unstructured) model.VPNGatewayRe
 		}
 	}
 
+	// Remote access config from spec
+	raEnabled, raFound, _ := unstructured.NestedBool(obj.Object, "spec", "remoteAccess", "enabled")
+	if raFound && raEnabled {
+		ra := &model.VPNRemoteAccessResp{Enabled: true}
+		ra.AddressPool, _, _ = unstructured.NestedString(obj.Object, "spec", "remoteAccess", "addressPool")
+		dnsSlice, dnsFound, _ := unstructured.NestedStringSlice(obj.Object, "spec", "remoteAccess", "dnsServers")
+		if dnsFound {
+			ra.DNSServers = dnsSlice
+		}
+		maxClientsVal, mcFound, _ := unstructured.NestedInt64(obj.Object, "spec", "remoteAccess", "maxClients")
+		if mcFound {
+			mc := int32(maxClientsVal)
+			ra.MaxClients = &mc
+		}
+		resp.RemoteAccess = ra
+	}
+
 	if ct := obj.GetCreationTimestamp(); !ct.IsZero() {
 		resp.CreatedAt = ct.UTC().Format("2006-01-02T15:04:05Z")
 	}

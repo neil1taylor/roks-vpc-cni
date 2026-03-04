@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	v1alpha1 "github.com/IBM/roks-vpc-network-operator/api/v1alpha1"
 )
@@ -824,6 +826,18 @@ func buildOpenVPNPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *core
 		ReadOnly:  true,
 	})
 
+	// Shared volume for status.log (OpenVPN writes, sidecar reads)
+	volumes = append(volumes, corev1.Volume{
+		Name: "openvpn-run",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	})
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      "openvpn-run",
+		MountPath: "/run/openvpn",
+	})
+
 	// Optional: DH parameters
 	if vpn.Spec.OpenVPN.DH != nil {
 		volumes = append(volumes, corev1.Volume{
@@ -915,11 +929,84 @@ func buildOpenVPNPod(vpn *v1alpha1.VPCVPNGateway, gw *v1alpha1.VPCGateway) *core
 						PeriodSeconds:       10,
 					},
 				},
+				buildStatusExporterContainer(image),
 			},
 		},
 	}
 
 	return pod
+}
+
+// buildStatusExporterContainer returns a lightweight sidecar container that
+// serves /run/openvpn/status.log over HTTP on port 9190 for the reconciler
+// to scrape.
+func buildStatusExporterContainer(image string) corev1.Container {
+	return corev1.Container{
+		Name:    "status-exporter",
+		Image:   image,
+		Command: []string{"python3", "-c", buildStatusExporterScript()},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "openvpn-run",
+				MountPath: "/run/openvpn",
+				ReadOnly:  true,
+			},
+		},
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "status",
+				ContainerPort: int32(statusExporterPort),
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{
+					Port: intstr.FromInt32(int32(statusExporterPort)),
+				},
+			},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       30,
+		},
+	}
+}
+
+// buildStatusExporterScript returns a minimal Python3 HTTP server that serves
+// the OpenVPN status.log file at /status.
+func buildStatusExporterScript() string {
+	return `
+import http.server, os
+
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/status":
+            self.send_response(404)
+            self.end_headers()
+            return
+        try:
+            with open("/run/openvpn/status.log") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(data.encode())
+        except FileNotFoundError:
+            self.send_response(404)
+            self.end_headers()
+    def log_message(self, *a): pass
+
+http.server.HTTPServer(("", 9190), H).serve_forever()
+`
 }
 
 // resolveTunnelMTU returns the tunnel MTU from the VPN spec or the default.
@@ -943,6 +1030,11 @@ func isMSSClampEnabled(vpn *v1alpha1.VPCVPNGateway) bool {
 // to the desired pod spec (protocol, image, tunnels, gateway).
 func vpnPodNeedsRecreation(existing *corev1.Pod, desired *corev1.Pod) bool {
 	if len(existing.Spec.Containers) == 0 || len(desired.Spec.Containers) == 0 {
+		return true
+	}
+
+	// Check container count (e.g. sidecar added/removed)
+	if len(existing.Spec.Containers) != len(desired.Spec.Containers) {
 		return true
 	}
 

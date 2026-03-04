@@ -181,9 +181,9 @@ spec:
 
 ## VPN Gateway
 
-**Status**: Implemented (2026-03-02) — See `docs/tutorials/vpn-gateway.md`
+**Status**: Implemented (2026-03-04) — See `docs/tutorials/vpn-gateway.md`
 
-> **Implementation complete**: VPCVPNGateway CRD (`vvg`), reconciler, BFF endpoints, and console plugin UI (list/detail/create pages + dashboard card). Supports WireGuard and IPsec/StrongSwan protocols. Both site-to-site and client-to-site. References VPCGateway for FIP tunnel endpoint. Advertised routes auto-collected by VPCGateway for VPC route creation. Branch: `worktree-l2bridge`.
+> **Implementation complete**: VPCVPNGateway CRD (`vvg`), reconciler, BFF endpoints, and console plugin UI (list/detail/create pages + dashboard card). Supports WireGuard, IPsec/StrongSwan, and OpenVPN protocols. Both site-to-site and client-to-site (remote access). References VPCGateway for FIP tunnel endpoint. Advertised routes auto-collected by VPCGateway for VPC route creation. OpenVPN includes a status-exporter sidecar for runtime client stats, client certificate lifecycle (issue/revoke with CRL), and optional DH/TLS-Auth secret support. Console plugin includes remote access configuration card, DH and TLS-Auth fields on the create form, and connected client stats on the detail page.
 
 Provide encrypted site-to-site and client-to-site VPN tunnels for VM networks, managed declaratively through CRDs. Distinct from the mesh networking section — this is traditional hub-and-spoke VPN, not peer-to-peer mesh.
 
@@ -219,9 +219,9 @@ Provide encrypted site-to-site and client-to-site VPN tunnels for VM networks, m
 
 | Protocol | Site-to-site | Client-to-site | Enterprise compat | Performance |
 |----------|-------------|----------------|-------------------|-------------|
-| **WireGuard** | Yes | Yes (wg-quick) | Limited (newer firewalls only) | Excellent |
-| **IPsec/IKEv2** (StrongSwan) | Yes | Yes | Excellent (Cisco, Fortinet, Palo Alto) | Good |
-| **OpenVPN** | Yes | Yes (broad client support) | Moderate | Moderate |
+| **WireGuard** | Yes | Yes (wg-quick) | Limited (newer firewalls only) | Excellent | ✅ Implemented |
+| **IPsec/IKEv2** (StrongSwan) | Yes | Yes | Excellent (Cisco, Fortinet, Palo Alto) | Good | ✅ Implemented |
+| **OpenVPN** | Yes | Yes (broad client support) | Moderate | Moderate | ✅ Implemented |
 
 ### CRD Sketch
 

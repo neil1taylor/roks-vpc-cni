@@ -354,6 +354,43 @@ const VPNGatewayDetailPage: React.FC = () => {
                 </Card>
               </GridItem>
 
+              {/* Card: Remote Access (conditionally rendered) */}
+              {vpnGateway.remoteAccess?.enabled && (
+                <GridItem>
+                  <Card isFullHeight>
+                    <CardTitle>Remote Access</CardTitle>
+                    <CardBody>
+                      <DescriptionList>
+                        <DescriptionListGroup>
+                          <DescriptionListTerm>Address Pool</DescriptionListTerm>
+                          <DescriptionListDescription>
+                            <code>{vpnGateway.remoteAccess.addressPool || '-'}</code>
+                          </DescriptionListDescription>
+                        </DescriptionListGroup>
+                        <DescriptionListGroup>
+                          <DescriptionListTerm>DNS Servers</DescriptionListTerm>
+                          <DescriptionListDescription>
+                            {vpnGateway.remoteAccess.dnsServers && vpnGateway.remoteAccess.dnsServers.length > 0
+                              ? vpnGateway.remoteAccess.dnsServers.join(', ')
+                              : '-'}
+                          </DescriptionListDescription>
+                        </DescriptionListGroup>
+                        <DescriptionListGroup>
+                          <DescriptionListTerm>Max Clients</DescriptionListTerm>
+                          <DescriptionListDescription>
+                            {vpnGateway.remoteAccess.maxClients ?? 10}
+                          </DescriptionListDescription>
+                        </DescriptionListGroup>
+                        <DescriptionListGroup>
+                          <DescriptionListTerm>Connected Clients</DescriptionListTerm>
+                          <DescriptionListDescription>{vpnGateway.connectedClients}</DescriptionListDescription>
+                        </DescriptionListGroup>
+                      </DescriptionList>
+                    </CardBody>
+                  </Card>
+                </GridItem>
+              )}
+
               {/* Card 5: Issued Clients (OpenVPN only) */}
               {vpnGateway.protocol === 'openvpn' && (
                 <GridItem span={12}>

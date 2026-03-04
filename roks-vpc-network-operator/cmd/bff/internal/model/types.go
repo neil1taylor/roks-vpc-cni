@@ -707,6 +707,14 @@ type L2BridgeRequest struct {
 
 // ── VPN Gateway ──
 
+// VPNRemoteAccessResp represents remote access configuration in a VPN gateway response.
+type VPNRemoteAccessResp struct {
+	Enabled     bool     `json:"enabled"`
+	AddressPool string   `json:"addressPool,omitempty"`
+	DNSServers  []string `json:"dnsServers,omitempty"`
+	MaxClients  *int32   `json:"maxClients,omitempty"`
+}
+
 // VPNGatewayResponse represents a VPCVPNGateway resource.
 type VPNGatewayResponse struct {
 	Name             string                `json:"name"`
@@ -723,6 +731,7 @@ type VPNGatewayResponse struct {
 	AdvertisedRoutes []string              `json:"advertisedRoutes,omitempty"`
 	TunnelMTU        int32                 `json:"tunnelMTU,omitempty"`
 	MSSClamp         *bool                 `json:"mssClamp,omitempty"`
+	RemoteAccess     *VPNRemoteAccessResp  `json:"remoteAccess,omitempty"`
 	PodName          string                `json:"podName,omitempty"`
 	SyncStatus       string                `json:"syncStatus"`
 	Message          string                `json:"message,omitempty"`

@@ -614,13 +614,17 @@ func TestBuildOpenVPNPod(t *testing.T) {
 		t.Errorf("owner ref kind = %q, want %q", pod.OwnerReferences[0].Kind, "VPCVPNGateway")
 	}
 
-	// Container
-	if len(pod.Spec.Containers) != 1 {
-		t.Fatalf("expected 1 container, got %d", len(pod.Spec.Containers))
+	// Containers: vpn + status-exporter
+	if len(pod.Spec.Containers) != 2 {
+		t.Fatalf("expected 2 containers (vpn + status-exporter), got %d", len(pod.Spec.Containers))
 	}
 	container := pod.Spec.Containers[0]
 	if container.Name != "vpn" {
 		t.Errorf("container name = %q, want %q", container.Name, "vpn")
+	}
+	sidecar := pod.Spec.Containers[1]
+	if sidecar.Name != "status-exporter" {
+		t.Errorf("sidecar name = %q, want %q", sidecar.Name, "status-exporter")
 	}
 
 	// Default image (Fedora for OpenVPN)
@@ -646,18 +650,24 @@ func TestBuildOpenVPNPod(t *testing.T) {
 		t.Errorf("expected NET_ADMIN and NET_RAW capabilities, got %v", caps)
 	}
 
-	// Volumes: 3 required (ca, cert, key) + 1 CRL
-	if len(pod.Spec.Volumes) != 4 {
-		t.Fatalf("expected 4 volumes (ca, cert, key, crl), got %d", len(pod.Spec.Volumes))
+	// Volumes: 3 required (ca, cert, key) + 1 CRL + 1 shared run dir
+	if len(pod.Spec.Volumes) != 5 {
+		t.Fatalf("expected 5 volumes (ca, cert, key, crl, openvpn-run), got %d", len(pod.Spec.Volumes))
 	}
-	expectedVolumes := map[string]string{
+	expectedSecretVolumes := map[string]string{
 		"openvpn-ca":   "ovpn-ca-secret",
 		"openvpn-cert": "ovpn-cert-secret",
 		"openvpn-key":  "ovpn-key-secret",
 		"openvpn-crl":  "test-ovpn-crl",
 	}
 	for _, vol := range pod.Spec.Volumes {
-		expectedSecret, ok := expectedVolumes[vol.Name]
+		if vol.Name == "openvpn-run" {
+			if vol.EmptyDir == nil {
+				t.Error("openvpn-run volume should be emptyDir")
+			}
+			continue
+		}
+		expectedSecret, ok := expectedSecretVolumes[vol.Name]
 		if !ok {
 			t.Errorf("unexpected volume %q", vol.Name)
 			continue
@@ -718,9 +728,9 @@ func TestBuildOpenVPNPod_OptionalVolumes(t *testing.T) {
 
 	pod := buildOpenVPNPod(vpn, gw)
 
-	// Should have 6 volumes total: ca, cert, key, crl, dh, tls-auth
-	if len(pod.Spec.Volumes) != 6 {
-		t.Fatalf("expected 6 volumes (ca, cert, key, crl, dh, tls-auth), got %d", len(pod.Spec.Volumes))
+	// Should have 7 volumes total: ca, cert, key, crl, openvpn-run, dh, tls-auth
+	if len(pod.Spec.Volumes) != 7 {
+		t.Fatalf("expected 7 volumes (ca, cert, key, crl, openvpn-run, dh, tls-auth), got %d", len(pod.Spec.Volumes))
 	}
 
 	// Verify the optional volume names exist
@@ -735,10 +745,10 @@ func TestBuildOpenVPNPod_OptionalVolumes(t *testing.T) {
 		t.Error("missing openvpn-tls-auth volume")
 	}
 
-	// Verify volume mount count matches
+	// Verify volume mount count matches (7 = ca, cert, key, crl, openvpn-run, dh, tls-auth)
 	container := pod.Spec.Containers[0]
-	if len(container.VolumeMounts) != 6 {
-		t.Fatalf("expected 6 volume mounts, got %d", len(container.VolumeMounts))
+	if len(container.VolumeMounts) != 7 {
+		t.Fatalf("expected 7 volume mounts, got %d", len(container.VolumeMounts))
 	}
 }
 
@@ -897,6 +907,109 @@ func TestVPNPodNeedsRecreation_MissingVolume(t *testing.T) {
 
 	if !vpnPodNeedsRecreation(oldPod, desiredPod) {
 		t.Error("pod with missing CRL volume should need recreation")
+	}
+}
+
+func TestBuildOpenVPNPod_StatusSidecar(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildOpenVPNPod(vpn, gw)
+
+	// Should have 2 containers
+	if len(pod.Spec.Containers) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(pod.Spec.Containers))
+	}
+
+	sidecar := pod.Spec.Containers[1]
+	if sidecar.Name != "status-exporter" {
+		t.Errorf("sidecar name = %q, want %q", sidecar.Name, "status-exporter")
+	}
+
+	// Sidecar should use the same image as the main container
+	if sidecar.Image != pod.Spec.Containers[0].Image {
+		t.Errorf("sidecar image = %q, should match main container %q", sidecar.Image, pod.Spec.Containers[0].Image)
+	}
+
+	// Sidecar should have port 9190
+	if len(sidecar.Ports) != 1 || sidecar.Ports[0].ContainerPort != 9190 {
+		t.Errorf("sidecar port = %v, want 9190", sidecar.Ports)
+	}
+
+	// Sidecar should mount openvpn-run read-only
+	foundMount := false
+	for _, m := range sidecar.VolumeMounts {
+		if m.Name == "openvpn-run" {
+			foundMount = true
+			if !m.ReadOnly {
+				t.Error("sidecar openvpn-run mount should be read-only")
+			}
+			if m.MountPath != "/run/openvpn" {
+				t.Errorf("sidecar mount path = %q, want %q", m.MountPath, "/run/openvpn")
+			}
+		}
+	}
+	if !foundMount {
+		t.Error("sidecar missing openvpn-run volume mount")
+	}
+
+	// Sidecar should have liveness probe
+	if sidecar.LivenessProbe == nil || sidecar.LivenessProbe.TCPSocket == nil {
+		t.Error("sidecar should have TCP liveness probe")
+	}
+
+	// Sidecar should have resource limits
+	if sidecar.Resources.Requests == nil || sidecar.Resources.Limits == nil {
+		t.Error("sidecar should have resource requests and limits")
+	}
+}
+
+func TestBuildOpenVPNPod_StatusSidecar_NotForWireGuard(t *testing.T) {
+	vpn := newTestWireGuardVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildWireGuardPod(vpn, gw)
+
+	// WireGuard pod should still have 1 container (no sidecar)
+	if len(pod.Spec.Containers) != 1 {
+		t.Errorf("WireGuard pod should have 1 container, got %d", len(pod.Spec.Containers))
+	}
+}
+
+func TestBuildOpenVPNPod_SharedRunVolume(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	pod := buildOpenVPNPod(vpn, gw)
+
+	// Main container should mount openvpn-run read-write
+	mainMounts := pod.Spec.Containers[0].VolumeMounts
+	foundMain := false
+	for _, m := range mainMounts {
+		if m.Name == "openvpn-run" {
+			foundMain = true
+			if m.ReadOnly {
+				t.Error("main container openvpn-run mount should be read-write")
+			}
+		}
+	}
+	if !foundMain {
+		t.Error("main container missing openvpn-run volume mount")
+	}
+}
+
+func TestVPNPodNeedsRecreation_ContainerCountChanged(t *testing.T) {
+	vpn := newTestOpenVPNVPN()
+	gw := newTestVPNGateway()
+
+	desired := buildOpenVPNPod(vpn, gw)
+
+	// Simulate a pre-sidecar pod with only 1 container
+	old := buildOpenVPNPod(vpn, gw)
+	old.Spec.Containers = old.Spec.Containers[:1]
+
+	if !vpnPodNeedsRecreation(old, desired) {
+		t.Error("pod with different container count should need recreation")
 	}
 }
 

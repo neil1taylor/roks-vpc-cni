@@ -631,28 +631,45 @@ func (r *Reconciler) ensurePAR(ctx context.Context, gw *v1alpha1.VPCGateway) err
 			logger.Info("Adopted external PAR", "parID", existing.ID, "cidr", existing.CIDR)
 			r.emitEvent(gw, "Normal", "PARAdopted", "Adopted external PAR %s (%s)", existing.ID, existing.CIDR)
 		} else {
-			// Create new PAR
+			// Create new PAR (with idempotency: check for existing by name first)
 			prefixLen := par.PrefixLength
 			if prefixLen == 0 {
 				prefixLen = 32
 			}
 			parName := network.TruncateVPCName(fmt.Sprintf("roks-%s-gw-%s-par", r.ClusterID, gw.Name))
-			created, err := r.VPC.CreatePublicAddressRange(ctx, vpc.CreatePublicAddressRangeOptions{
-				Name:         parName,
-				VPCID:        r.VPCID,
-				Zone:         gw.Spec.Zone,
-				PrefixLength: prefixLen,
-				ClusterID:    r.ClusterID,
-				OwnerKind:    "gateway",
-				OwnerName:    gw.Name,
-			})
-			if err != nil {
-				return fmt.Errorf("CreatePublicAddressRange: %w", err)
+
+			// Idempotency: look for an existing PAR with the same name
+			existingPARs, listErr := r.VPC.ListPublicAddressRanges(ctx, r.VPCID)
+			if listErr == nil {
+				for i := range existingPARs {
+					if existingPARs[i].Name == parName {
+						gw.Status.PublicAddressRangeID = existingPARs[i].ID
+						gw.Status.PublicAddressRangeCIDR = existingPARs[i].CIDR
+						logger.Info("Found existing PAR by name", "parID", existingPARs[i].ID, "cidr", existingPARs[i].CIDR)
+						r.emitEvent(gw, "Normal", "PARFound", "Found existing PAR %s (%s)", existingPARs[i].ID, existingPARs[i].CIDR)
+						break
+					}
+				}
 			}
-			gw.Status.PublicAddressRangeID = created.ID
-			gw.Status.PublicAddressRangeCIDR = created.CIDR
-			logger.Info("Created PAR", "parID", created.ID, "cidr", created.CIDR)
-			r.emitEvent(gw, "Normal", "PARCreated", "Created PAR %s (%s)", created.ID, created.CIDR)
+
+			if gw.Status.PublicAddressRangeID == "" {
+				created, err := r.VPC.CreatePublicAddressRange(ctx, vpc.CreatePublicAddressRangeOptions{
+					Name:         parName,
+					VPCID:        r.VPCID,
+					Zone:         gw.Spec.Zone,
+					PrefixLength: prefixLen,
+					ClusterID:    r.ClusterID,
+					OwnerKind:    "gateway",
+					OwnerName:    gw.Name,
+				})
+				if err != nil {
+					return fmt.Errorf("CreatePublicAddressRange: %w", err)
+				}
+				gw.Status.PublicAddressRangeID = created.ID
+				gw.Status.PublicAddressRangeCIDR = created.CIDR
+				logger.Info("Created PAR", "parID", created.ID, "cidr", created.CIDR)
+				r.emitEvent(gw, "Normal", "PARCreated", "Created PAR %s (%s)", created.ID, created.CIDR)
+			}
 		}
 	} else {
 		// Drift detection: verify PAR still exists
