@@ -904,3 +904,74 @@ type DNSPolicyLocalDNSReq struct {
 	Enabled bool   `json:"enabled"`
 	Domain  string `json:"domain,omitempty"`
 }
+
+// ── Traceflow ──
+
+// TraceflowSourceResponse represents a traceflow source in the API response.
+type TraceflowSourceResponse struct {
+	IP    string `json:"ip,omitempty"`
+	VMRef string `json:"vmRef,omitempty"`
+}
+
+// TraceflowDestinationResponse represents a traceflow destination in the API response.
+type TraceflowDestinationResponse struct {
+	IP       string `json:"ip"`
+	Port     *int32 `json:"port,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// TraceflowHopResponse represents a single hop in the traceflow path.
+type TraceflowHopResponse struct {
+	Order        int                         `json:"order"`
+	Node         string                      `json:"node"`
+	Component    string                      `json:"component"`
+	Action       string                      `json:"action"`
+	Latency      string                      `json:"latency"`
+	NftablesHits []TraceflowNFTablesHitResp  `json:"nftablesHits,omitempty"`
+}
+
+// TraceflowNFTablesHitResp represents a matched nftables rule.
+type TraceflowNFTablesHitResp struct {
+	Rule    string `json:"rule"`
+	Chain   string `json:"chain"`
+	Packets int64  `json:"packets"`
+}
+
+// TraceflowResponse represents a VPCTraceflow resource.
+type TraceflowResponse struct {
+	Name         string                        `json:"name"`
+	Namespace    string                        `json:"namespace"`
+	Source       TraceflowSourceResponse       `json:"source"`
+	Destination  TraceflowDestinationResponse  `json:"destination"`
+	RouterRef    string                        `json:"routerRef"`
+	Phase        string                        `json:"phase,omitempty"`
+	Result       string                        `json:"result,omitempty"`
+	TotalLatency string                        `json:"totalLatency,omitempty"`
+	Hops         []TraceflowHopResponse        `json:"hops,omitempty"`
+	Message      string                        `json:"message,omitempty"`
+	CreatedAt    string                        `json:"createdAt,omitempty"`
+}
+
+// TraceflowSourceRequest represents a traceflow source in a create request.
+type TraceflowSourceRequest struct {
+	IP    string `json:"ip,omitempty"`
+	VMRef string `json:"vmRef,omitempty"`
+}
+
+// TraceflowDestinationRequest represents a traceflow destination in a create request.
+type TraceflowDestinationRequest struct {
+	IP       string `json:"ip"`
+	Port     *int32 `json:"port,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// TraceflowRequest represents a request to create a VPCTraceflow.
+type TraceflowRequest struct {
+	Name        string                      `json:"name"`
+	Namespace   string                      `json:"namespace,omitempty"`
+	Source      TraceflowSourceRequest      `json:"source"`
+	Destination TraceflowDestinationRequest `json:"destination"`
+	RouterRef   string                      `json:"routerRef"`
+	Timeout     string                      `json:"timeout,omitempty"`
+	TTL         string                      `json:"ttl,omitempty"`
+}

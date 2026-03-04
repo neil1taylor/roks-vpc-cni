@@ -456,6 +456,29 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 		}
 	})
 
+	// VPCTraceflow routes
+	tfHandler := NewTraceflowHandler(dynClient, rbacChecker)
+	mux.HandleFunc("/api/v1/traceflows", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(tfHandler.ListTraceflows).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(tfHandler.CreateTraceflow).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+	mux.HandleFunc("/api/v1/traceflows/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(tfHandler.GetTraceflow).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(tfHandler.DeleteTraceflow).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+
 	// Flow Log Collector routes
 	flowLogHandler := NewFlowLogHandler(vpcClient, rbacChecker)
 	mux.HandleFunc("/api/v1/flow-logs", func(w http.ResponseWriter, r *http.Request) {
