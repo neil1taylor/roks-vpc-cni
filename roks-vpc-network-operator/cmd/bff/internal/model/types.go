@@ -845,3 +845,52 @@ type IssuedClientResponse struct {
 	ExpiresAt  string `json:"expiresAt"`
 	Revoked    bool   `json:"revoked"`
 }
+
+// ── DNS Policy ──
+
+// DNSPolicyResponse represents a VPCDNSPolicy resource.
+type DNSPolicyResponse struct {
+	Name             string   `json:"name"`
+	Namespace        string   `json:"namespace"`
+	RouterRef        string   `json:"routerRef"`
+	Phase            string   `json:"phase"`
+	SyncStatus       string   `json:"syncStatus"`
+	FilterRulesLoaded int64   `json:"filterRulesLoaded"`
+	UpstreamServers  []string `json:"upstreamServers"`
+	FilteringEnabled bool     `json:"filteringEnabled"`
+	LocalDNSEnabled  bool     `json:"localDNSEnabled"`
+	LocalDNSDomain   string   `json:"localDNSDomain,omitempty"`
+	ConfigMapName    string   `json:"configMapName,omitempty"`
+	Message          string   `json:"message,omitempty"`
+	CreatedAt        string   `json:"createdAt,omitempty"`
+}
+
+// DNSPolicyRequest represents a request to create a VPCDNSPolicy.
+type DNSPolicyRequest struct {
+	Name        string                    `json:"name"`
+	Namespace   string                    `json:"namespace,omitempty"`
+	RouterRef   string                    `json:"routerRef"`
+	Upstream    *DNSPolicyUpstreamReq     `json:"upstream,omitempty"`
+	Filtering   *DNSPolicyFilteringReq    `json:"filtering,omitempty"`
+	LocalDNS    *DNSPolicyLocalDNSReq     `json:"localDNS,omitempty"`
+	Image       string                    `json:"image,omitempty"`
+}
+
+// DNSPolicyUpstreamReq represents upstream DNS config in a create request.
+type DNSPolicyUpstreamReq struct {
+	Servers []string `json:"servers"`
+}
+
+// DNSPolicyFilteringReq represents filtering config in a create request.
+type DNSPolicyFilteringReq struct {
+	Enabled    bool     `json:"enabled"`
+	Blocklists []string `json:"blocklists,omitempty"`
+	Allowlist  []string `json:"allowlist,omitempty"`
+	Denylist   []string `json:"denylist,omitempty"`
+}
+
+// DNSPolicyLocalDNSReq represents local DNS config in a create request.
+type DNSPolicyLocalDNSReq struct {
+	Enabled bool   `json:"enabled"`
+	Domain  string `json:"domain,omitempty"`
+}

@@ -31,6 +31,7 @@ import {
   usePARs,
   useL2Bridges,
   useVPNGateways,
+  useDNSPolicies,
 } from '../api/hooks';
 import VPCNetworkingShell from '../components/VPCNetworkingShell';
 import { Router } from '../api/types';
@@ -60,6 +61,7 @@ const VPCDashboardPage: React.FC = () => {
   const { routers, loading: rtLoading } = useRouters();
   const { l2bridges, loading: l2bLoading } = useL2Bridges();
   const { vpnGateways, loading: vpnLoading } = useVPNGateways();
+  const { dnsPolicies, loading: dnsLoading } = useDNSPolicies();
   const { networks, loading: networksLoading } = useNetworkDefinitions();
 
   const renderCount = (count: number | undefined, loading: boolean) => {
@@ -230,6 +232,29 @@ const VPCDashboardPage: React.FC = () => {
                 )}
                 <div style={{ marginTop: 'var(--pf-v5-global--spacer--sm)' }}>
                   <a href="/vpc-networking/l2-bridges">View all L2 Bridges →</a>
+                </div>
+              </CardBody>
+            </Card>
+          </GridItem>
+          <GridItem span={3}>
+            <Card isCompact>
+              <CardTitle>DNS Policies</CardTitle>
+              <CardBody>
+                {renderCount(dnsPolicies?.length, dnsLoading)}
+                {!dnsLoading && dnsPolicies && dnsPolicies.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                      <strong>Filtering:</strong>{' '}
+                      {dnsPolicies.filter((dp) => dp.filteringEnabled).length} enabled
+                    </div>
+                    <div style={{ fontSize: 'var(--pf-v5-global--FontSize--sm)', color: 'var(--pf-v5-global--Color--200)', marginTop: 'var(--pf-v5-global--spacer--xs)' }}>
+                      <strong>Total rules:</strong>{' '}
+                      {dnsPolicies.reduce((sum, dp) => sum + dp.filterRulesLoaded, 0).toLocaleString()}
+                    </div>
+                  </>
+                )}
+                <div style={{ marginTop: 'var(--pf-v5-global--spacer--sm)' }}>
+                  <a href="/vpc-networking/dns-policies">View all DNS Policies →</a>
                 </div>
               </CardBody>
             </Card>

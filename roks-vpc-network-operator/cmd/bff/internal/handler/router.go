@@ -423,6 +423,29 @@ func SetupRoutesWithClusterInfo(mux *http.ServeMux, vpcClient vpc.ExtendedClient
 		}
 	})
 
+	// VPCDNSPolicy routes
+	dnsHandler := NewDNSPolicyHandler(dynClient, rbacChecker)
+	mux.HandleFunc("/api/v1/dns-policies", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(dnsHandler.ListDNSPolicies).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(dnsHandler.CreateDNSPolicy).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+	mux.HandleFunc("/api/v1/dns-policies/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(dnsHandler.GetDNSPolicy).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(dnsHandler.DeleteDNSPolicy).ServeHTTP(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	})
+
 	// Cluster info endpoint — tells the console plugin what mode the cluster is in
 	// This allows the frontend to show/hide features based on ROKS vs unmanaged
 	mux.HandleFunc("/api/v1/cluster-info", func(w http.ResponseWriter, r *http.Request) {

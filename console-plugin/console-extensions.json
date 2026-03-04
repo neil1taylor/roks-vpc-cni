@@ -260,6 +260,30 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
+      "path": "/vpc-networking/dns-policies",
+      "component": { "$codeRef": "DNSPoliciesListPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/dns-policies/create",
+      "component": { "$codeRef": "DNSPolicyCreatePage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/vpc-networking/dns-policies/:name",
+      "component": { "$codeRef": "DNSPolicyDetailPage" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
       "path": "/vpc-networking/observability",
       "component": { "$codeRef": "ObservabilityPage" }
     }

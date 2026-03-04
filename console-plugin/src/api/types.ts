@@ -810,6 +810,44 @@ export interface IssuedClient {
   revoked: boolean;
 }
 
+// ── VPCDNSPolicy ──
+
+export interface DNSPolicy {
+  name: string;
+  namespace: string;
+  routerRef: string;
+  phase: string;
+  syncStatus: string;
+  filterRulesLoaded: number;
+  upstreamServers?: string[];
+  filteringEnabled: boolean;
+  localDNSEnabled?: boolean;
+  localDNSDomain?: string;
+  configMapName?: string;
+  message?: string;
+  createdAt?: string;
+}
+
+export interface CreateDNSPolicyRequest {
+  name: string;
+  namespace?: string;
+  routerRef: string;
+  upstream?: {
+    servers: string[];
+  };
+  filtering?: {
+    enabled: boolean;
+    blocklists?: string[];
+    allowlist?: string[];
+    denylist?: string[];
+  };
+  localDNS?: {
+    enabled: boolean;
+    domain?: string;
+  };
+  image?: string;
+}
+
 export interface CreateVPNGatewayRequest {
   name: string;
   namespace?: string;

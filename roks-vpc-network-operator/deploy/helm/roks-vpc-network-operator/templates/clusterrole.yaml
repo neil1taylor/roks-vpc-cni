@@ -34,6 +34,9 @@ rules:
   - vpcvpngateways
   - vpcvpngateways/status
   - vpcvpngateways/finalizers
+  - vpcdnspolicies
+  - vpcdnspolicies/status
+  - vpcdnspolicies/finalizers
   verbs:
   - create
   - delete

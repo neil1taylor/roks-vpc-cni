@@ -39,6 +39,9 @@
       "VPNGatewaysListPage": "./src/pages/VPNGatewaysListPage",
       "VPNGatewayCreatePage": "./src/pages/VPNGatewayCreatePage",
       "VPNGatewayDetailPage": "./src/pages/VPNGatewayDetailPage",
+      "DNSPoliciesListPage": "./src/pages/DNSPoliciesListPage",
+      "DNSPolicyCreatePage": "./src/pages/DNSPolicyCreatePage",
+      "DNSPolicyDetailPage": "./src/pages/DNSPolicyDetailPage",
       "ObservabilityPage": "./src/pages/ObservabilityPage"
     },
     "dependencies": {

@@ -542,6 +542,23 @@ export function useVPNGateway(name: string, namespace?: string) {
   return { vpnGateway, loading, error };
 }
 
+// DNS Policy Hooks
+export function useDNSPolicies() {
+  const { data: dnsPolicies, loading, error } = useBFFData(
+    () => apiClient.listDNSPolicies(),
+    [],
+  );
+  return { dnsPolicies, loading, error };
+}
+
+export function useDNSPolicy(name: string, namespace?: string) {
+  const { data: dnsPolicy, loading, error } = useBFFData(
+    () => apiClient.getDNSPolicy(name, namespace),
+    [name, namespace],
+  );
+  return { dnsPolicy, loading, error };
+}
+
 // Kubernetes CR Hooks
 
 export function useK8sVPCSubnets(namespace?: string): {

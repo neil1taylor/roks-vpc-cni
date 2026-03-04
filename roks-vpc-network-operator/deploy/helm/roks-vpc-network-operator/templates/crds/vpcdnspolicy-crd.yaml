@@ -1,0 +1,172 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vpcdnspolicies.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VPCDNSPolicy
+    listKind: VPCDNSPolicyList
+    plural: vpcdnspolicies
+    singular: vpcdnspolicy
+    shortNames:
+    - vdp
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Router
+      type: string
+      jsonPath: .spec.routerRef
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Sync
+      type: string
+      jsonPath: .status.syncStatus
+    - name: Rules
+      type: integer
+      jsonPath: .status.filterRulesLoaded
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: >-
+          VPCDNSPolicy is the Schema for the vpcdnspolicies API.
+          It defines DNS policy configuration (upstream servers, filtering, local DNS)
+          for a VPCRouter, deployed as an AdGuard Home sidecar.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPCDNSPolicySpec defines the desired state of a VPCDNSPolicy.
+            type: object
+            required:
+            - routerRef
+            properties:
+              routerRef:
+                description: RouterRef is the name of the VPCRouter this policy applies to.
+                type: string
+                minLength: 1
+              upstream:
+                description: Upstream defines upstream DNS server configuration.
+                type: object
+                properties:
+                  servers:
+                    description: Servers is the list of upstream DNS servers.
+                    type: array
+                    minItems: 1
+                    items:
+                      type: object
+                      required:
+                      - url
+                      properties:
+                        url:
+                          description: >-
+                            URL is the upstream DNS server address.
+                            Use https:// for DoH, tls:// for DoT, or plain IP for standard DNS.
+                          type: string
+              filtering:
+                description: Filtering defines DNS filtering rules.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether DNS filtering is active.
+                    type: boolean
+                    default: false
+                  blocklists:
+                    description: Blocklists is a list of URLs to blocklist files (hosts format).
+                    type: array
+                    items:
+                      type: string
+                  allowlist:
+                    description: Allowlist is a list of domain patterns to always allow.
+                    type: array
+                    items:
+                      type: string
+                  denylist:
+                    description: Denylist is a list of domain patterns to always block.
+                    type: array
+                    items:
+                      type: string
+              localDNS:
+                description: LocalDNS defines local DNS resolution settings.
+                type: object
+                properties:
+                  enabled:
+                    description: Enabled controls whether local DNS resolution is active.
+                    type: boolean
+                    default: false
+                  domain:
+                    description: Domain is the local domain suffix (e.g. "vm.local").
+                    type: string
+              image:
+                description: Image overrides the default AdGuard Home container image.
+                type: string
+          status:
+            description: VPCDNSPolicyStatus defines the observed state of a VPCDNSPolicy.
+            type: object
+            properties:
+              phase:
+                description: Phase is the current lifecycle phase.
+                type: string
+                enum:
+                - Pending
+                - Active
+                - Degraded
+                - Error
+              syncStatus:
+                description: SyncStatus indicates whether the CR is in sync.
+                type: string
+                enum:
+                - Synced
+                - Pending
+                - Failed
+              configMapName:
+                description: ConfigMapName is the name of the generated ConfigMap.
+                type: string
+              filterRulesLoaded:
+                description: FilterRulesLoaded is the number of DNS filter rules loaded.
+                type: integer
+                format: int64
+              message:
+                description: Message provides human-readable detail about the current status.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message

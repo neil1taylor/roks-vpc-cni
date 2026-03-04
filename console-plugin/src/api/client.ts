@@ -44,6 +44,8 @@ import {
   CreateL2BridgeRequest,
   VPNGateway,
   CreateVPNGatewayRequest,
+  DNSPolicy,
+  CreateDNSPolicyRequest,
   IssuedClient,
   ApiResponse,
   ApiError,
@@ -640,6 +642,25 @@ class VPCNetworkClient {
       'DELETE',
       `/vpn-gateways/${encodeURIComponent(name)}/clients/${encodeURIComponent(clientName)}${params}`,
     );
+  }
+
+  // DNS Policy Operations
+  async listDNSPolicies(): Promise<ApiResponse<DNSPolicy[]>> {
+    return this.request<DNSPolicy[]>('GET', '/dns-policies');
+  }
+
+  async getDNSPolicy(name: string, namespace?: string): Promise<ApiResponse<DNSPolicy>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<DNSPolicy>('GET', `/dns-policies/${encodeURIComponent(name)}${params}`);
+  }
+
+  async createDNSPolicy(req: CreateDNSPolicyRequest): Promise<ApiResponse<DNSPolicy>> {
+    return this.request<DNSPolicy>('POST', '/dns-policies', req as unknown as Record<string, unknown>);
+  }
+
+  async deleteDNSPolicy(name: string, namespace?: string): Promise<ApiResponse<void>> {
+    const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+    return this.request<void>('DELETE', `/dns-policies/${encodeURIComponent(name)}${params}`);
   }
 }
 
