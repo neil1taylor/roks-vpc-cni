@@ -296,11 +296,104 @@ func TestEnsureNNCP_DefaultConfig(t *testing.T) {
 		t.Errorf("expected default bridge 'br-localnet', got %v", iface["name"])
 	}
 
-	// Verify default secondary NIC in bridge ports
+	// Verify default secondary NIC in bridge ports (fallback is "bond1" when empty)
 	bridge := iface["bridge"].(map[string]interface{})
 	ports := bridge["port"].([]interface{})
 	port := ports[0].(map[string]interface{})
 	if port["name"] != "bond1" {
 		t.Errorf("expected default NIC 'bond1', got %v", port["name"])
+	}
+}
+
+// ─── DetectSecondaryNIC tests ───
+
+func makeNNS(name string, interfaces []map[string]interface{}) *unstructured.Unstructured {
+	nns := &unstructured.Unstructured{}
+	nns.SetGroupVersionKind(nnsGVK)
+	nns.SetName(name)
+
+	ifaceSlice := make([]interface{}, len(interfaces))
+	for i, iface := range interfaces {
+		ifaceSlice[i] = iface
+	}
+	_ = unstructured.SetNestedSlice(nns.Object, ifaceSlice, "status", "currentState", "interfaces")
+	return nns
+}
+
+func TestDetectSecondaryNIC_FindsNonBrExNIC(t *testing.T) {
+	scheme := newTestScheme()
+
+	nns := makeNNS("worker-1", []map[string]interface{}{
+		{"name": "enp177s0np0", "type": "ethernet", "state": "up", "controller": "br-ex"},
+		{"name": "enp178s0np0", "type": "ethernet", "state": "up", "controller": "br-localnet"},
+	})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nns).
+		Build()
+
+	nic, err := DetectSecondaryNIC(context.Background(), fakeClient)
+	if err != nil {
+		t.Fatalf("DetectSecondaryNIC() error = %v", err)
+	}
+	if nic != "enp178s0np0" {
+		t.Errorf("DetectSecondaryNIC() = %q, want 'enp178s0np0'", nic)
+	}
+}
+
+func TestDetectSecondaryNIC_NoNNSResources(t *testing.T) {
+	scheme := newTestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	_, err := DetectSecondaryNIC(context.Background(), fakeClient)
+	if err == nil {
+		t.Fatal("expected error when no NNS resources exist")
+	}
+}
+
+func TestDetectSecondaryNIC_AllOnBrEx(t *testing.T) {
+	scheme := newTestScheme()
+
+	nns := makeNNS("worker-1", []map[string]interface{}{
+		{"name": "enp177s0np0", "type": "ethernet", "state": "up", "controller": "br-ex"},
+		{"name": "enp178s0np0", "type": "ethernet", "state": "up", "controller": "br-ex"},
+	})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nns).
+		Build()
+
+	_, err := DetectSecondaryNIC(context.Background(), fakeClient)
+	if err == nil {
+		t.Fatal("expected error when all NICs are on br-ex")
+	}
+}
+
+func TestDetectSecondaryNIC_SkipsNonEthernet(t *testing.T) {
+	scheme := newTestScheme()
+
+	nns := makeNNS("worker-1", []map[string]interface{}{
+		{"name": "br-ex", "type": "ovs-bridge", "state": "up"},
+		{"name": "bond0", "type": "bond", "state": "up"},
+		{"name": "enp177s0np0", "type": "ethernet", "state": "up", "controller": "br-ex"},
+		{"name": "enp178s0np0", "type": "ethernet", "state": "up", "controller": ""},
+	})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nns).
+		Build()
+
+	nic, err := DetectSecondaryNIC(context.Background(), fakeClient)
+	if err != nil {
+		t.Fatalf("DetectSecondaryNIC() error = %v", err)
+	}
+	if nic != "enp178s0np0" {
+		t.Errorf("DetectSecondaryNIC() = %q, want 'enp178s0np0'", nic)
 	}
 }

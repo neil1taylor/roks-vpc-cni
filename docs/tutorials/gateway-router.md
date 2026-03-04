@@ -103,7 +103,7 @@ spec:
     matchExpressions:
     - key: kubernetes.io/metadata.name
       operator: In
-      values: [vm-demo]
+      values: [vm-demo, default]    # Include 'default' for Multus namespace isolation
   network:
     topology: LocalNet
     localNet:
@@ -248,6 +248,8 @@ A `VPCGateway` provides a shared uplink to the VPC fabric. Unlike per-VM VNIs, a
 
 A minimal gateway needs a zone, an uplink network (a LocalNet CUDN), and a transit address.
 
+> **Multus namespace isolation:** If your cluster has `namespaceIsolation: true` in the Multus config (common on ROKS), the router pod in `roks-vpc-network-operator` can only reference NADs from its own namespace or Multus global namespaces. Use `namespace: default` (a global namespace) for the uplink and network references. Ensure your CUDNs include `default` in their `namespaceSelector`.
+
 ```yaml
 # demo-gateway.yaml
 apiVersion: vpc.roks.ibm.com/v1alpha1
@@ -260,7 +262,7 @@ spec:
 
   uplink:
     network: demo-localnet        # LocalNet CUDN for VPC connectivity
-    namespace: vm-demo            # Namespace of the network-attachment-definition
+    namespace: default            # Use a Multus global namespace (not the CUDN's target namespace)
     securityGroupIDs:             # Optional: security groups for the uplink VNI
     - "<sg-id>"
 
@@ -305,7 +307,7 @@ spec:
   zone: "eu-de-1"
   uplink:
     network: demo-localnet
-    namespace: vm-demo
+    namespace: default
   transit:
     address: "172.16.100.2/24"
   floatingIP:
@@ -344,7 +346,7 @@ spec:
   zone: "eu-de-1"
   uplink:
     network: demo-localnet
-    namespace: vm-demo
+    namespace: default
   transit:
     address: "172.16.100.3/24"
   floatingIP:
@@ -522,7 +524,7 @@ spec:
     matchExpressions:
     - key: kubernetes.io/metadata.name
       operator: In
-      values: [vm-demo, roks-vpc-network-operator]
+      values: [vm-demo, default]      # Include 'default' for Multus namespace isolation
   network:
     topology: Layer2
     layer2:
@@ -548,7 +550,7 @@ spec:
   gateway: demo-gw-routes         # Must reference a Ready VPCGateway
   networks:
   - name: demo-l2                 # Layer2 CUDN name
-    namespace: vm-demo            # Namespace of the NAD (if different)
+    namespace: default            # Must be a Multus global namespace
     address: "10.100.0.1/24"      # Router's IP on this network
 ```
 
@@ -651,7 +653,7 @@ spec:
   gateway: demo-gw-routes
   networks:
   - name: demo-l2
-    namespace: vm-demo
+    namespace: default
     address: "10.100.0.1/24"
   dhcp:
     enabled: true                  # Start dnsmasq on workload interfaces
@@ -804,7 +806,7 @@ spec:
   zone: "eu-de-1"
   uplink:
     network: demo-localnet
-    namespace: vm-demo
+    namespace: default
   transit:
     address: "172.16.100.10/24"
   floatingIP:
@@ -822,7 +824,7 @@ spec:
   gateway: gw-nonat
   networks:
   - name: demo-l2
-    namespace: vm-demo
+    namespace: default
     address: "10.100.0.1/24"
   dhcp:
     enabled: true
@@ -850,7 +852,7 @@ spec:
   zone: "eu-de-1"
   uplink:
     network: demo-localnet
-    namespace: vm-demo
+    namespace: default
   transit:
     address: "172.16.100.11/24"
   floatingIP:
@@ -947,7 +949,7 @@ spec:
   zone: "eu-de-1"
   uplink:
     network: demo-localnet
-    namespace: vm-demo
+    namespace: default
   transit:
     address: "172.16.100.12/24"
   publicAddressRange:
@@ -1064,7 +1066,7 @@ spec:
   gateway: gw-nonat
   networks:
   - name: demo-l2
-    namespace: vm-demo
+    namespace: default
     address: "10.100.0.1/24"
   firewall:
     enabled: true
@@ -1169,7 +1171,7 @@ spec:
   zone: "eu-de-1"
   uplink:
     network: demo-localnet
-    namespace: vm-demo
+    namespace: default
   transit:
     address: "172.16.100.13/24"
   firewall:
@@ -1207,7 +1209,7 @@ spec:
     matchExpressions:
     - key: kubernetes.io/metadata.name
       operator: In
-      values: [vm-demo, roks-vpc-network-operator]
+      values: [vm-demo, default]      # Include 'default' for Multus namespace isolation
   network:
     topology: Layer2
     layer2:
@@ -1225,7 +1227,7 @@ spec:
     matchExpressions:
     - key: kubernetes.io/metadata.name
       operator: In
-      values: [vm-demo, roks-vpc-network-operator]
+      values: [vm-demo, default]      # Include 'default' for Multus namespace isolation
   network:
     topology: Layer2
     layer2:
@@ -1251,7 +1253,7 @@ spec:
   zone: "eu-de-1"
   uplink:
     network: demo-localnet
-    namespace: vm-demo
+    namespace: default
   transit:
     address: "172.16.100.14/24"
   floatingIP:
@@ -1282,10 +1284,10 @@ spec:
   gateway: gw-multi
   networks:
   - name: l2-web
-    namespace: vm-demo
+    namespace: default
     address: "10.100.0.1/24"         # Router is .1 on web network
   - name: l2-db
-    namespace: vm-demo
+    namespace: default
     address: "10.200.0.1/24"         # Router is .1 on DB network
   dhcp:
     enabled: true                     # DHCP on both networks
@@ -1489,7 +1491,7 @@ spec:
   gateway: demo-gw-routes
   networks:
   - name: demo-l2
-    namespace: vm-demo
+    namespace: default
     address: "10.100.0.1/24"
   dhcp:
     enabled: true
@@ -1676,7 +1678,7 @@ spec:
   gateway: demo-gw-routes
   networks:
   - name: demo-l2
-    namespace: vm-demo
+    namespace: default
     address: "10.100.0.1/24"
   dhcp:
     enabled: true

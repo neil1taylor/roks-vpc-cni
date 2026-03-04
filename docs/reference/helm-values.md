@@ -74,7 +74,7 @@ Complete reference for all configurable values in the VPC Network Operator Helm 
 |-------|------|---------|-------------|
 | `nncp.enabled` | boolean | `true` | Create NodeNetworkConfigurationPolicy for OVN bridge-mappings |
 | `nncp.bridgeName` | string | `br-localnet` | OVS bridge name |
-| `nncp.secondaryNIC` | string | `bond1` | Secondary NIC on bare metal nodes |
+| `nncp.secondaryNIC` | string | `""` (auto-detect) | Physical NIC for OVS LocalNet bridge. Leave empty (default) to auto-detect from NodeNetworkState — the operator picks the first ethernet NIC not attached to br-ex. Set explicitly to override (e.g., `enp178s0np0`). |
 | `nncp.nodeSelector` | string | `node-role.kubernetes.io/worker=` | Node selector for NNCP targets |
 
 ## Router Pod

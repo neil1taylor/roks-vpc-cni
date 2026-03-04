@@ -20,11 +20,17 @@ var nncpGVK = schema.GroupVersionKind{
 	Kind:    "NodeNetworkConfigurationPolicy",
 }
 
+var nnsGVK = schema.GroupVersionKind{
+	Group:   "nmstate.io",
+	Version: "v1",
+	Kind:    "NodeNetworkState",
+}
+
 // NNCPConfig holds configuration for auto-creating OVN bridge-mapping NNCPs.
 type NNCPConfig struct {
 	Enabled      bool
 	BridgeName   string            // default "br-localnet"
-	SecondaryNIC string            // default "bond1"
+	SecondaryNIC string            // physical NIC for OVS bridge (e.g., "enp178s0np0"); must be set via Helm/env
 	NodeSelector map[string]string // default: node-role.kubernetes.io/worker=""
 }
 
@@ -62,6 +68,7 @@ func EnsureNNCP(ctx context.Context, k8sClient client.Client, obj client.Object,
 	}
 	secondaryNIC := cfg.SecondaryNIC
 	if secondaryNIC == "" {
+		logger.Info("WARNING: NNCP_SECONDARY_NIC not set, defaulting to 'bond1'. Set nncp.secondaryNIC in Helm values to match your bare metal NIC (e.g., enp178s0np0)")
 		secondaryNIC = "bond1"
 	}
 	nodeSelector := cfg.NodeSelector
@@ -168,6 +175,57 @@ func DeleteNNCP(ctx context.Context, k8sClient client.Client, obj client.Object)
 	} else {
 		logger.Info("Deleted NNCP", "name", nncpName)
 	}
+}
+
+// DetectSecondaryNIC reads NodeNetworkState from any worker node and returns the first
+// ethernet NIC that is up and not attached to br-ex (the primary OVN bridge).
+// ROKS bare metal clusters use identical hardware per worker pool, so one sample suffices.
+func DetectSecondaryNIC(ctx context.Context, reader client.Reader) (string, error) {
+	logger := log.FromContext(ctx)
+
+	nnsList := &unstructured.UnstructuredList{}
+	nnsList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   nnsGVK.Group,
+		Version: nnsGVK.Version,
+		Kind:    nnsGVK.Kind + "List",
+	})
+
+	if err := reader.List(ctx, nnsList); err != nil {
+		return "", fmt.Errorf("failed to list NodeNetworkState resources: %w", err)
+	}
+
+	if len(nnsList.Items) == 0 {
+		return "", fmt.Errorf("no NodeNetworkState resources found — is NMState installed?")
+	}
+
+	// Take the first NNS
+	nns := nnsList.Items[0]
+	logger.Info("Reading NNS for NIC detection", "node", nns.GetName())
+
+	interfaces, found, err := unstructured.NestedSlice(nns.Object, "status", "currentState", "interfaces")
+	if err != nil || !found {
+		return "", fmt.Errorf("failed to read interfaces from NNS %s: found=%v err=%v", nns.GetName(), found, err)
+	}
+
+	for _, iface := range interfaces {
+		ifaceMap, ok := iface.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		ifType, _, _ := unstructured.NestedString(ifaceMap, "type")
+		ifState, _, _ := unstructured.NestedString(ifaceMap, "state")
+		ifName, _, _ := unstructured.NestedString(ifaceMap, "name")
+		controller, _, _ := unstructured.NestedString(ifaceMap, "controller")
+
+		if ifType == "ethernet" && ifState == "up" && controller != "br-ex" {
+			logger.Info("Auto-detected secondary NIC from NodeNetworkState",
+				"nic", ifName, "node", nns.GetName(), "controller", controller)
+			return ifName, nil
+		}
+	}
+
+	return "", fmt.Errorf("no suitable secondary NIC found in NNS %s — all ethernet NICs are on br-ex", nns.GetName())
 }
 
 // ExtractPhysicalNetworkName reads the physicalNetworkName from an unstructured CUDN/UDN spec.

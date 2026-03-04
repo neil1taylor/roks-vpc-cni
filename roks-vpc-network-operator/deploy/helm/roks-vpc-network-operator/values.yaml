@@ -60,7 +60,7 @@ gc:
 nncp:
   enabled: true
   bridgeName: "br-localnet"
-  secondaryNIC: "bond1"
+  secondaryNIC: ""  # Auto-detect from NodeNetworkState. Set explicitly to override (e.g., "enp178s0np0").
   nodeSelector: "node-role.kubernetes.io/worker="
 
 # Router pod image

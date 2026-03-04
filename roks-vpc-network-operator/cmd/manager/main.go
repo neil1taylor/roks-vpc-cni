@@ -82,9 +82,7 @@ func main() {
 	if nncpConfig.BridgeName == "" {
 		nncpConfig.BridgeName = "br-localnet"
 	}
-	if nncpConfig.SecondaryNIC == "" {
-		nncpConfig.SecondaryNIC = "bond1"
-	}
+	// SecondaryNIC: auto-detect deferred until after manager creation (needs API reader)
 	if selectorStr := os.Getenv("NNCP_NODE_SELECTOR"); selectorStr != "" {
 		nncpConfig.NodeSelector = parseNodeSelector(selectorStr)
 	} else {
@@ -143,6 +141,20 @@ func main() {
 	if err != nil {
 		logger.Error(err, "Unable to create manager")
 		os.Exit(1)
+	}
+
+	// ── Auto-detect secondary NIC if not explicitly set ──
+
+	if nncpConfig.SecondaryNIC == "" && nncpConfig.Enabled {
+		detectedNIC, err := network.DetectSecondaryNIC(context.Background(), mgr.GetAPIReader())
+		if err != nil {
+			logger.Info("WARNING: Failed to auto-detect secondary NIC, falling back to 'bond1'",
+				"error", err.Error())
+			nncpConfig.SecondaryNIC = "bond1"
+		} else {
+			logger.Info("Auto-detected secondary NIC from NodeNetworkState", "nic", detectedNIC)
+			nncpConfig.SecondaryNIC = detectedNIC
+		}
 	}
 
 	// ── Register existing controllers ──

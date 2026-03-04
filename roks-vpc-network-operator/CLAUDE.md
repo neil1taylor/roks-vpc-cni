@@ -13,7 +13,7 @@ When an admin creates a `ClusterUserDefinedNetwork` (CUDN) with LocalNet topolog
 2. Creates VLAN attachments on every bare metal node (`floatable: true`)
 
 When an admin creates a `VirtualMachine` referencing that CUDN, a mutating webhook:
-1. Creates a floating VNI (`auto_delete: false`, `allow_ip_spoofing: true`, `enable_infrastructure_nat: false`)
+1. Creates a per-VM VLAN attachment with inline VNI (`auto_delete: true`, `allow_ip_spoofing: true`, `enable_infrastructure_nat: true`)
 2. Reads back the VPC-generated MAC address and reserved IP
 3. Injects the MAC into the VM's interface spec and the IP into cloud-init
 4. Adds annotations and a finalizer for cleanup
@@ -90,13 +90,22 @@ Six finalizer names:
 Periodic goroutine (every 10 min). Lists VPC resources by cluster tag, cross-references with K8s objects, deletes orphans older than 15 min. Covers VNIs, floating IPs, PARs, and VPC routes.
 
 ### VNI Creation Parameters
-Critical — every VNI must be created with:
+Two VNI creation paths with different settings:
+
+**VM VNIs** (per-VM inline VNI via `CreateVMAttachment`):
 ```go
 AllowIPSpoofing: true,
-EnableInfrastructureNat: false,
-AutoDelete: false,
+EnableInfrastructureNat: true,   // Enables FIP SNAT for outbound traffic
+AutoDelete: true,                // Cleaned up when attachment is deleted
 ```
-These are non-negotiable for the bare metal + OVN LocalNet architecture.
+
+**CUDN VLAN Attachments** (shared per-node via `CreateVLANAttachment`):
+```go
+AllowIPSpoofing: false,
+EnableInfrastructureNat: false,
+```
+
+**Gateway VNIs** (standalone via `CreateVNI`, default `enable_infrastructure_nat: true`, gateway sets `false`).
 
 ### VLAN Attachment Parameters
 Every VLAN attachment must have:

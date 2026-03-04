@@ -140,6 +140,14 @@ rules:
   - get
   - list
   - watch
+# NMState NodeNetworkState for auto-detecting secondary NIC
+- apiGroups:
+  - nmstate.io
+  resources:
+  - nodenetworkstates
+  verbs:
+  - get
+  - list
 # Service accounts for webhooks
 - apiGroups:
   - ""
