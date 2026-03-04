@@ -1,0 +1,212 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vpctraceflows.vpc.roks.ibm.com
+  labels:
+    app.kubernetes.io/name: roks-vpc-network-operator
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: vpc.roks.ibm.com
+  names:
+    kind: VPCTraceflow
+    listKind: VPCTraceflowList
+    plural: vpctraceflows
+    singular: vpctraceflow
+    shortNames:
+    - vtf
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Result
+      type: string
+      jsonPath: .status.result
+    - name: Latency
+      type: string
+      jsonPath: .status.totalLatency
+    - name: Router
+      type: string
+      jsonPath: .spec.routerRef
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: >-
+          VPCTraceflow is the Schema for the vpctraceflows API.
+          It defines a network traceflow request that traces the path of a packet
+          through VPCRouter nftables rules and network hops.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPCTraceflowSpec defines the desired state of a VPCTraceflow.
+            type: object
+            required:
+            - destination
+            - routerRef
+            properties:
+              source:
+                description: Source defines the packet source. If omitted, the router itself is the source.
+                type: object
+                properties:
+                  vmRef:
+                    description: VMRef references a VirtualMachine as the source.
+                    type: object
+                    required:
+                    - name
+                    properties:
+                      name:
+                        description: Name is the name of the VirtualMachine.
+                        type: string
+                        minLength: 1
+                      namespace:
+                        description: Namespace is the namespace of the VirtualMachine. Defaults to the traceflow namespace.
+                        type: string
+                  ip:
+                    description: IP is an explicit source IP address.
+                    type: string
+              destination:
+                description: Destination defines the packet destination.
+                type: object
+                required:
+                - ip
+                properties:
+                  ip:
+                    description: IP is the destination IP address.
+                    type: string
+                    minLength: 1
+                  port:
+                    description: Port is the destination port number.
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 65535
+                  protocol:
+                    description: Protocol is the IP protocol to trace.
+                    type: string
+                    enum:
+                    - TCP
+                    - UDP
+                    - ICMP
+                    default: ICMP
+              routerRef:
+                description: RouterRef is the name of the VPCRouter to execute the traceflow on.
+                type: string
+                minLength: 1
+              timeout:
+                description: Timeout is the maximum duration to wait for the traceflow to complete.
+                type: string
+                default: "30s"
+              ttl:
+                description: TTL is how long the traceflow result is retained before garbage collection.
+                type: string
+                default: "1h"
+          status:
+            description: VPCTraceflowStatus defines the observed state of a VPCTraceflow.
+            type: object
+            properties:
+              phase:
+                description: Phase is the current lifecycle phase of the traceflow.
+                type: string
+                enum:
+                - Pending
+                - Running
+                - Completed
+                - Failed
+              startTime:
+                description: StartTime is when the traceflow execution began.
+                type: string
+                format: date-time
+              completionTime:
+                description: CompletionTime is when the traceflow execution finished.
+                type: string
+                format: date-time
+              hops:
+                description: Hops is the ordered list of network hops the packet traversed.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    order:
+                      description: Order is the sequence number of this hop.
+                      type: integer
+                    node:
+                      description: Node is the Kubernetes node where this hop occurred.
+                      type: string
+                    component:
+                      description: Component is the network component at this hop (e.g. nftables, route-lookup).
+                      type: string
+                    action:
+                      description: Action is the decision taken at this hop (e.g. forward, drop, snat).
+                      type: string
+                    latency:
+                      description: Latency is the processing time at this hop.
+                      type: string
+                    nftablesHits:
+                      description: NftablesHits lists the nftables rules matched at this hop.
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          rule:
+                            description: Rule is the nftables rule expression.
+                            type: string
+                          chain:
+                            description: Chain is the nftables chain containing the rule.
+                            type: string
+                          packets:
+                            description: Packets is the number of packets matched by this rule.
+                            type: integer
+                            format: int64
+              result:
+                description: Result is the outcome of the traceflow.
+                type: string
+                enum:
+                - Reachable
+                - Unreachable
+                - Filtered
+                - Timeout
+              totalLatency:
+                description: TotalLatency is the end-to-end latency of the traceflow.
+                type: string
+              message:
+                description: Message provides human-readable detail about the traceflow result.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  - message
