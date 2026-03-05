@@ -51,7 +51,7 @@ npm run ts-check    # TypeScript type checking (tsc --noEmit)
 
 ### Operator (Go, controller-runtime)
 
-Thirteen reconciliation loops + one mutating webhook + orphan GC:
+Fourteen reconciliation loops + one mutating webhook + orphan GC:
 
 | Component | Path | Watches | Purpose |
 |-----------|------|---------|---------|
@@ -68,10 +68,11 @@ Thirteen reconciliation loops + one mutating webhook + orphan GC:
 | VPCL2Bridge Reconciler | `pkg/controller/l2bridge/` | `VPCL2Bridge` CRD | L2 bridge pod lifecycle for NSX-T/OVN tunneling |
 | VPCVPNGateway Reconciler | `pkg/controller/vpngateway/` | `VPCVPNGateway` CRD | VPN pod lifecycle (WireGuard/IPsec), tunnel management |
 | VPCDNSPolicy Reconciler | `pkg/controller/dnspolicy/` | `VPCDNSPolicy` CRD | DNS filtering/blocking via AdGuard Home sidecar on router pods |
+| VPCTraceflow Reconciler | `pkg/controller/traceflow/` | `VPCTraceflow` CRD | Active network path tracing via pod exec into router pods |
 | VM Webhook | `pkg/webhook/` | `VirtualMachine` CREATE | Creates VNI, injects MAC+IP into VM spec |
 | Orphan GC | `pkg/gc/` | Periodic (10 min) | Deletes orphaned VPC resources: VNIs, FIPs, PARs, VPC routes (15 min grace) |
 
-**CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip), `VPCGateway` (vgw), `VPCRouter` (vrt), `VPCL2Bridge` (vlb), `VPCVPNGateway` (vvg), `VPCDNSPolicy` (vdp)
+**CRDs** (API group `vpc.roks.ibm.com/v1alpha1`): `VPCSubnet` (vsn), `VirtualNetworkInterface` (vni), `VLANAttachment` (vla), `FloatingIP` (fip), `VPCGateway` (vgw), `VPCRouter` (vrt), `VPCL2Bridge` (vlb), `VPCVPNGateway` (vvg), `VPCDNSPolicy` (vdp), `VPCTraceflow` (vtf)
 
 **Dual cluster mode** (`CLUSTER_MODE` env var): `"roks"` uses ROKS platform API for VNI/VLAN (stub until API exists); `"unmanaged"` (default) uses VPC API directly.
 
@@ -85,11 +86,11 @@ Thirteen reconciliation loops + one mutating webhook + orphan GC:
 
 ### BFF Service
 
-Go HTTP server (`cmd/bff/`) that aggregates VPC API + K8s API data for the console plugin. Auth via `X-Remote-User`/`X-Remote-Group` headers (set by OpenShift console proxy) or Bearer token via TokenReview. Authz via Kubernetes SubjectAccessReview. Exposes REST endpoints for subnets, VNIs, VLAN attachments, floating IPs, PARs, security groups, network ACLs, DNS policies, and topology. Credentials loaded from K8s Secret (key: `apikey` or `IBMCLOUD_API_KEY`); `VPC_RESOURCE_GROUP_ID` env var required for PAR creation.
+Go HTTP server (`cmd/bff/`) that aggregates VPC API + K8s API data for the console plugin. Auth via `X-Remote-User`/`X-Remote-Group` headers (set by OpenShift console proxy) or Bearer token via TokenReview. Authz via Kubernetes SubjectAccessReview. Exposes REST endpoints for subnets, VNIs, VLAN attachments, floating IPs, PARs, security groups, network ACLs, DNS policies, flow logs, traceflows, and topology. Credentials loaded from K8s Secret (key: `apikey` or `IBMCLOUD_API_KEY`); `VPC_RESOURCE_GROUP_ID` env var required for PAR creation.
 
 ### Console Plugin (TypeScript/React)
 
-OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-plugin-sdk-webpack`). PatternFly 5 components. 35 routes under `/vpc-networking/*` covering Dashboard, Subnets, VNIs, VLAN Attachments, Floating IPs, PARs, Security Groups, Network ACLs, Routes, Topology, Networks, Gateways, Routers, L2 Bridges, VPN Gateways, DNS Policies, and Observability — each resource type has list, detail, and create pages. Plugin metadata in `console-extensions.json`, exposed modules in `package.json`.
+OpenShift dynamic plugin using Module Federation (`@openshift-console/dynamic-plugin-sdk-webpack`). PatternFly 5 components. 38 routes under `/vpc-networking/*` covering Dashboard, Subnets, VNIs, VLAN Attachments, Floating IPs, PARs, Security Groups, Network ACLs, Routes, Topology, Networks, Gateways, Routers, L2 Bridges, VPN Gateways, DNS Policies, Traceflows, and Observability — each resource type has list, detail, and create pages. Plugin metadata in `console-extensions.json`, exposed modules in `package.json`.
 
 ## Implementation Conventions
 

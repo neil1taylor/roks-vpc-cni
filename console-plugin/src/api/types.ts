@@ -64,6 +64,15 @@ export interface Subnet extends ResourceMetadata {
   flowLogActive?: boolean;
 }
 
+export interface FlowLogCollector {
+  id: string;
+  name: string;
+  targetSubnetId?: string;
+  cosBucketCrn?: string;
+  isActive: boolean;
+  lifecycleState: string;
+}
+
 // Virtual Network Interface Types
 export interface VirtualNetworkInterface extends ResourceMetadata {
   allowIpSpoofing: boolean;

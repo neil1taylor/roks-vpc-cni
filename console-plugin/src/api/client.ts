@@ -48,6 +48,7 @@ import {
   CreateDNSPolicyRequest,
   Traceflow,
   CreateTraceflowRequest,
+  FlowLogCollector,
   IssuedClient,
   AlertTimelineEntry,
   SubnetMetrics,
@@ -686,6 +687,19 @@ class VPCNetworkClient {
   async deleteDNSPolicy(name: string, namespace?: string): Promise<ApiResponse<void>> {
     const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
     return this.request<void>('DELETE', `/dns-policies/${encodeURIComponent(name)}${params}`);
+  }
+
+  // Flow Log Operations
+  async listFlowLogs(): Promise<ApiResponse<FlowLogCollector[]>> {
+    return this.request<FlowLogCollector[]>('GET', '/flow-logs');
+  }
+
+  async getFlowLog(id: string): Promise<ApiResponse<FlowLogCollector>> {
+    return this.request<FlowLogCollector>('GET', `/flow-logs/${id}`);
+  }
+
+  async deleteFlowLog(id: string): Promise<ApiResponse<void>> {
+    return this.request<void>('DELETE', `/flow-logs/${id}`);
   }
 
   // Traceflow Operations

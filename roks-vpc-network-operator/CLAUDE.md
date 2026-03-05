@@ -30,7 +30,7 @@ On deletion, finalizers clean up all VPC resources.
 
 ## Architecture
 
-Thirteen reconciliation loops + one mutating webhook + orphan GC:
+Fourteen reconciliation loops + one mutating webhook + orphan GC:
 
 ### Network Reconcilers
 - **CUDN Reconciler** (`pkg/controller/cudn/reconciler.go`) — watches `ClusterUserDefinedNetwork` with LocalNet topology. Creates VPC subnet + VLAN attachments on all BM nodes.
@@ -52,6 +52,7 @@ Thirteen reconciliation loops + one mutating webhook + orphan GC:
 - **VPCGateway** (`pkg/controller/gateway/reconciler.go`) — creates uplink VNI via VLAN attachment, manages FIP, PAR, VPC routes. Also watches VPCRouter status to auto-collect `advertisedRoutes` and create/delete VPC routes. See `api/v1alpha1/vpcgateway_types.go`.
 - **VPCRouter** (`pkg/controller/router/reconciler.go`) — dual-mode router: `spec.mode: standard` (Fedora + bash init) or `spec.mode: fast-path` (Go binary + XDP/eBPF at `cmd/vpc-router/`). Both modes share: Multus attachments, IP forwarding, nftables NAT/firewall, dnsmasq DHCP, Suricata IDS/IPS sidecar (`suricata.go`), AdGuard Home DNS sidecar (`adguard_sidecar.go`), metrics-exporter sidecar, DHCP lease PVC management (`pvc.go`), auto-reservation discovery from VM annotations (`auto_reservations.go`). Fast-path pod built by `pod_fastpath.go` with HTTP health probes and NETWORK_CONFIG JSON env. Reports `status.mode`, `status.xdpEnabled`, and `XDPReady` condition. Also watches VPCGateway for config drift. See `api/v1alpha1/vpcrouter_types.go`.
 - **VPCDNSPolicy** (`pkg/controller/dnspolicy/reconciler.go`) — manages DNS filtering policy via AdGuard Home sidecar on router pods. Configures upstream DNS, blocklists/allowlists, local DNS resolution. See `api/v1alpha1/vpcdnspolicy_types.go`.
+- **VPCTraceflow** (`pkg/controller/traceflow/reconciler.go`) — active network path tracing. Execs into router pods to run traceroute/nping/ping probes, diffs nftables counters, builds hop-by-hop path with latency and rule hits. TTL-based auto-cleanup. See `api/v1alpha1/vpctraceflow_types.go`.
 
 **Bidirectional watching pattern**: Gateway watches Router status (for route advertisement), Router watches Gateway spec (for config propagation). This creates a reactive loop where gateway config changes flow down to router pods, and router route advertisements flow up to VPC routes.
 
@@ -74,7 +75,7 @@ Wraps `github.com/IBM/vpc-go-sdk`. Each file handles one resource type:
 - `floating_ip.go` — `CreateFloatingIP`, `GetFloatingIP`, `UpdateFloatingIP`, `DeleteFloatingIP`
 - `routing.go` — `ListRoutingTables`, `CreateRoute`, `DeleteRoute`, `ListRoutes`
 - `par.go` — `CreatePublicAddressRange`, `GetPublicAddressRange`, `DeletePublicAddressRange`, `ListPublicAddressRanges`
-- `flow_logs.go` — `CreateFlowLogCollector`, `DeleteFlowLogCollector`, `GetFlowLogCollector`, `ListFlowLogCollectors` (stub, awaiting VPC SDK wiring)
+- `flow_logs.go` — `CreateFlowLogCollector`, `DeleteFlowLogCollector`, `GetFlowLogCollector`, `ListFlowLogCollectors` (fully wired to VPC SDK)
 - `ratelimiter.go` — channel-based rate limiter (10 concurrent max)
 - `instrumented.go` — `InstrumentedClient` wrapper for Prometheus metrics
 
